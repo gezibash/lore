@@ -65,12 +65,18 @@ interface WTSModule {
 
 // ─── Constants ──────────────────────────────────────────────
 
-const LANGUAGE_WASM_MAP: Record<SupportedLanguage, string> = {
+// Languages available in @repomix/tree-sitter-wasms
+const LANGUAGE_WASM_MAP: Partial<Record<SupportedLanguage, string>> = {
   typescript: "tree-sitter-typescript.wasm",
   javascript: "tree-sitter-javascript.wasm",
   python: "tree-sitter-python.wasm",
   go: "tree-sitter-go.wasm",
   rust: "tree-sitter-rust.wasm",
+};
+
+// Languages only available in tree-sitter-wasms (fallback package)
+const SECONDARY_LANGUAGE_WASM_MAP: Partial<Record<SupportedLanguage, string>> = {
+  elixir: "tree-sitter-elixir.wasm",
 };
 
 const TSX_WASM = "tree-sitter-tsx.wasm";
@@ -81,6 +87,7 @@ export class TreeSitterPool {
   private wts: WTSModule | null = null;
   private languages: Map<string, TreeSitterLanguage> = new Map();
   private wasmsDir: string = "";
+  private secondaryWasmsDir: string = "";
 
   async init(): Promise<void> {
     if (this.wts) return;
@@ -89,6 +96,10 @@ export class TreeSitterPool {
     const wtsDir = dirname(require.resolve("web-tree-sitter/package.json"));
     this.wasmsDir = join(
       dirname(require.resolve("@repomix/tree-sitter-wasms/package.json")),
+      "out",
+    );
+    this.secondaryWasmsDir = join(
+      dirname(require.resolve("tree-sitter-wasms/package.json")),
       "out",
     );
 
@@ -100,7 +111,10 @@ export class TreeSitterPool {
   }
 
   async loadLanguage(language: SupportedLanguage, isTsx?: boolean): Promise<TreeSitterLanguage> {
-    const wasmFile = isTsx ? TSX_WASM : LANGUAGE_WASM_MAP[language];
+    const primaryWasm = isTsx ? TSX_WASM : LANGUAGE_WASM_MAP[language];
+    const secondaryWasm = !isTsx ? SECONDARY_LANGUAGE_WASM_MAP[language] : undefined;
+    const wasmFile = primaryWasm ?? secondaryWasm;
+    const wasmDir = primaryWasm ? this.wasmsDir : this.secondaryWasmsDir;
     if (!wasmFile) throw new Error(`Unsupported language: ${language}`);
 
     const cacheKey = isTsx ? "tsx" : language;
@@ -109,7 +123,7 @@ export class TreeSitterPool {
 
     if (!this.wts) throw new Error("TreeSitterPool not initialized. Call init() first.");
 
-    const wasmPath = join(this.wasmsDir, wasmFile);
+    const wasmPath = join(wasmDir, wasmFile);
     const wasmBuf = readFileSync(wasmPath);
     const lang = await this.wts.Language.load(new Uint8Array(wasmBuf));
     this.languages.set(cacheKey, lang);

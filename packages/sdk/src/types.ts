@@ -1084,7 +1084,7 @@ export interface SuggestResult {
 }
 
 // ─── Source Scanner Types ─────────────────────────────────
-export type SupportedLanguage = "typescript" | "javascript" | "python" | "go" | "rust";
+export type SupportedLanguage = "typescript" | "javascript" | "python" | "go" | "rust" | "elixir";
 
 export type SymbolKind =
   | "function"

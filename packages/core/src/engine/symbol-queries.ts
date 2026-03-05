@@ -48,12 +48,39 @@ const RUST_QUERY = `
 (impl_item type: (type_identifier) @name) @definition.impl
 `;
 
+// def/defp/defmacro/defmacrop — function definitions
+// defmodule — module (treated as class)
+// defprotocol — protocol (treated as interface)
+const ELIXIR_QUERY = `
+(call
+  target: (identifier) @_kw
+  (arguments (call target: (identifier) @name))
+  (#match? @_kw "^defp?$")) @definition.function
+(call
+  target: (identifier) @_kw
+  (arguments (binary_operator left: (call target: (identifier) @name) operator: "when"))
+  (#match? @_kw "^defp?$")) @definition.function
+(call
+  target: (identifier) @_kw
+  (arguments (call target: (identifier) @name))
+  (#match? @_kw "^defmacrop?$")) @definition.function
+(call
+  target: (identifier) @_kw
+  (arguments (alias) @name)
+  (#eq? @_kw "defmodule")) @definition.class
+(call
+  target: (identifier) @_kw
+  (arguments (alias) @name)
+  (#eq? @_kw "defprotocol")) @definition.interface
+`;
+
 const QUERY_MAP: Record<SupportedLanguage, string> = {
   typescript: TYPESCRIPT_QUERY,
   javascript: JAVASCRIPT_QUERY,
   python: PYTHON_QUERY,
   go: GO_QUERY,
   rust: RUST_QUERY,
+  elixir: ELIXIR_QUERY,
 };
 
 // ─── Per-Language Call-Site Queries ───────────────────────
@@ -78,12 +105,18 @@ const RUST_CALL_QUERY = `
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call.site
 `;
 
+const ELIXIR_CALL_QUERY = `
+(call target: (identifier) @call.name) @call.site
+(call target: (dot right: (identifier) @call.name)) @call.site
+`;
+
 const CALL_QUERY_MAP: Record<SupportedLanguage, string> = {
   typescript: TS_CALL_QUERY,
   javascript: TS_CALL_QUERY,
   python: PYTHON_CALL_QUERY,
   go: GO_CALL_QUERY,
   rust: RUST_CALL_QUERY,
+  elixir: ELIXIR_CALL_QUERY,
 };
 
 function nodeKindFromCapture(captureName: string): SymbolKind | null {
@@ -135,6 +168,12 @@ function detectExportStatus(
   node: TreeSitterNode,
   language: SupportedLanguage,
 ): "exported" | "default_export" | "local" | null {
+  if (language === "elixir") {
+    // def/defmacro are public; defp/defmacrop are private
+    const target = node.childForFieldName("target");
+    if (target?.text === "defp" || target?.text === "defmacrop") return "local";
+    return "exported";
+  }
   if (language === "python" || language === "go" || language === "rust") {
     // Python: all top-level are "exported" by convention
     // Go: capitalized names are exported
@@ -195,6 +234,15 @@ function findParentClass(node: TreeSitterNode): string | null {
         current.childForFieldName("name") ??
         current.namedChildren.find((c) => c.type === "type_identifier" || c.type === "identifier");
       if (nameNode) return nameNode.text;
+    }
+    // Elixir: defmodule call nodes
+    if (current.type === "call") {
+      const target = current.childForFieldName("target");
+      if (target?.text === "defmodule") {
+        const args = current.namedChildren.find((c) => c.type === "arguments");
+        const alias = args?.namedChildren.find((c) => c.type === "alias");
+        if (alias) return alias.text;
+      }
     }
     current = current.parent;
   }
@@ -288,6 +336,26 @@ function findEnclosingFunction(node: TreeSitterNode): string {
             c.type === "field_identifier",
         );
       if (nameNode?.text) return nameNode.text;
+    }
+    // Elixir: def/defp call nodes are function boundaries
+    if (current.type === "call") {
+      const target = current.childForFieldName("target");
+      if (target?.text === "def" || target?.text === "defp" || target?.text === "defmacro" || target?.text === "defmacrop") {
+        const args = current.namedChildren.find((c) => c.type === "arguments");
+        if (args) {
+          const inner = args.namedChildren[0];
+          if (inner?.type === "call") {
+            const nameNode = inner.childForFieldName("target");
+            if (nameNode?.text) return nameNode.text;
+          } else if (inner?.type === "binary_operator") {
+            const left = inner.childForFieldName("left");
+            if (left?.type === "call") {
+              const nameNode = left.childForFieldName("target");
+              if (nameNode?.text) return nameNode.text;
+            }
+          }
+        }
+      }
     }
     // Check if inside a variable declarator with arrow function / function expression
     if (current.type === "variable_declarator") {

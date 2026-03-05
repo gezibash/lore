@@ -13,6 +13,8 @@ const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".py": "python",
   ".go": "go",
   ".rs": "rust",
+  ".ex": "elixir",
+  ".exs": "elixir",
 };
 
 const SKIP_DIRS = new Set([
