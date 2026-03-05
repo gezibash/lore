@@ -42,5 +42,7 @@ tests/
 # Claude Code user config
 .claude/
 
-# Personal MCP config (contains local paths)
+# Personal MCP / editor configs (contain local paths)
 .mcp.json
+.codex/
+opencode.json
