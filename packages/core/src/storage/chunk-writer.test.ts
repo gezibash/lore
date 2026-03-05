@@ -42,7 +42,7 @@ test("writeJournalChunk adds intent when provided", async () => {
 
   const parsed = parseChunk<JournalChunkFrontmatter>(await readFileSync(result.filePath, "utf-8"));
   expect(parsed.frontmatter.fl_type).toBe("journal");
-  expect((parsed.frontmatter as any).fl_intent).toBe("investigate");
+  expect(parsed.frontmatter.fl_intent).toBe("investigate");
 
   removeDir(root);
 });

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { createWorkerClient } from "./index.ts";
+import { createWorkerClient, type WorkerClientOptions } from "./index.ts";
+
+type MockWorkerClient = WorkerClientOptions["client"];
 
 test("createWorkerClient delegates to provided client", async () => {
   let called = false;
@@ -68,7 +70,7 @@ test("createWorkerClient delegates to provided client", async () => {
         return result;
       },
       shutdown: () => {},
-    } as any,
+    } as unknown as MockWorkerClient,
   });
 
   const queried = await client.query("q");

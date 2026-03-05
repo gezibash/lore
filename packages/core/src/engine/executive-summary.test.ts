@@ -3,12 +3,16 @@ import {
   DEFAULT_EXECUTIVE_SUMMARY_SYSTEM_PROMPT,
   generateExecutiveSummary,
 } from "./narrative-lifecycle.ts";
+import type { ReasoningLevel, GenerationReasoningScope } from "@/types/index.ts";
 
-function mockGenerator(genFn: (...args: any[]) => Promise<string>) {
+type GenerateOpts = { timeoutMs?: number; reasoning?: ReasoningLevel; scope?: GenerationReasoningScope };
+type GenerateFn = (system: string, user: string, opts?: GenerateOpts) => Promise<string>;
+
+function mockGenerator(genFn: GenerateFn) {
   return {
     generate: genFn,
-    async generateWithMeta(...args: any[]) {
-      const text = await genFn(...args);
+    async generateWithMeta(system: string, user: string, opts?: GenerateOpts) {
+      const text = await genFn(system, user, opts);
       return { text, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, modelId: "mock" };
     },
   };

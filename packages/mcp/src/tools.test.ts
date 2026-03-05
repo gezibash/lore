@@ -3,6 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkerClient } from "@lore/worker";
 import { registerTools } from "./tools.ts";
 
+type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+
 test("registerTools exposes canonical minimal MCP surface", () => {
   const names: string[] = [];
   const server = {
@@ -55,14 +57,14 @@ test("registerTools exposes canonical minimal MCP surface", () => {
 });
 
 test("ask tool returns brief summary with result_id", async () => {
-  const handlers = new Map<string, (...args: any[]) => any>();
+  const handlers = new Map<string, ToolHandler>();
   const schemas = new Map<string, Record<string, unknown>>();
   const server = {
     tool(
       name: string,
       _description: string,
       schema: Record<string, unknown>,
-      handler: (...args: any[]) => any,
+      handler: ToolHandler,
     ) {
       schemas.set(name, schema);
       handlers.set(name, handler);
@@ -163,20 +165,20 @@ test("ask tool returns brief summary with result_id", async () => {
   expect(ask).toBeDefined();
 
   const response = await ask!({ query: "q" });
-  const text = response.content[0].text as string;
+  const text = response.content[0]!.text;
   expect(text).toContain("Summary output");
   expect(text).toContain("Based on");
   expect(text).not.toContain("## Sources");
 });
 
 test("trail tool calls showNarrativeTrail and returns formatted text", async () => {
-  const handlers = new Map<string, (...args: any[]) => any>();
+  const handlers = new Map<string, ToolHandler>();
   const server = {
     tool(
       name: string,
       _description: string,
       _schema: Record<string, unknown>,
-      handler: (...args: any[]) => any,
+      handler: ToolHandler,
     ) {
       handlers.set(name, handler);
       return {};
@@ -219,7 +221,7 @@ test("trail tool calls showNarrativeTrail and returns formatted text", async () 
   expect(trail).toBeDefined();
 
   const response = await trail!({ narrative: "auth-debug" });
-  const text = response.content[0].text as string;
+  const text = response.content[0]!.text;
   expect(text).toContain("## auth-debug");
   expect(text).toContain("Debug auth perf");
   expect(text).toContain("### Entry 1");
@@ -229,9 +231,9 @@ test("trail tool calls showNarrativeTrail and returns formatted text", async () 
 });
 
 test("config tool returns curated view with no args, gets specific key, and sets values", async () => {
-  const handlers = new Map<string, (...args: any[]) => any>();
+  const handlers = new Map<string, ToolHandler>();
   const server = {
-    tool(name: string, _d: string, _s: unknown, handler: (...args: any[]) => any) {
+    tool(name: string, _d: string, _s: unknown, handler: ToolHandler) {
       handlers.set(name, handler);
       return {};
     },
@@ -273,7 +275,7 @@ test("config tool returns curated view with no args, gets specific key, and sets
 
   // No args → curated view
   const curatedRes = await config!({});
-  const curatedText = curatedRes.content[0].text as string;
+  const curatedText = curatedRes.content[0]!.text;
   expect(curatedText).toContain("Generation");
   expect(curatedText).toContain("qwen3:8b");
   expect(curatedText).toContain("Embedding");
@@ -283,14 +285,14 @@ test("config tool returns curated view with no args, gets specific key, and sets
 
   // Key only → get
   const getRes = await config!({ key: "ai.generation.model" });
-  const getText = getRes.content[0].text as string;
+  const getText = getRes.content[0]!.text;
   expect(getText).toContain("ai.generation.model");
   expect(getText).toContain("qwen3:8b");
   expect(getText).toContain("(default / global)");
 
   // Key + value → set
   const setRes = await config!({ key: "ai.generation.model", value: "kimi-k2.5" });
-  const setText = setRes.content[0].text as string;
+  const setText = setRes.content[0]!.text;
   expect(setText).toContain("Set ai.generation.model");
   expect(setText).toContain("kimi-k2.5");
   expect(setCalls).toEqual([{ key: "ai.generation.model", value: "kimi-k2.5" }]);

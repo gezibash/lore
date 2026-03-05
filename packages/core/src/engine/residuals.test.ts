@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test";
 import type { ConceptRow } from "@/types/index.ts";
+import type { LoreConfig } from "@/types/index.ts";
+import type { DeepPartial } from "@/config/index.ts";
 import {
   computeResidual,
   cosineDistance,
@@ -24,11 +26,11 @@ test("cosineDistance handles identical and opposite vectors", () => {
 
 test("computeStaleness clamps to [0, 1]", () => {
   const now = new Date().toISOString();
-  const stale = computeStaleness(now, { thresholds: { staleness_days: 10 } } as any);
+  const stale = computeStaleness(now, { thresholds: { staleness_days: 10 } } as DeepPartial<LoreConfig> as LoreConfig);
   expect(stale).toBe(0);
 
   const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
-  const capped = computeStaleness(old, { thresholds: { staleness_days: 10 } } as any);
+  const capped = computeStaleness(old, { thresholds: { staleness_days: 10 } } as DeepPartial<LoreConfig> as LoreConfig);
   expect(capped).toBe(1);
 });
 

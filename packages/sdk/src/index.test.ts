@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { createLoreClient } from "./index.ts";
+import { createLoreClient, type LoreClientOptions } from "./index.ts";
+
+type MockEngine = LoreClientOptions["engine"];
 
 test("createLoreClient is exported", () => {
   expect(typeof createLoreClient).toBe("function");
@@ -67,9 +69,9 @@ test("queryForOrchestration delegates to engine", async () => {
             },
           },
           results: [],
-        }) as any,
+        }),
       shutdown: () => {},
-    } as any,
+    } as unknown as MockEngine,
   });
 
   const result = await client.queryForOrchestration("q");
@@ -89,7 +91,7 @@ test("searchWeb delegates to engine", async () => {
           },
         ] as const,
       shutdown: () => {},
-    } as any,
+    } as unknown as MockEngine,
   });
 
   const results = await client.searchWeb("q");
@@ -108,7 +110,7 @@ test("summarizeMatches delegates to engine", async () => {
         counts: { concepts: 0, files: 0, symbols: 0, journal_entries: 0 },
       }),
       shutdown: () => {},
-    } as any,
+    } as unknown as MockEngine,
   });
 
   const summary = await client.summarizeMatches("q", []);

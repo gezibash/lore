@@ -6,6 +6,7 @@ import { type GenerationPromptKey } from "@/config/prompts.ts";
 import { createGenerationModel } from "./provider.ts";
 
 type GenerationProvider = LoreConfig["ai"]["generation"]["provider"];
+type ProviderOptionsValue = NonNullable<Parameters<typeof generateText>[0]["providerOptions"]>[string];
 type ReasoningLevel = NonNullable<LoreConfig["ai"]["generation"]["reasoning"]>;
 type ReasoningScope = keyof NonNullable<LoreConfig["ai"]["generation"]["reasoning_overrides"]>;
 type GenerationPromptsConfig = LoreConfig["ai"]["generation"]["prompts"];
@@ -187,7 +188,7 @@ export class Generator {
     return this.reasoning;
   }
 
-  private moonshotThinkingOptions(reasoning: ReasoningLevel): Record<string, any> {
+  private moonshotThinkingOptions(reasoning: ReasoningLevel): ProviderOptionsValue {
     if (reasoning === "none") {
       return {
         thinking: { type: "disabled" },
@@ -203,7 +204,7 @@ export class Generator {
 
   private reasoningOptions(reasoning: ReasoningLevel): {
     systemSuffix: string;
-    providerOptions?: Record<string, Record<string, any>>;
+    providerOptions?: Record<string, ProviderOptionsValue>;
   } {
     const noThinkSuffix = reasoning === "none" ? "\n/no_think" : "";
     switch (this.provider) {

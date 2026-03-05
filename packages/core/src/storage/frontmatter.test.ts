@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { parseChunk, serializeChunk, updateFrontmatterField } from "./frontmatter.ts";
-import type { ChunkFrontmatter } from "@/types/index.ts";
+import type { ChunkFrontmatter, JournalChunkFrontmatter } from "@/types/index.ts";
 
 test("parseChunk trims parsed content", () => {
   const raw = "---\nfl_id: abc\n---\n  spaced content  \n\n";
@@ -29,7 +29,7 @@ test("serialize and parse preserves frontmatter and content", () => {
 
   expect(parsed.frontmatter.fl_id).toBe(fm.fl_id);
   expect(parsed.content).toBe("payload");
-  expect((parsed.frontmatter as any).fl_narrative).toBe("delta-1");
+  expect((parsed.frontmatter as JournalChunkFrontmatter).fl_narrative).toBe("delta-1");
 });
 
 test("updateFrontmatterField updates and preserves content", () => {
