@@ -8,10 +8,13 @@ import { ensureProjectMcpConfig, type McpHarness } from "./commands/mcp-config.t
 import { openCommand } from "./commands/open.ts";
 import { logCommand } from "./commands/log.ts";
 import { queryCommand } from "./commands/query.ts";
+import { recallCommand } from "./commands/recall.ts";
+import { scoreCommand } from "./commands/score.ts";
 import { closeCommand } from "./commands/close.ts";
 import { statusCommand } from "./commands/status.ts";
 import { lsCommand } from "./commands/ls.ts";
 import { showCommand } from "./commands/show.ts";
+import { trailCommand } from "./commands/trail.ts";
 import { historyCommand } from "./commands/history.ts";
 import { diffCommand } from "./commands/diff.ts";
 import { commitlogCommand } from "./commands/commitlog.ts";
@@ -79,6 +82,11 @@ function getWorker(): WorkerClient {
   return workerClient;
 }
 
+async function startMcpServer(): Promise<void> {
+  const { startMcpServer: startServer } = await import("@lore/mcp");
+  await startServer({ client: getWorker() });
+}
+
 const versionString = getVersionString();
 const rawArgv = process.argv.slice(2);
 const isMcpServerMode = rawArgv.length === 1 && rawArgv[0] === "mcp";
@@ -93,7 +101,7 @@ const cli = defineCli({
       description: "Run Lore MCP server",
       hidden: true,
       async action() {
-        await import("../../mcp/src/index.ts");
+        await startMcpServer();
       },
     }),
     open: defineCommand({
@@ -104,7 +112,7 @@ const cli = defineCli({
         intent: { type: "string", required: true, description: "Intent description" },
       },
       options: {
-        resolve: { type: "string", description: "Resolve dangling delta (name:action)" },
+        resolve: { type: "string", description: "Resolve dangling delta (name:resume|abandon)" },
         target: {
           type: "string",
           description:
@@ -172,6 +180,54 @@ const cli = defineCli({
           sources: options.sources,
           mode: options.mode as "arch" | "code" | undefined,
         });
+      },
+    }),
+    recall: defineCommand({
+      name: "recall",
+      description: "Recall a cached ask result by result ID",
+      arguments: {
+        "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
+      },
+      options: {
+        section: {
+          type: "string",
+          description: "Which section to show: sources, journal, symbols, or full",
+        },
+      },
+      async action({ args, options }) {
+        const section = options.section as string | undefined;
+        if (section && section !== "sources" && section !== "journal" && section !== "symbols" && section !== "full") {
+          throw new Error(`Invalid section '${section}'. Use sources|journal|symbols|full.`);
+        }
+        await recallCommand(
+          getWorker(),
+          args["result-id"],
+          section as "sources" | "journal" | "symbols" | "full" | undefined,
+        );
+      },
+    }),
+    score: defineCommand({
+      name: "score",
+      description: "Rate a cached ask result",
+      arguments: {
+        "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
+        score: { type: "number", required: true, description: "Quality score (1-5)" },
+      },
+      async action({ args }) {
+        if (!Number.isInteger(args.score) || args.score < 1 || args.score > 5) {
+          throw new Error(`Invalid score '${args.score}'. Use an integer from 1 to 5.`);
+        }
+        await scoreCommand(getWorker(), args["result-id"], args.score);
+      },
+    }),
+    trail: defineCommand({
+      name: "trail",
+      description: "Reconstruct the full investigation trail for a narrative",
+      arguments: {
+        narrative: { type: "string", required: true, description: "Narrative name" },
+      },
+      async action({ args }) {
+        await trailCommand(getWorker(), args.narrative);
       },
     }),
     init: defineCommand({
@@ -280,7 +336,7 @@ const cli = defineCli({
     }),
     ingest: defineCommand({
       name: "ingest",
-      description: "Index the codebase — scan code and ingest docs in parallel. Pass a file path to ingest a single document.",
+      description: "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
       arguments: {
         file: { type: "string", required: false, description: "Specific file to ingest" },
       },
@@ -810,9 +866,9 @@ const cli = defineCli({
     }),
     show: defineCommand({
       name: "show",
-      description: "Show concept content (supports ref:concept syntax)",
+      description: "Show concept content (supports concept@ref syntax)",
       arguments: {
-        target: { type: "string", required: true, description: "Concept name or ref:concept" },
+        target: { type: "string", required: true, description: "Concept name or concept@ref" },
       },
       async action({ args }) {
         await showCommand(getWorker(), args.target);
@@ -854,7 +910,7 @@ const cli = defineCli({
 });
 
 if (isMcpServerMode) {
-  await import("../../mcp/src/index.ts");
+  await startMcpServer();
 } else {
   await cli.run(rawArgv);
 }

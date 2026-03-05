@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "typecheck": "bun x tsc --noEmit -p tsconfig.json",

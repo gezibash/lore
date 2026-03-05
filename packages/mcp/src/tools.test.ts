@@ -56,6 +56,32 @@ test("registerTools exposes canonical minimal MCP surface", () => {
   }
 });
 
+test("open tool schema rejects dangling close action", () => {
+  const schemas = new Map<string, Record<string, unknown>>();
+  const server = {
+    tool(
+      name: string,
+      _description: string,
+      schema: Record<string, unknown>,
+    ) {
+      schemas.set(name, schema);
+      return {};
+    },
+  } as unknown as McpServer;
+
+  registerTools(server, {} as WorkerClient);
+
+  const openSchema = schemas.get("open") as {
+    resolve_dangling: { safeParse: (value: unknown) => { success: boolean } };
+  };
+  expect(openSchema.resolve_dangling.safeParse({ narrative: "old", action: "close" }).success).toBe(
+    false,
+  );
+  expect(
+    openSchema.resolve_dangling.safeParse({ narrative: "old", action: "abandon" }).success,
+  ).toBe(true);
+});
+
 test("ask tool returns brief summary with result_id", async () => {
   const handlers = new Map<string, ToolHandler>();
   const schemas = new Map<string, Record<string, unknown>>();
@@ -228,6 +254,52 @@ test("trail tool calls showNarrativeTrail and returns formatted text", async () 
   expect(text).toContain("### Entry 2");
   expect(text).toContain("First finding.");
   expect(text).toContain("Confirmed root cause.");
+});
+
+test("trail tool accepts the legacy delta parameter", async () => {
+  const handlers = new Map<string, ToolHandler>();
+  const server = {
+    tool(
+      name: string,
+      _description: string,
+      _schema: Record<string, unknown>,
+      handler: ToolHandler,
+    ) {
+      handlers.set(name, handler);
+      return {};
+    },
+  } as unknown as McpServer;
+
+  const client = {
+    showNarrativeTrail: async (narrativeName: string) => ({
+      narrative: {
+        name: narrativeName,
+        intent: "Legacy trail lookup",
+        status: "closed",
+        entry_count: 1,
+        opened_at: "2026-02-25T10:00:00.000Z",
+        closed_at: "2026-02-25T11:00:00.000Z",
+      },
+      entries: [
+        {
+          content: "Legacy alias still works.",
+          topics: ["compat"],
+          status: "confirmed",
+          created_at: "2026-02-25T10:30:00.000Z",
+          position: 1,
+        },
+      ],
+      topics_covered: ["compat"],
+    }),
+  } as unknown as WorkerClient;
+
+  registerTools(server, client);
+
+  const trail = handlers.get("trail");
+  expect(trail).toBeDefined();
+
+  const response = await trail!({ delta: "compat-debug" });
+  expect(response.content[0]!.text).toContain("## compat-debug");
 });
 
 test("config tool returns curated view with no args, gets specific key, and sets values", async () => {

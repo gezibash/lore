@@ -211,13 +211,14 @@ Resources:
 - `lore://concepts/list` — JSON snapshot of active concepts (current truth)
 - `lore://coverage/map` — symbol coverage stats
 
-Note: the `trail` tool accepts a `delta` parameter name for backwards MCP compatibility.
+Note: the `trail` tool accepts either `narrative` or legacy `delta` for backwards MCP compatibility.
 
 ## Architecture Rules For Contributors
 
 1. **Do not let adapters import core or sdk directly**
 
-- `cli` and `mcp` import only `@lore/worker` and `@lore/rendering`
+- `mcp` imports only `@lore/worker` and `@lore/rendering`
+- `cli` imports `@lore/worker` and `@lore/rendering`; the hidden `lore mcp` pass-through may call the public `@lore/mcp` entrypoint
 - boundary tests enforce this
 
 2. **Put domain orchestration in worker, not adapters**
@@ -248,4 +249,4 @@ Use Bun.
 
 ## Known Technical Debt
 
-Current workspace still relies on TypeScript path mapping (`@/*`) into `core/src` during type resolution. Long-term cleanup is to publish core build artifacts (`dist` + `.d.ts`) and remove these transitive source-path requirements from consumers.
+Source-level boundaries are enforced, but non-core tsconfigs still carry `@/*` path mapping so TypeScript can follow raw `@lore/core` source transitively during workspace development. Long-term cleanup is to publish core build artifacts (`dist` + `.d.ts`) and consume those instead of source files.

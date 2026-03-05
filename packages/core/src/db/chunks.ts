@@ -143,6 +143,12 @@ export function getSourceChunkPathsForFile(db: Database, sourceFilePath: string)
 
 /** Delete all source chunks for a given source file from the DB. */
 export function deleteSourceChunksForFile(db: Database, sourceFilePath: string): void {
+  db.run(
+    `DELETE FROM content_fts WHERE chunk_id IN (
+       SELECT id FROM chunks WHERE fl_type = 'source' AND source_file_path = ?
+     )`,
+    [sourceFilePath],
+  );
   db.run(`DELETE FROM chunks WHERE fl_type = 'source' AND source_file_path = ?`, [sourceFilePath]);
 }
 

@@ -63,9 +63,15 @@ export async function openCommand(
   let resolveDangling: ResolveDangling | undefined;
   if (resolve) {
     const [name, action] = resolve.split(":");
-    if (name && (action === "resume" || action === "close" || action === "abandon")) {
-      resolveDangling = { narrative: name, action: action as DanglingAction };
+    if (!name || !action) {
+      throw new Error("Invalid --resolve syntax. Use name:resume or name:abandon.");
     }
+    if (action !== "resume" && action !== "abandon") {
+      throw new Error(
+        `Invalid --resolve action '${action}'. Use resume or abandon. Close is a separate command.`,
+      );
+    }
+    resolveDangling = { narrative: name, action: action as DanglingAction };
   }
 
   const targets: NarrativeTarget[] | undefined =

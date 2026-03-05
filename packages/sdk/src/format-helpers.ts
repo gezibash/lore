@@ -1,5 +1,5 @@
 import type { ExecutiveSummary } from "./types.ts";
-import { timeAgo } from "@lore/core/format";
+import { timeAgo } from "@lore/core";
 
 /**
  * Apply per-term inline [file:line] citations to narrative text.

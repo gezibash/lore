@@ -19,15 +19,15 @@ export async function ingestFileCommand(client: WorkerClient, filePath: string):
 }
 
 export async function ingestAllCommand(client: WorkerClient): Promise<void> {
-  const spinner = createSpinner("Scanning code and ingesting docs in parallel...").start();
+  const spinner = createSpinner("Refreshing code and docs...").start();
   const { scan, ingest } = await client.ingestAll();
   const parts: string[] = [];
   parts.push(`${GREEN}✓${RESET} Complete in ${Math.max(scan.duration_ms, ingest.duration_ms)}ms`);
   parts.push(
-    `  ${BOLD}Code:${RESET}  ${scan.files_scanned} files scanned, ${scan.symbols_found} symbols found`,
+    `  ${BOLD}Code:${RESET}  ${scan.files_scanned} files scanned, ${scan.symbols_found} symbols found${scan.files_failed ? `, ${scan.files_failed} failed` : ""}`,
   );
   parts.push(
-    `  ${BOLD}Docs:${RESET}  ${ingest.files_ingested} files ingested, ${ingest.files_skipped} skipped${ingest.files_removed > 0 ? `, ${ingest.files_removed} removed` : ""}`,
+    `  ${BOLD}Docs:${RESET}  ${ingest.files_ingested} files ingested, ${ingest.files_skipped} skipped${ingest.files_failed ? `, ${ingest.files_failed} failed` : ""}${ingest.files_removed > 0 ? `, ${ingest.files_removed} removed` : ""}`,
   );
   spinner.succeed(parts.join("\n"));
 }

@@ -3224,16 +3224,15 @@ export class LoreEngine {
       files_ingested: result === "ingested" ? 1 : 0,
       files_skipped: result === "skipped" ? 1 : 0,
       files_removed: 0,
+      files_failed: result === "failed" ? 1 : 0,
       duration_ms: 0,
     };
   }
 
   async ingestAll(opts?: { codePath?: string }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    const [scan, ingest] = await Promise.all([
-      rescanProject(db, entry.code_path, entry.lore_path),
-      ingestTextFiles(db, entry.code_path, entry.lore_path),
-    ]);
+    const scan = await rescanProject(db, entry.code_path, entry.lore_path);
+    const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path);
     return { scan, ingest };
   }
 

@@ -1,12 +1,11 @@
-import { LoreEngine, LoreError } from "@lore/core";
-import { getDeepValue } from "@lore/core/config";
 import {
+  LoreEngine,
+  LoreError,
+  getDeepValue,
   GENERATION_PROMPT_KEYS as CORE_GENERATION_PROMPT_KEYS,
   normalizePromptKey as coreNormalizePromptKey,
-} from "@lore/core/config/prompts";
-import { describeSchemaIssue as coreDescribeSchemaIssue } from "@lore/core/db";
-import { timeAgo } from "@lore/core/format";
-import {
+  describeSchemaIssue as coreDescribeSchemaIssue,
+  timeAgo,
   formatClose as coreFormatClose,
   formatHistory as coreFormatHistory,
   formatLifecycleResult as coreFormatLifecycleResult,
@@ -25,13 +24,11 @@ import {
   formatCommitLog as coreFormatCommitLog,
   formatBootstrapPlan as coreFormatBootstrapPlan,
   type DryRunCloseFormatInput,
-} from "@lore/core/mcp-formatters";
-import {
   computeLineDiff as coreComputeLineDiff,
   isDiffTooLarge as coreIsDiffTooLarge,
   type DiffHunk,
   type DiffLine,
-} from "@lore/core/engine/line-diff";
+} from "@lore/core";
 import type {
   AutoBindResult,
   BootstrapPlan,
@@ -93,7 +90,7 @@ import type {
 } from "./types.ts";
 
 export type * from "./types.ts";
-export type { DiffHunk, DiffLine } from "@lore/core/engine/line-diff";
+export type { DiffHunk, DiffLine } from "@lore/core";
 export { LoreError, getDeepValue, timeAgo };
 export {
   renderNarrativeWithCitations,

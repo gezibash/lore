@@ -49,7 +49,7 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
       resolve_dangling: z
         .object({
           narrative: z.string(),
-          action: z.enum(["resume", "close", "abandon"]),
+          action: z.enum(["resume", "abandon"]),
         })
         .optional()
         .describe("Resolve a dangling narrative before opening"),
@@ -339,10 +339,15 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
     "trail",
     "Show all journal entries for a named narrative — reconstructs the full investigation trail",
     {
-      narrative: z.string().describe("Narrative name"),
+      narrative: z.string().optional().describe("Narrative name"),
+      delta: z.string().optional().describe("Legacy alias for narrative name"),
     },
-    async ({ narrative }) => {
-      const result = await client.showNarrativeTrail(narrative);
+    async ({ narrative, delta }) => {
+      const trailName = narrative ?? delta;
+      if (!trailName) {
+        throw new Error("Narrative name is required.");
+      }
+      const result = await client.showNarrativeTrail(trailName);
       return { content: [{ type: "text" as const, text: formatNarrativeTrail(result) }] };
     },
   );
@@ -499,14 +504,19 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
 
   server.tool(
     "ingest",
-    "Index the codebase — scans code symbols and ingests docs/configs in parallel. Pass a file path to ingest a single document.",
+    "Index the codebase — scans code symbols and ingests docs/configs. Pass a file path to ingest a single document.",
     {
       path: z.string().optional().describe("Specific file path to ingest. Omit to index everything (code scan + doc ingest)."),
     },
     async ({ path }) => {
       if (path) {
         const result = await client.ingestDoc(path);
-        const status = result.files_ingested > 0 ? "Ingested" : "Skipped (unchanged)";
+        const status =
+          result.files_ingested > 0
+            ? "Ingested"
+            : result.files_failed
+              ? "Failed"
+              : "Skipped (unchanged)";
         return { content: [{ type: "text" as const, text: status }] };
       } else {
         const { scan, ingest } = await client.ingestAll();
@@ -514,8 +524,8 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
           .map(([k, v]) => `${k}: ${v}`)
           .join(", ");
         const lines = [
-          `Code:  ${scan.files_scanned} files scanned, ${scan.symbols_found} symbols (${langs})`,
-          `Docs:  ${ingest.files_ingested} files ingested, ${ingest.files_skipped} skipped, ${ingest.files_removed} removed`,
+          `Code:  ${scan.files_scanned} files scanned, ${scan.symbols_found} symbols${scan.files_failed ? `, ${scan.files_failed} failed` : ""}${langs ? ` (${langs})` : ""}`,
+          `Docs:  ${ingest.files_ingested} files ingested, ${ingest.files_skipped} skipped${ingest.files_failed ? `, ${ingest.files_failed} failed` : ""}, ${ingest.files_removed} removed`,
         ];
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }

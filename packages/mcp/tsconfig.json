@@ -3,7 +3,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["../core/src/*"]
+      "@/*": ["../core/src/*"],
+      "@lore/sdk": ["../sdk/src/index.ts"],
+      "@lore/sdk/*": ["../sdk/src/*"]
     }
   },
   "include": ["src/**/*.ts"]

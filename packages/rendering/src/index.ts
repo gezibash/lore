@@ -1,15 +1,20 @@
 import type {
   ConceptRow,
+  ExecutiveSummary,
   NarrativeRow,
   LsResult,
+  QueryResult,
+  RecallResult,
   RegistryEntry,
   StatusResult,
-} from "@lore/worker";
+} from "@lore/sdk";
 import {
   formatLs as formatLsMarkdown,
   formatStatus as formatStatusMarkdown,
+  renderNarrativeWithCitations,
+  renderProvenance,
   timeAgo,
-} from "@lore/worker";
+} from "@lore/sdk";
 
 export type RenderRoute = "cli" | "mcp" | "http";
 export type RenderFormat = "plain" | "markdown" | "json";
@@ -23,6 +28,13 @@ export interface RenderOptions {
 export interface RenderLsOptions extends RenderOptions {
   groupBy?: "cluster";
 }
+
+export interface RenderAskOptions {
+  includeSources?: boolean;
+  route?: Extract<RenderRoute, "cli" | "mcp">;
+}
+
+export type RecallSection = "sources" | "journal" | "symbols" | "full";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -119,6 +131,249 @@ function staleLabel(stale: number, total: number): string {
   if (sev.level === "low") return ` ${DIM}~ ${compactCount(stale)} stale (${ratio})${RESET}`;
   if (sev.level === "medium") return ` ${YELLOW}⚠ ${compactCount(stale)} stale (${ratio})${RESET}`;
   return ` ${RED}⚠ ${compactCount(stale)} stale (${ratio})${RESET}`;
+}
+
+function renderClaimBlock(summary: ExecutiveSummary | null | undefined): string[] {
+  if (!summary?.claims || summary.claims.length === 0) return [];
+  return [
+    "",
+    "## Attribution",
+    ...summary.claims.map((claim) => {
+      const confidence = `${(claim.confidence * 100).toFixed(0)}%`;
+      const lowConfidence = claim.confidence < 0.5 ? " ⚠ low confidence" : "";
+      const staleTag =
+        claim.max_staleness != null && claim.max_staleness > 0.4
+          ? ` — stale (${(claim.max_staleness * 100).toFixed(0)}%)`
+          : "";
+      return `[${confidence}] ${claim.text} [${claim.source_concepts.join(", ")}]${lowConfidence}${staleTag}`;
+    }),
+  ];
+}
+
+function renderSummaryNarrative(result: QueryResult): string {
+  const summary = result.executive_summary;
+  if (!summary) {
+    return result.results[0]?.summary?.trim() || "No matching concepts.";
+  }
+  if (summary.kind === "uncertain") {
+    return summary.uncertainty_reason
+      ? `Uncertain: ${summary.uncertainty_reason}`
+      : "Uncertain";
+  }
+  if (summary.narrative.trim().length === 0) {
+    return "No matching concepts.";
+  }
+  return summary.citations.length > 0
+    ? renderNarrativeWithCitations(summary.narrative, summary.citations, {
+        exactness: result.meta.grounding.exactness_detected,
+      })
+    : summary.narrative;
+}
+
+function renderSummaryProvenance(summary: ExecutiveSummary | null | undefined): string | null {
+  if (!summary) return null;
+  const provenance = renderProvenance(summary).trim();
+  return provenance.length > 0 ? provenance : null;
+}
+
+function bindCommand(route: Extract<RenderRoute, "cli" | "mcp">): string {
+  return route === "cli" ? "`lore sys concept bind <concept> <symbol>`" : "`bind(concept, symbol)`";
+}
+
+function recallCommand(route: Extract<RenderRoute, "cli" | "mcp">, resultId: string): string {
+  return route === "cli" ? `\`lore recall ${resultId}\`` : "`recall(result_id)`";
+}
+
+function scoreCommand(route: Extract<RenderRoute, "cli" | "mcp">, resultId: string): string {
+  return route === "cli" ? `\`lore score ${resultId} <1-5>\`` : "`score(result_id, 1-5)`";
+}
+
+function trailCommand(
+  route: Extract<RenderRoute, "cli" | "mcp">,
+  narrative: string | null,
+): string | null {
+  if (!narrative) return null;
+  return route === "cli" ? `\`lore trail ${narrative}\`` : `\`trail(${narrative})\``;
+}
+
+function renderBindingNudge(
+  summary: ExecutiveSummary | null | undefined,
+  route: Extract<RenderRoute, "cli" | "mcp">,
+): string[] {
+  const unboundSymbols = summary?.unbound_source_symbols;
+  if (!unboundSymbols || unboundSymbols.length === 0) return [];
+  return [
+    "",
+    `⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. These symbols have no concept bindings — future retrieval will rely on embedding similarity. Bind them now: ${bindCommand(route)}`,
+  ];
+}
+
+function renderJournalTrail(groups: NonNullable<QueryResult["journal_results"]>): string[] {
+  const lines: string[] = ["", "## Investigation Trail"];
+  for (const group of groups) {
+    const age = timeAgo(group.opened_at);
+    const matched = group.matched_entries.length;
+    const entryWord = group.total_entries === 1 ? "entry" : "entries";
+    lines.push(`- **${group.narrative_name}** (${age}) — ${group.narrative_intent}`);
+    lines.push(
+      `  ${group.narrative_status} · ${group.total_entries} ${entryWord} (${matched} matched)`,
+    );
+    for (let i = 0; i < group.matched_entries.length; i++) {
+      const entry = group.matched_entries[i]!;
+      const statusTag = entry.status ? `[${entry.status}] ` : "";
+      const posTag = entry.entry_index > 0 ? `(${entry.entry_index}/${group.total_entries}) ` : "";
+      const preview =
+        entry.content.length > 200
+          ? `${entry.content.slice(0, 200).trim()}...`
+          : entry.content.trim();
+      lines.push(`  ${i + 1}. ${statusTag}${posTag}"${preview}"`);
+    }
+    if (group.other_topics.length > 0) {
+      lines.push(`  Also covers: ${group.other_topics.join(", ")}`);
+    }
+  }
+  return lines;
+}
+
+function renderSources(result: QueryResult): string[] {
+  const lines: string[] = ["", "## Sources"];
+  if (result.results.length === 0 && (!result.web_results || result.web_results.length === 0)) {
+    lines.push("No sources available.");
+    return lines;
+  }
+
+  for (const item of result.results) {
+    const files = item.meta.files.length > 0 ? item.meta.files.join(", ") : "no file refs";
+    lines.push(`- ${item.concept} (score ${(item.meta.score * 100).toFixed(1)}%)`);
+    lines.push(`  updated: ${item.meta.last_updated ? timeAgo(item.meta.last_updated) : "unknown"}`);
+    if (item.meta.last_narrative) {
+      const narrativeAge = item.meta.last_narrative.closed_at
+        ? timeAgo(item.meta.last_narrative.closed_at)
+        : "";
+      lines.push(
+        `  last narrative: ${item.meta.last_narrative.name} (${narrativeAge}) — "${item.meta.last_narrative.intent}"`,
+      );
+    }
+    lines.push(`  files: ${files}`);
+    lines.push(`  chunk: ${item.meta.chunk_id}`);
+    if (item.meta.cluster != null) {
+      lines.push(`  cluster: ${item.meta.cluster}`);
+    }
+    if (item.meta.cluster_summary) {
+      lines.push(`  cluster summary: ${item.meta.cluster_summary}`);
+    }
+    if (item.meta.cluster_peers && item.meta.cluster_peers.length > 0) {
+      lines.push(`  cluster peers: ${item.meta.cluster_peers.join(", ")}`);
+    }
+    if (item.meta.relations && item.meta.relations.length > 0) {
+      const relParts = item.meta.relations.map((rel) => {
+        const arrow = rel.direction === "outbound" ? "→" : "←";
+        return `${arrow} ${rel.concept} (${rel.type}, ${rel.weight})`;
+      });
+      lines.push(`  relations: ${relParts.join(", ")}`);
+    }
+    if (item.meta.neighbors_2hop && item.meta.neighbors_2hop.length > 0) {
+      const hop2Parts = item.meta.neighbors_2hop.map((neighbor) => {
+        const weight =
+          neighbor.weight != null ? `, ${(neighbor.weight * 100).toFixed(0)}%` : "";
+        return `${neighbor.concept} (${neighbor.path}${weight})`;
+      });
+      lines.push(`  2-hop neighbors: ${hop2Parts.join(", ")}`);
+    }
+    if (item.meta.bindings && item.meta.bindings.length > 0) {
+      const top = item.meta.bindings.slice(0, 10);
+      const bindParts = top.map((binding) => {
+        return `${binding.symbol} (${binding.kind}, ${binding.file}:${binding.line})`;
+      });
+      const suffix =
+        item.meta.bindings.length > 10 ? ` (+${item.meta.bindings.length - 10} more)` : "";
+      lines.push(`  bindings: ${bindParts.join(", ")}${suffix}`);
+    }
+    if (item.warning) {
+      lines.push(`  warning: ${item.warning}`);
+    }
+  }
+
+  if (result.web_results && result.web_results.length > 0) {
+    lines.push("", "## Web Sources");
+    for (const item of result.web_results) {
+      lines.push(`- ${item.title} (${item.source})`);
+      lines.push(`  ${item.url}`);
+    }
+  }
+
+  return lines;
+}
+
+function renderResultFooter(
+  result: QueryResult,
+  route: Extract<RenderRoute, "cli" | "mcp">,
+): string[] {
+  if (!result.result_id) return [];
+
+  const timing = result.meta.generated_in ? ` · ${result.meta.generated_in}` : "";
+  const trailNarrative =
+    result.journal_results && result.journal_results.length === 1
+      ? result.journal_results[0]!.narrative_name
+      : null;
+  const trailHint = trailCommand(route, trailNarrative);
+  const trailText = trailHint ? `, ${trailHint} for the full investigation trail` : "";
+  return [
+    "",
+    `Result ID: ${result.result_id}${timing} — use ${recallCommand(route, result.result_id)} for full sources, ${scoreCommand(route, result.result_id)} to rate this answer${trailText}.`,
+  ];
+}
+
+export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string {
+  const route = opts?.route ?? "cli";
+  const lines: string[] = [renderSummaryNarrative(result)];
+  const provenance = renderSummaryProvenance(result.executive_summary);
+  if (provenance) {
+    lines.push("", provenance);
+  }
+  lines.push(...renderClaimBlock(result.executive_summary));
+  lines.push(...renderBindingNudge(result.executive_summary, route));
+  if (opts?.includeSources) {
+    lines.push(...renderSources(result));
+  }
+  if (result.journal_results && result.journal_results.length > 0) {
+    lines.push(...renderJournalTrail(result.journal_results));
+  }
+  lines.push(...renderResultFooter(result, route));
+  return lines.join("\n").trimEnd();
+}
+
+export function renderAskBrief(result: QueryResult, opts?: Omit<RenderAskOptions, "includeSources">): string {
+  return renderAsk(result, { ...opts, includeSources: false });
+}
+
+export function renderRecall(recalled: RecallResult, section: RecallSection = "full"): string {
+  const result = recalled.result;
+  const scoreStr = recalled.score != null ? `scored: ${recalled.score}/5` : "unscored";
+  const age = timeAgo(recalled.created_at);
+  const lines: string[] = [`Recalled: "${recalled.query_text}" (${scoreStr}, ${age})`];
+
+  const showSources = section === "sources" || section === "full";
+  const showJournal = section === "journal" || section === "full";
+  const showSymbols = section === "symbols" || section === "full";
+
+  if (showSources) {
+    lines.push(...renderSources(result));
+  }
+
+  if (showJournal && result.journal_results && result.journal_results.length > 0) {
+    lines.push(...renderJournalTrail(result.journal_results));
+  }
+
+  if (showSymbols && result.symbol_results && result.symbol_results.length > 0) {
+    lines.push("", "## Symbols");
+    for (const sym of result.symbol_results) {
+      const boundTag = sym.bound_concepts?.length ? ` → [${sym.bound_concepts.join(", ")}]` : "";
+      lines.push(`- ${sym.kind} ${sym.qualified_name} (${sym.file_path}:${sym.line_start})${boundTag}`);
+    }
+  }
+
+  return lines.join("\n").trimEnd();
 }
 
 function renderStatusPlain(result: StatusResult): string {

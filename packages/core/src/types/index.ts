@@ -1039,6 +1039,7 @@ export interface ScanResult {
   files_scanned: number;
   files_skipped: number;
   files_removed: number;
+  files_failed?: number;
   symbols_found: number;
   call_sites_found?: number;
   source_chunks_found?: number;
@@ -1050,6 +1051,7 @@ export interface IngestResult {
   files_ingested: number;
   files_skipped: number;   // unchanged hash
   files_removed: number;   // deleted from disk
+  files_failed?: number;
   duration_ms: number;
 }
 
@@ -1384,7 +1386,7 @@ export interface FileRef {
 }
 
 // ─── Resolve Dangling ─────────────────────────────────────
-export type DanglingAction = "resume" | "close" | "abandon";
+export type DanglingAction = "resume" | "abandon";
 
 export interface ResolveDangling {
   narrative: string;

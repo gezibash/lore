@@ -10,6 +10,7 @@ function stripAnsi(text: string): string {
 
 function sampleQueryResult(): QueryResult {
   return {
+    result_id: "01ASKCLI",
     meta: {
       query: "how auth works",
       generated_at: "2026-02-24T00:00:00.000Z",
@@ -30,8 +31,8 @@ function sampleQueryResult(): QueryResult {
         staleness_checks: 1,
         web_search_enabled: true,
         web_results: 1,
-        journal_candidates: 0,
-        journal_results: 0,
+        journal_candidates: 1,
+        journal_results: 1,
       },
       rerank: {
         enabled: false,
@@ -73,7 +74,16 @@ function sampleQueryResult(): QueryResult {
       kind: "generated" as const,
       sources: [],
       citations: [],
-      counts: { concepts: 1, files: 1, symbols: 0, journal_entries: 0 },
+      counts: { concepts: 1, files: 1, symbols: 0, journal_entries: 1 },
+      claims: [
+        {
+          text: "Auth validates tokens before issuing sessions",
+          source_concepts: ["auth-model"],
+          confidence: 0.9,
+          max_staleness: 0.1,
+        },
+      ],
+      unbound_source_symbols: ["authenticateUser"],
     },
     results: [
       {
@@ -101,24 +111,53 @@ function sampleQueryResult(): QueryResult {
         source: "exa",
       },
     ],
+    journal_results: [
+      {
+        narrative_name: "auth-debug",
+        narrative_intent: "Investigate auth regression",
+        narrative_status: "closed",
+        total_entries: 2,
+        matched_entries: [
+          {
+            content: "Found the regression in authenticateUser.",
+            topics: ["auth"],
+            status: "confirmed",
+            created_at: "2026-02-25T12:00:00.000Z",
+            score: 0.08,
+            entry_index: 2,
+          },
+        ],
+        other_topics: [],
+        opened_at: "2026-02-25T10:00:00.000Z",
+        closed_at: "2026-02-25T14:00:00.000Z",
+      },
+    ],
   };
 }
 
 test("formatAskCli returns summary only by default", () => {
   const rendered = stripAnsi(formatAskCli(sampleQueryResult()));
   expect(rendered).toContain("Direct answer.");
-  expect(rendered).not.toContain("Sources");
-  expect(rendered).not.toContain("auth-model");
+  expect(rendered).toContain("Based on 1 concept, 1 source file.");
+  expect(rendered).toContain("## Attribution");
+  expect(rendered).toContain("Result ID: 01ASKCLI");
+  expect(rendered).toContain("lore recall 01ASKCLI");
+  expect(rendered).toContain("lore score 01ASKCLI <1-5>");
+  expect(rendered).toContain("lore trail auth-debug");
+  expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
+  expect(rendered).toContain("## Investigation Trail");
+  expect(rendered).not.toContain("## Sources");
 });
 
 test("formatAskCli includes sources when requested", () => {
   const rendered = stripAnsi(formatAskCli(sampleQueryResult(), { includeSources: true }));
   expect(rendered).toContain("Direct answer.");
-  expect(rendered).toContain("Sources");
-  expect(rendered).toContain("- **auth-model** (score 92.0%)");
+  expect(rendered).toContain("## Sources");
+  expect(rendered).toContain("- auth-model (score 92.0%)");
   expect(rendered).toContain("files: src/auth.ts");
-  expect(rendered).toContain("Web Sources");
+  expect(rendered).toContain("## Web Sources");
   expect(rendered).toContain("https://example.com/auth");
+  expect(rendered).toContain("Result ID: 01ASKCLI");
 });
 
 test("formatLs keeps staleness and cluster columns separated with ANSI colors", () => {

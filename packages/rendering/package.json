@@ -11,7 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@lore/worker": "workspace:*"
+    "@lore/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",

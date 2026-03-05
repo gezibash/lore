@@ -27,11 +27,11 @@ function importSpecifiers(content: string): string[] {
   return specs;
 }
 
-test("cli source imports only allowed public lore packages and local files", () => {
+test("rendering source stays on the sdk boundary", () => {
   const files = walkTsFiles(import.meta.dir);
   const offenders: string[] = [];
   const packageRoot = resolve(import.meta.dir, "..");
-  const allowedLoreImports = new Set(["@lore/mcp", "@lore/rendering", "@lore/worker"]);
+  const allowedLoreImports = new Set(["@lore/sdk"]);
 
   for (const file of files) {
     if (file.endsWith("sdk-boundary.test.ts")) continue;

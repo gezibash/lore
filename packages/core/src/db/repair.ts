@@ -51,6 +51,35 @@ interface AuditReport {
   issues: SchemaIssue[];
 }
 
+// Pending migrations are only reconciled automatically when they are explicitly
+// marked as schema-only. This avoids silently stamping future data backfills,
+// triggers, or repair migrations as applied based on DDL equivalence alone.
+const RECONCILABLE_MIGRATIONS = new Set([
+  "001_initial",
+  "002_concept_lifecycle",
+  "003_ref_content_hash",
+  "004_concept_relations",
+  "005_concept_tags",
+  "006_concept_health_signals",
+  "007_concept_heal_leases",
+  "008_ref_line_content",
+  "009_delta_targets",
+  "010_residual_decomposition",
+  "011_source_symbols",
+  "012_concept_symbols",
+  "013_graph_stale",
+  "014_query_cache",
+  "015_call_sites",
+  "016_code_embeddings_index",
+  "017_symbol_embeddings",
+  "018_source_chunks",
+  "019_entry_refs",
+  "020_file_refs",
+  "021_facts",
+  "022_bound_body_snapshot",
+  "023_delta_to_narrative",
+]);
+
 function quoteSqliteIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
@@ -335,6 +364,9 @@ function reconcileMigrationLedger(
   pendingNames: string[],
 ): { reconciled: number; fixed: SchemaIssue[] } {
   if (pendingNames.length === 0) return { reconciled: 0, fixed: [] };
+  if (pendingNames.some((name) => !RECONCILABLE_MIGRATIONS.has(name))) {
+    return { reconciled: 0, fixed: [] };
+  }
 
   ensureMigrationsTable(db);
   let reconciled = 0;

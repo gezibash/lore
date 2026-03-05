@@ -13,7 +13,8 @@ import type {
   StatusResult,
 } from "@lore/worker";
 import { renderLs as renderLsRoute, renderStatus as renderStatusRoute } from "@lore/rendering";
-import { renderExecutiveSummary, timeAgo } from "@lore/worker";
+import { renderAsk, renderAskBrief } from "@lore/rendering";
+import { timeAgo } from "@lore/worker";
 import type {
   EnsureProjectMcpConfigResult,
   HarnessMcpConfigResult,
@@ -40,49 +41,9 @@ export function formatAskCli(
     includeSources?: boolean;
   },
 ): string {
-  const es = result.executive_summary;
-  const summaryFallback = result.results[0]?.summary?.trim();
-  const headline = es
-    ? renderExecutiveSummary(es, { exactness: result.meta.grounding.exactness_detected })
-    : summaryFallback && summaryFallback.length > 0
-      ? summaryFallback
-      : "No matching concepts.";
-
-  const unboundSymbols = es?.unbound_source_symbols;
-  const bindingNudge =
-    unboundSymbols && unboundSymbols.length > 0
-      ? `\n⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. ` +
-        `These symbols have no concept bindings — future retrieval will rely on embedding similarity. ` +
-        `Bind them now: \`lore bind <concept> <symbol>\``
-      : "";
-
-  if (!opts?.includeSources) return bindingNudge ? `${headline}\n${bindingNudge}` : headline;
-
-  const lines: string[] = [headline];
-  if (bindingNudge) lines.push(bindingNudge);
-  lines.push("", "## Sources");
-  if (result.results.length === 0 && (!result.web_results || result.web_results.length === 0)) {
-    lines.push("No sources available.");
-    return lines.join("\n").trimEnd();
-  }
-
-  for (const item of result.results) {
-    const files = item.meta.files.length > 0 ? item.meta.files.join(", ") : "no file refs";
-    lines.push(`- **${item.concept}** (score ${(item.meta.score * 100).toFixed(1)}%)`);
-    lines.push(`  files: ${files}`);
-    lines.push(`  chunk: ${item.meta.chunk_id}`);
-  }
-
-  if (result.web_results && result.web_results.length > 0) {
-    lines.push("");
-    lines.push("## Web Sources");
-    for (const item of result.web_results) {
-      lines.push(`- ${item.title} (${item.source})`);
-      lines.push(`  ${item.url}`);
-    }
-  }
-
-  return lines.join("\n").trimEnd();
+  return opts?.includeSources
+    ? renderAsk(result, { route: "cli", includeSources: true })
+    : renderAskBrief(result, { route: "cli" });
 }
 
 export function formatLs(
@@ -118,11 +79,6 @@ export function formatLs(
     concept_symbol_counts: opts.conceptSymbolCounts,
   };
   return renderLsRoute(result, { route: "cli", format: "plain", groupBy: opts.groupBy });
-}
-
-export function formatShow(conceptName: string, content: string | null): string {
-  if (!content) return `${DIM}No content for concept '${conceptName}'${RESET}`;
-  return `${BOLD}${conceptName}${RESET}\n\n${content}`;
 }
 
 export function formatHistory(

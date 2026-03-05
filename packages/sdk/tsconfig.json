@@ -4,8 +4,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["../core/src/*"],
-      "@lore/core": ["../core/src/index.ts"],
-      "@lore/core/*": ["../core/src/*"]
+      "@lore/core": ["../core/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

@@ -27,20 +27,23 @@ function importSpecifiers(content: string): string[] {
   return specs;
 }
 
-test("cli source imports only allowed public lore packages and local files", () => {
+test("sdk source imports only the public core entrypoint", () => {
   const files = walkTsFiles(import.meta.dir);
   const offenders: string[] = [];
   const packageRoot = resolve(import.meta.dir, "..");
-  const allowedLoreImports = new Set(["@lore/mcp", "@lore/rendering", "@lore/worker"]);
 
   for (const file of files) {
-    if (file.endsWith("sdk-boundary.test.ts")) continue;
+    if (file.endsWith("core-boundary.test.ts")) continue;
     for (const spec of importSpecifiers(readFileSync(file, "utf-8"))) {
       if (spec.startsWith("@/")) {
         offenders.push(`${file}: forbidden core alias ${spec}`);
         continue;
       }
-      if (spec.startsWith("@lore/") && !allowedLoreImports.has(spec)) {
+      if (spec.startsWith("@lore/core/")) {
+        offenders.push(`${file}: forbidden deep core import ${spec}`);
+        continue;
+      }
+      if (spec.startsWith("@lore/") && spec !== "@lore/core") {
         offenders.push(`${file}: forbidden lore import ${spec}`);
         continue;
       }

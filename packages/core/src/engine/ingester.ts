@@ -11,7 +11,7 @@ export async function ingestDocFile(
   codePath: string,
   lorePath: string,
   absoluteFilePath: string,
-): Promise<"ingested" | "skipped"> {
+): Promise<"ingested" | "skipped" | "failed"> {
   let content: string;
   try {
     content = await Bun.file(absoluteFilePath).text();
@@ -44,26 +44,44 @@ export async function ingestDocFile(
     } catch {
       // If we can't read the file, re-ingest
     }
-    // Hash changed — delete old chunk
-    deleteDocChunksForFile(db, relPath);
+  }
+
+  let staged: { id: string; filePath: string };
+  try {
+    staged = await writeDocChunk({
+      lorePath,
+      docPath: relPath,
+      bodyHash,
+      content,
+    });
+  } catch {
+    return "failed";
+  }
+
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    if (existing) {
+      deleteDocChunksForFile(db, relPath);
+    }
+    insertChunk(db, {
+      id: staged.id,
+      filePath: staged.filePath,
+      flType: "doc",
+      createdAt: new Date().toISOString(),
+      sourceFilePath: relPath,
+    });
+    insertFtsContent(db, content, staged.id);
+    db.run("COMMIT");
+  } catch {
+    db.run("ROLLBACK");
+    await deleteSourceChunkFile(staged.filePath);
+    return "failed";
+  }
+
+  if (existing) {
     try { await deleteSourceChunkFile(existing.file_path); } catch { /* ignore */ }
   }
 
-  const { id, filePath } = await writeDocChunk({
-    lorePath,
-    docPath: relPath,
-    bodyHash,
-    content,
-  });
-
-  insertChunk(db, {
-    id,
-    filePath,
-    flType: "doc",
-    createdAt: new Date().toISOString(),
-    sourceFilePath: relPath,
-  });
-  insertFtsContent(db, content, id);
   return "ingested";
 }
 
@@ -96,16 +114,19 @@ export async function ingestTextFiles(
 
   let filesIngested = 0;
   let filesSkipped = 0;
+  let filesFailed = 0;
   for (const file of discovered) {
     const result = await ingestDocFile(db, codePath, lorePath, file.absolutePath);
     if (result === "ingested") filesIngested++;
-    else filesSkipped++;
+    else if (result === "skipped") filesSkipped++;
+    else filesFailed++;
   }
 
   return {
     files_ingested: filesIngested,
     files_skipped: filesSkipped,
     files_removed: filesRemoved,
+    files_failed: filesFailed,
     duration_ms: Math.round(performance.now() - start),
   };
 }

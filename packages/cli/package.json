@@ -12,6 +12,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@lore/mcp": "workspace:*",
     "@lore/rendering": "workspace:*",
     "@lore/worker": "workspace:*",
     "boune": "^0.10.2"

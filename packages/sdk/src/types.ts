@@ -1145,6 +1145,7 @@ export interface SymbolConceptMatch {
 export interface ScanResult {
   files_scanned: number;
   files_skipped: number;
+  files_failed?: number;
   files_removed: number;
   symbols_found: number;
   call_sites_found?: number;
@@ -1156,6 +1157,7 @@ export interface ScanResult {
 export interface IngestResult {
   files_ingested: number;
   files_skipped: number;
+  files_failed?: number;
   files_removed: number;
   duration_ms: number;
 }
@@ -1433,7 +1435,7 @@ export interface FileRef {
 }
 
 // ─── Resolve Dangling ─────────────────────────────────────
-export type DanglingAction = "resume" | "close" | "abandon";
+export type DanglingAction = "resume" | "abandon";
 
 export interface ResolveDangling {
   narrative: string;

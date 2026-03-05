@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { ulid } from "ulid";
 import { timeAgo } from "@/format.ts";
 import {
   LoreError,
@@ -57,7 +58,7 @@ import {
   getLastNarrativeForConcept,
   insertSymbolEmbedding,
 } from "@/db/index.ts";
-import { insertConceptVersion, insertConcept, getConceptsByCluster } from "@/db/concepts.ts";
+import { insertConceptVersion, insertConceptRaw, getConceptByName, getConceptsByCluster } from "@/db/concepts.ts";
 import {
   writeStateChunk,
   writeJournalChunk,
@@ -166,12 +167,14 @@ export async function openNarrative(
         case "abandon":
           abandonDbNarrative(db, danglingNarrative.id);
           break;
-        case "close":
-          closeDbNarrative(db, danglingNarrative.id);
-          break;
         case "resume":
           // Return context for the existing narrative instead
           return buildOpenResult(db, config, embedder, intent);
+        default:
+          throw new LoreError(
+            "DANGLING_NARRATIVE",
+            `Unsupported dangling narrative action '${String(resolveDangling.action)}'`,
+          );
       }
     }
   }
@@ -2469,6 +2472,20 @@ export async function closeNarrativeOp(
   const conceptsCreated: string[] = [];
   const conflicts: MergeConflict[] = [];
 
+  type PreparedChunkWrite = {
+    conceptId: string;
+    conceptName: string;
+    existingChunkId: string | null;
+    chunkId: string;
+    filePath: string;
+    content: string;
+    sourceEntryIndices: number[];
+  };
+
+  const preparedConceptCreates: Array<{ id: string; name: string }> = [];
+  const preparedChunkWrites: PreparedChunkWrite[] = [];
+  let commit: ReturnType<typeof insertCommit> | null = null;
+
   // Collect chunk contents + IDs for batch embedding after both loops
   const pendingEmbeds: Array<{ chunkId: string; content: string }> = [];
   // Track old→new chunk pairs for residual computation (Phase 3)
@@ -2564,28 +2581,18 @@ export async function closeNarrativeOp(
       content: finalContent,
     });
 
-    // Mark old chunk superseded on disk
-    if (update.existingChunkId) {
-      const oldChunk = getChunk(db, update.existingChunkId);
-      if (oldChunk) {
-        await markSupersededOnDisk(oldChunk.file_path, id);
-      }
-    }
-
-    // Insert new chunk into DB
-    insertChunk(db, {
-      id,
-      filePath,
-      flType: "chunk",
+    preparedChunkWrites.push({
       conceptId: update.conceptId,
-      narrativeId: narrative.id,
-      supersedesId: update.existingChunkId,
-      createdAt: new Date().toISOString(),
+      conceptName: update.conceptName,
+      existingChunkId: update.existingChunkId,
+      chunkId: id,
+      filePath,
+      content: finalContent,
+      sourceEntryIndices: update.sourceEntryIndices,
     });
 
-    // Defer embedding to batch — collect content and FTS
+    // Defer embedding to batch — collect content
     pendingEmbeds.push({ chunkId: id, content: finalContent });
-    insertFtsContent(db, finalContent, id);
 
     // Track for residual computation
     residualPairs.push({
@@ -2593,9 +2600,6 @@ export async function closeNarrativeOp(
       newChunkId: id,
       oldChunkId: update.existingChunkId,
     });
-
-    // Update concept's active chunk (append-only)
-    insertConceptVersion(db, update.conceptId, { active_chunk_id: id, staleness: 0 });
 
     // Track entry index → conceptId for auto-binding
     for (const idx of update.sourceEntryIndices) {
@@ -2607,8 +2611,6 @@ export async function closeNarrativeOp(
 
   // Create new concepts — check for concurrent creates
   for (const create of plan.creates) {
-    // Check if someone else created the same concept while narrative was open
-    const { getConceptByName } = await import("@/db/concepts.ts");
     const existingConcept = getConceptByName(db, create.conceptName);
 
     let finalContent = create.content;
@@ -2643,8 +2645,8 @@ export async function closeNarrativeOp(
       // Concept already existed — treat as update
       conceptId = existingConcept.id;
     } else {
-      const newConcept = insertConcept(db, create.conceptName);
-      conceptId = newConcept.id;
+      conceptId = ulid();
+      preparedConceptCreates.push({ id: conceptId, name: create.conceptName });
     }
 
     // Version: existing concept -> prior + 1, else 1
@@ -2670,24 +2672,21 @@ export async function closeNarrativeOp(
       content: finalContent,
     });
 
-    insertChunk(db, {
-      id,
-      filePath,
-      flType: "chunk",
+    preparedChunkWrites.push({
       conceptId,
-      narrativeId: narrative.id,
-      createdAt: new Date().toISOString(),
+      conceptName: create.conceptName,
+      existingChunkId: null,
+      chunkId: id,
+      filePath,
+      content: finalContent,
+      sourceEntryIndices: create.sourceEntryIndices,
     });
 
-    // Defer embedding to batch — collect content and FTS
+    // Defer embedding to batch — collect content
     pendingEmbeds.push({ chunkId: id, content: finalContent });
-    insertFtsContent(db, finalContent, id);
 
     // New concepts start with residual 0
     residualPairs.push({ conceptId, newChunkId: id, oldChunkId: null });
-
-    // Set active chunk (append-only)
-    insertConceptVersion(db, conceptId, { active_chunk_id: id, staleness: 0 });
 
     // Track content diff for new concepts (all lines are adds)
     const newLines = finalContent.split("\n").length;
@@ -2703,31 +2702,86 @@ export async function closeNarrativeOp(
 
   // Batch embed all new state chunks
   const stateEmbedSpan = tracer.span("batch-embed-state");
+  const embeddingByChunkId = new Map<string, Float32Array>();
+  let embeddedAt: string | null = null;
   if (pendingEmbeds.length > 0) {
     const embeddings = await embedder.embedBatch(pendingEmbeds.map((p) => p.content));
-    const embeddedAt = new Date().toISOString();
     for (let i = 0; i < pendingEmbeds.length; i++) {
-      const chunkId = pendingEmbeds[i]!.chunkId;
-      insertEmbedding(db, chunkId, embeddings[i]!, config.ai.embedding.model);
-      const chunkRow = getChunk(db, chunkId);
-      if (chunkRow) {
-        await updateChunkFrontmatter(chunkRow.file_path, {
+      embeddingByChunkId.set(pendingEmbeds[i]!.chunkId, embeddings[i]!);
+    }
+    embeddedAt = new Date().toISOString();
+  }
+
+  try {
+    db.run("BEGIN IMMEDIATE TRANSACTION");
+    for (const concept of preparedConceptCreates) {
+      insertConceptRaw(db, concept.id, concept.name, { activeChunkId: null });
+    }
+    for (const chunk of preparedChunkWrites) {
+      insertChunk(db, {
+        id: chunk.chunkId,
+        filePath: chunk.filePath,
+        flType: "chunk",
+        conceptId: chunk.conceptId,
+        narrativeId: narrative.id,
+        supersedesId: chunk.existingChunkId,
+        createdAt: new Date().toISOString(),
+      });
+      insertFtsContent(db, chunk.content, chunk.chunkId);
+      const embedding = embeddingByChunkId.get(chunk.chunkId);
+      if (embedding) {
+        insertEmbedding(db, chunk.chunkId, embedding, config.ai.embedding.model);
+      }
+      insertConceptVersion(db, chunk.conceptId, { active_chunk_id: chunk.chunkId, staleness: 0 });
+    }
+    const treeEntries: Array<{ conceptId: string; chunkId: string; conceptName: string }> = [];
+    for (const concept of getConcepts(db)) {
+      if (concept.active_chunk_id && (concept.lifecycle_status == null || concept.lifecycle_status === "active")) {
+        treeEntries.push({
+          conceptId: concept.id,
+          chunkId: concept.active_chunk_id,
+          conceptName: concept.name,
+        });
+      }
+    }
+    const parentId = head?.id ?? null;
+    const commitMessage = `close narrative '${narrativeName}': ${conceptsUpdated.length} updated, ${conceptsCreated.length} created`;
+    commit = insertCommit(db, narrative.id, parentId, mergeBaseId, commitMessage);
+    insertCommitTree(db, commit.id, treeEntries);
+    closeDbNarrative(db, narrative.id);
+    db.run("COMMIT");
+  } catch (error) {
+    try {
+      db.run("ROLLBACK");
+    } catch {}
+    throw error;
+  }
+
+  for (const chunk of preparedChunkWrites) {
+    try {
+      if (chunk.existingChunkId) {
+        const oldChunk = getChunk(db, chunk.existingChunkId);
+        if (oldChunk) {
+          await markSupersededOnDisk(oldChunk.file_path, chunk.chunkId);
+        }
+      }
+      if (embeddedAt && embeddingByChunkId.has(chunk.chunkId)) {
+        await updateChunkFrontmatter(chunk.filePath, {
           fl_embedding_model: config.ai.embedding.model,
           fl_embedded_at: embeddedAt,
         });
         await writeEmbeddingFile(
-          embeddingFilePath(chunkRow.file_path),
+          embeddingFilePath(chunk.filePath),
           config.ai.embedding.model,
-          embeddings[i]!,
+          embeddingByChunkId.get(chunk.chunkId)!,
         );
       }
+    } catch {
+      // Best-effort metadata updates must not invalidate an already committed close.
     }
+  }
 
-    // Compute per-concept churn (version-to-version drift) and ground_residual (vs source refs)
-    const embeddingByChunkId = new Map<string, Float32Array>();
-    for (let i = 0; i < pendingEmbeds.length; i++) {
-      embeddingByChunkId.set(pendingEmbeds[i]!.chunkId, embeddings[i]!);
-    }
+  if (pendingEmbeds.length > 0) {
     const contentByChunkId = new Map<string, string>();
     for (const pe of pendingEmbeds) {
       contentByChunkId.set(pe.chunkId, pe.content);
@@ -3072,21 +3126,9 @@ export async function closeNarrativeOp(
     }
   }
 
-  // Snapshot full tree as new commit
-  const treeEntries: Array<{ conceptId: string; chunkId: string; conceptName: string }> = [];
-  for (const c of conceptsPost) {
-    if (c.active_chunk_id && (c.lifecycle_status == null || c.lifecycle_status === "active")) {
-      treeEntries.push({ conceptId: c.id, chunkId: c.active_chunk_id, conceptName: c.name });
-    }
+  if (!commit) {
+    throw new LoreError("COMMIT_NOT_FOUND", `Close commit for narrative '${narrativeName}' was not created`);
   }
-
-  const parentId = head?.id ?? null;
-  const commitMessage = `close narrative '${narrativeName}': ${conceptsUpdated.length} updated, ${conceptsCreated.length} created`;
-  const commit = insertCommit(db, narrative.id, parentId, mergeBaseId, commitMessage);
-  insertCommitTree(db, commit.id, treeEntries);
-
-  // Close narrative (append-only)
-  closeDbNarrative(db, narrative.id);
 
   // Update manifest
   const debtAfter = computeTotalDebt(activeConceptsPost, fiedlerAfter);
