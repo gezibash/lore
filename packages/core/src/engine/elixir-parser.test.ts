@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
 
-const FIXTURE = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/sample.ex"),
-  "utf-8",
-);
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures");
+
+const FIXTURE = readFileSync(join(fixtureDir, "sample.ex"), "utf-8");
+const PETNAME_FIXTURE = readFileSync(join(fixtureDir, "petname.ex"), "utf-8");
+const IDENTITY_FIXTURE = readFileSync(join(fixtureDir, "identity.ex"), "utf-8");
 
 describe("Elixir parser", () => {
   let pool: TreeSitterPool;
@@ -54,6 +55,34 @@ describe("Elixir parser", () => {
     expect(hello?.export_status).toBe("exported");
     expect(normalize?.export_status).toBe("local");
     expect(validate?.export_status).toBe("local");
+  });
+
+  test("petname.ex: extracts module and binary-pattern functions", async () => {
+    const { tree, lang } = await pool.parse(PETNAME_FIXTURE, "elixir");
+    const symbols = extractSymbols(tree, lang, "elixir", PETNAME_FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.qualified_name);
+    expect(names).toContain("Arc.Identity.Petname");
+    expect(names).toContain("Arc.Identity.Petname.from_public_key");
+    expect(names).toContain("Arc.Identity.Petname.short");
+  });
+
+  test("identity.ex: extracts functions with struct patterns and do: shorthand", async () => {
+    const { tree, lang } = await pool.parse(IDENTITY_FIXTURE, "elixir");
+    const symbols = extractSymbols(tree, lang, "elixir", IDENTITY_FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.qualified_name);
+    expect(names).toContain("Arc.Identity");
+    expect(names).toContain("Arc.Identity.generate");
+    expect(names).toContain("Arc.Identity.from_seed");
+    expect(names).toContain("Arc.Identity.sign");
+    expect(names).toContain("Arc.Identity.verify");
+    expect(names).toContain("Arc.Identity.to_x25519");
+    expect(names).toContain("Arc.Identity.encode_public_key");
+    expect(names).toContain("Arc.Identity.name");
+    expect(names).toContain("Arc.Identity.short_name");
   });
 
   test("extracts call sites", async () => {
