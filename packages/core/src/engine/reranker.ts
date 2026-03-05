@@ -22,7 +22,7 @@ export async function rerankResults<T>(
 ): Promise<RerankResult<T>> {
   const rr = config.ai.search?.rerank;
   if (!rr?.enabled || candidates.length < 2) {
-    return { ordered: candidates, scores: new Array(candidates.length).fill(0), failed: false };
+    return { ordered: candidates, scores: Array.from({ length: candidates.length }, () => 0), failed: false };
   }
 
   const modelName = rr.model ?? "rerank-v3.5";
@@ -30,7 +30,7 @@ export async function rerankResults<T>(
   if (provider !== "cohere") {
     return {
       ordered: candidates,
-      scores: new Array(candidates.length).fill(0),
+      scores: Array.from({ length: candidates.length }, () => 0),
       failed: true,
       error: `unsupported rerank provider: ${provider}`,
     };
@@ -89,7 +89,7 @@ export async function rerankResults<T>(
     );
     return {
       ordered: candidates,
-      scores: new Array(candidates.length).fill(0),
+      scores: Array.from({ length: candidates.length }, () => 0),
       failed: true,
       error: timedOut
         ? `rerank timed out after ${timeoutMs}ms`

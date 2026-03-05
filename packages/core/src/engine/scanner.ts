@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "fs";
 import { createHash } from "crypto";
-import type { ScanResult, SymbolKind, ExtractedSymbol, BindingType, SupportedLanguage } from "@/types/index.ts";
+import type { ScanResult, SymbolKind, ExtractedSymbol, BindingType, SupportedLanguage, ExtractedCallSite } from "@/types/index.ts";
 import { discoverFiles, isTsxFile } from "./file-discovery.ts";
 import { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
@@ -186,7 +186,7 @@ export async function scanProject(
     // Parse with tree-sitter
     const isTsx = isTsxFile(file.relativePath);
     let symbols: ExtractedSymbol[];
-    let callSites: import("@/types/index.ts").ExtractedCallSite[] = [];
+    let callSites: ExtractedCallSite[] = [];
     try {
       const { tree, lang } = await pool.parse(content, file.language, isTsx);
       symbols = extractSymbols(tree, lang, file.language, content, pool);
@@ -350,7 +350,7 @@ export async function rescanFiles(
 
     // Detect language from extension
     const ext = relativePath.split(".").pop()?.toLowerCase();
-    let language: import("@/types/index.ts").SupportedLanguage;
+    let language: SupportedLanguage;
     switch (ext) {
       case "ts":
       case "tsx":
@@ -377,7 +377,7 @@ export async function rescanFiles(
 
     const isTsx = isTsxFile(relativePath);
     let symbols: ExtractedSymbol[];
-    let callSites: import("@/types/index.ts").ExtractedCallSite[] = [];
+    let callSites: ExtractedCallSite[] = [];
     try {
       const { tree, lang } = await pool.parse(content, language, isTsx);
       symbols = extractSymbols(tree, lang, language, content, pool);

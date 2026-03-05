@@ -26,57 +26,6 @@ const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
-const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
-const COL_GAP = "  ";
-
-function pad(str: string, width: number): string {
-  return str.padEnd(width);
-}
-
-function visibleLength(str: string): number {
-  return str.replace(ANSI_RE, "").length;
-}
-
-function padVisible(str: string, width: number): string {
-  const len = visibleLength(str);
-  if (len >= width) return str;
-  return str + " ".repeat(width - len);
-}
-
-function trendArrow(delta?: number | null): string {
-  if (delta == null || !Number.isFinite(delta)) return "";
-  if (delta > 1e-6) return `${RED}↑${RESET}`;
-  if (delta < -1e-6) return `${GREEN}↓${RESET}`;
-  return "";
-}
-
-function trendBadge(delta?: number | null): string {
-  if (delta == null || !Number.isFinite(delta)) return "";
-  const magnitude = `${Math.abs(delta * 100).toFixed(1)}%`;
-  if (delta > 1e-6) return `${RED}↑ ${magnitude}${RESET}`;
-  if (delta < -1e-6) return `${GREEN}↓ ${magnitude}${RESET}`;
-  return "";
-}
-
-function stalenessLabel(value: number | null): string {
-  if (value == null) return "—";
-  if (value > 0.5) return `${RED}high${RESET}`;
-  if (value > 0.3) return `${YELLOW}medium${RESET}`;
-  return `${GREEN}low${RESET}`;
-}
-
-function normalizedResidual(raw: number | null): number | null {
-  if (raw == null || !Number.isFinite(raw)) return null;
-  return Math.min(1, Math.max(0, raw / 2));
-}
-
-function residualLabel(normalized: number | null): string {
-  if (normalized == null) return "—";
-  const text = `${(normalized * 100).toFixed(0)}%`;
-  if (normalized <= 0.35) return `${GREEN}${text}${RESET}`;
-  if (normalized <= 0.75) return `${YELLOW}${text}${RESET}`;
-  return `${RED}${text}${RESET}`;
-}
 
 function compactCount(value: number): string {
   const abs = Math.abs(value);

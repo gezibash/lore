@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RelationType, WorkerClient } from "@lore/worker";
+import type { RelationType, WorkerClient, NarrativeTarget, MergeStrategy } from "@lore/worker";
 import { renderLs, renderStatus } from "@lore/rendering";
 import {
   formatOpen,
@@ -63,7 +63,7 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
     async ({ narrative, intent, resolve_dangling, targets }) => {
       const result = await client.open(narrative, intent, {
         resolveDangling: resolve_dangling,
-        targets: targets as import("@lore/worker").NarrativeTarget[] | undefined,
+        targets: targets as NarrativeTarget[] | undefined,
       });
       return { content: [{ type: "text" as const, text: formatOpen(result) }] };
     },
@@ -218,7 +218,7 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
       }
       const result = await client.close(narrative, {
         mode,
-        mergeStrategy: mergeStrategy as import("@lore/worker").MergeStrategy | undefined,
+        mergeStrategy: mergeStrategy as MergeStrategy | undefined,
       });
       return { content: [{ type: "text" as const, text: formatClose(result) }] };
     },

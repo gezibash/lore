@@ -16,6 +16,10 @@ import {
   type MergeStrategy,
   type ResolveDangling,
   type NarrativeTarget,
+  type NarrativeRow,
+  type SymbolDriftResult,
+  type ConceptBindingSummary,
+  type ConceptRelationRow,
 } from "@/types/index.ts";
 import {
   insertNarrative,
@@ -316,7 +320,7 @@ export async function logEntry(
   config: LoreConfig,
   opts: LogEntryOpts = {},
 ): Promise<LogResult> {
-  const { topics = [], codePath, refs, concepts, symbols } = opts;
+  const { topics = [], refs, concepts, symbols } = opts;
   const narrative = getOpenNarrativeByName(db, narrativeName);
   if (!narrative) {
     throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
@@ -623,7 +627,7 @@ export async function queryConcepts(
   const narrativeGroupMap = new Map<
     string,
     {
-      narrativeRow: import("@/types/index.ts").NarrativeRow | null;
+      narrativeRow: NarrativeRow | null;
       entries: JournalTrailEntry[];
       bestScore: number;
     }
@@ -860,15 +864,8 @@ export async function queryConcepts(
     concepts_boosted: structuralConceptsBoosted,
   });
 
-  // Compute symbol drift for result concepts
-  const symbolDriftWarnings = new Map<string, string[]>();
-  const symbolMetaByChunk = new Map<
-    string,
-    { bound: number; drifted: number; drift: "none" | "drifted" }
-  >();
-
   // Get all drifted bindings once
-  let allDriftedBindings: import("@/types/index.ts").SymbolDriftResult[] = [];
+  let allDriftedBindings: SymbolDriftResult[] = [];
   try {
     allDriftedBindings = getDriftedBindings(db);
   } catch {
@@ -880,8 +877,6 @@ export async function queryConcepts(
   for (const drift of allDriftedBindings) {
     driftedByConceptId.set(drift.concept_id, (driftedByConceptId.get(drift.concept_id) ?? 0) + 1);
   }
-
-  const codePath = opts?.codePath;
 
   // Staleness penalty: old concepts lose up to 10% relevance, fresh ones lose nothing.
   // This rewards recently closed narratives and penalizes concepts that haven't been
@@ -1100,8 +1095,8 @@ export async function queryConcepts(
     let files: string[] = [];
     let symbolsBound = 0;
     let symbolsDrifted = 0;
-    let bindingSummaries: import("@/types/index.ts").ConceptBindingSummary[] = [];
-    let relationRows: import("@/types/index.ts").ConceptRelationRow[] = [];
+    let bindingSummaries: ConceptBindingSummary[] = [];
+    let relationRows: ConceptRelationRow[] = [];
     if (concept) {
       try {
         files = getFilesForConcept(db, concept.id);
@@ -1556,25 +1551,6 @@ function formatOneDecimal(value: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<void>,
-): Promise<void> {
-  if (items.length === 0) return;
-  const limit = Math.max(1, Math.min(concurrency, items.length));
-  let cursor = 0;
-  const runners = Array.from({ length: limit }, async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= items.length) return;
-      await worker(items[index]!, index);
-    }
-  });
-  await Promise.all(runners);
-}
-
-
 interface ProvenanceSource {
   concept: string;
   score: number;
@@ -1775,48 +1751,6 @@ function detectExactnessQuery(query: string): boolean {
   if (SUMMARY_GROUNDING_INLINE_REF_RE.test(query)) return true;
   SUMMARY_GROUNDING_INLINE_REF_RE.lastIndex = 0;
   return false;
-}
-
-async function findLineInFile(
-  codePath: string,
-  filePath: string,
-  lineContent: string,
-): Promise<SummaryGroundingHit | null> {
-  const term = lineContent.trim();
-  if (term.length < 6) return null;
-  const absolutePath = filePath.startsWith("/") ? filePath : `${codePath}/${filePath}`;
-  try {
-    const proc = Bun.spawn({
-      cmd: [
-        "rg",
-        "-n",
-        "--column",
-        "--no-heading",
-        "--color",
-        "never",
-        "-F",
-        "--max-count",
-        "1",
-        term,
-        absolutePath,
-      ],
-      cwd: codePath,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    const firstLine = stdout.split("\n").find(Boolean);
-    if (!firstLine) return null;
-    const match = firstLine.match(/^([^:]+):(\d+):(\d+):(.*)$/);
-    if (!match) return null;
-    const file = match[1]?.trim();
-    const lineNumber = Number(match[2]);
-    const snippet = compactSnippet(match[4] ?? "", SUMMARY_GROUNDING_SNIPPET_MAX);
-    if (!file || !Number.isFinite(lineNumber) || lineNumber <= 0) return null;
-    return { file, line: lineNumber, snippet, term };
-  } catch {
-    return null;
-  }
 }
 
 export async function collectSummaryGroundingEvidence(
@@ -2999,7 +2933,7 @@ export async function closeNarrativeOp(
   for (const id of touchedConceptIds) scopedConcepts.add(id);
 
   // Get drifted bindings for staleness adjustment
-  let closeDriftedBindings: import("@/types/index.ts").SymbolDriftResult[] = [];
+  let closeDriftedBindings: SymbolDriftResult[] = [];
   try {
     closeDriftedBindings = getDriftedBindings(db);
   } catch {

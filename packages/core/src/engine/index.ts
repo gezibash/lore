@@ -51,7 +51,6 @@ import { openDb, runMigrations } from "@/db/index.ts";
 import { migrate as runMigrate, getMigrationStatus, type MigrationStatus } from "@/db/migrator.ts";
 import {
   getManifest,
-  getPreviousManifest,
   upsertManifest,
   markGraphStale,
   getOpenNarratives,
@@ -164,7 +163,6 @@ import type {
   SymbolSearchResult,
   SymbolRow,
   SymbolKind,
-  ConceptSymbolRow,
   ConceptBindingSummary,
   SymbolDriftResult,
   CoverageReport,
@@ -181,7 +179,7 @@ import {
 } from "./concept-health.ts";
 import { ulid } from "ulid";
 import { computeSuggestions } from "./suggest.ts";
-import type { SuggestResult } from "@/types/index.ts";
+import type { SuggestResult, SuggestionKind } from "@/types/index.ts";
 import { scanProject, rescanProject } from "./scanner.ts";
 import { discoverFiles } from "./file-discovery.ts";
 import { extractBindingsForConcepts, pruneOrphanedBindings, autoBindSemantic } from "./binding-extraction.ts";
@@ -198,7 +196,6 @@ import {
   getLastScannedAt,
 } from "@/db/source-files.ts";
 import {
-  getBindingsForConcept,
   getBindingSummariesForConcept,
   deleteConceptSymbol,
   upsertConceptSymbol,
@@ -3192,12 +3189,12 @@ export class LoreEngine {
   async suggest(opts?: {
     codePath?: string;
     limit?: number;
-    kind?: import("@/types/index.ts").SuggestionKind | import("@/types/index.ts").SuggestionKind[];
+    kind?: SuggestionKind | SuggestionKind[];
   }): Promise<SuggestResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
     this.ensureGraphFresh(db);
     const config = this.configFor(entry);
-    let generator: import("./generator.ts").Generator | undefined;
+    let generator: Generator | undefined;
     try {
       generator = await this.generatorFor(config, this.loreNameFor(entry));
     } catch {

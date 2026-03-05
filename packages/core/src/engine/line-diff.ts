@@ -53,7 +53,7 @@ function computeLCS(a: string[], b: string[]): number[][] {
   const m = a.length;
   const n = b.length;
   // dp[i][j] = length of LCS of a[0..i-1] and b[0..j-1]
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array.from({ length: n + 1 }, () => 0));
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {

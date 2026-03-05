@@ -52,10 +52,6 @@ export function formatLog(result: LogResult): string {
   return text;
 }
 
-function formatOptionalNumber(value: number | null, digits: number): string {
-  return value == null ? "n/a" : value.toFixed(digits);
-}
-
 function formatPct(value: number | null): string {
   return value == null ? "n/a" : `${(value * 100).toFixed(0)}%`;
 }

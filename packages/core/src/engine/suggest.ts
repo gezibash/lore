@@ -11,15 +11,15 @@ import { pairwiseCosineSimilarity } from "./graph.ts";
 import { computeDebtSnapshot, conceptPressure } from "./debt.ts";
 import type {
   ConceptRow,
-  ConceptRelationRow,
   LoreConfig,
   RegistryEntry,
   SuggestionKind,
   SuggestionImpact,
 } from "@/types/index.ts";
-import type { Suggestion, SuggestResult, SuggestionStep } from "@/types/index.ts";
-import { getUncoveredSymbols, getFileCoverage, getCoverageStats, getConceptCoverage } from "@/db/concept-symbols.ts";
+import type { Suggestion, SuggestResult } from "@/types/index.ts";
+import { getUncoveredSymbols, getFileCoverage, getConceptCoverage } from "@/db/concept-symbols.ts";
 import { computeAskDebtSnapshot, type AskDebtSnapshot } from "./ask-debt.ts";
+import type { Generator } from "./generator.ts";
 import { readSymbolContent } from "./git.ts";
 
 const PAIRWISE_CONCEPT_LIMIT = 200;
@@ -63,7 +63,7 @@ export async function computeSuggestions(
     entry?: RegistryEntry;
     config?: LoreConfig;
     askDebtSnapshot?: AskDebtSnapshot;
-    generator?: import("./generator.ts").Generator;
+    generator?: Generator;
   },
 ): Promise<SuggestResult> {
   const limit = opts?.limit ?? 10;
@@ -74,7 +74,6 @@ export async function computeSuggestions(
   const laplacian = getLaplacianCache(db);
   const activeConcepts = getActiveConcepts(db);
   const conceptById = new Map<string, ConceptRow>(activeConcepts.map((c) => [c.id, c]));
-  const conceptByName = new Map<string, ConceptRow>(activeConcepts.map((c) => [c.name, c]));
 
   // Compute live debt (includes ref-drift pressure not yet committed to manifest)
   const debtSnapshot = await computeDebtSnapshot(

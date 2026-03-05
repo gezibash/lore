@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "import", "node", "promise"],
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "ignorePatterns": ["dist/**", "out/**", "coverage/**", "*.tsbuildinfo"],
+  "rules": {
+    "no-unused-vars": [
+      "warn",
+      { "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }
+    ],
+    "typescript/consistent-type-imports": "warn",
+    "typescript/no-explicit-any": "warn",
+    "import/no-cycle": "warn",
+    "promise/param-names": "error",
+    "unicorn/no-new-array": "warn"
+  }
+}

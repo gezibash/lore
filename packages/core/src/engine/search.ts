@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { LoreConfig, RRFResult } from "@/types/index.ts";
+import type { LoreConfig, RRFResult, SourceChunkFrontmatter, DocChunkFrontmatter } from "@/types/index.ts";
 import { vectorSearch, getChunk, getConcept } from "@/db/index.ts";
 import { bm25Search } from "@/db/fts.ts";
 import { readChunk } from "@/storage/index.ts";
@@ -244,11 +244,11 @@ export async function hybridSearch(
 
     if (fm.fl_type === "source") {
       // Source chunk: wrap body with file/line header and code fence
-      const sfm = fm as import("@/types/index.ts").SourceChunkFrontmatter;
+      const sfm = fm as SourceChunkFrontmatter;
       content = `[Source: ${sfm.fl_source_file}:${sfm.fl_line_start}-${sfm.fl_line_end}]\n\`\`\`${sfm.fl_language}\n${parsed.content}\n\`\`\``;
       concept = sfm.fl_symbol as string;
     } else if (fm.fl_type === "doc") {
-      const dfm = fm as import("@/types/index.ts").DocChunkFrontmatter;
+      const dfm = fm as DocChunkFrontmatter;
       const truncated = parsed.content.slice(0, 4000);
       content = `[Doc: ${dfm.fl_doc_path}]\n${truncated}`;
       concept = dfm.fl_doc_path;

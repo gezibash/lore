@@ -2,7 +2,7 @@ import { rmSync } from "fs";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { runMigrations } from "@/db/migrations.ts";
 import { openDb } from "@/db/connection.ts";
 

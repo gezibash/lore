@@ -11,7 +11,6 @@ export async function refreshEmbeddingsCommand(client: WorkerClient): Promise<vo
   let textModelSeen: string | null = null;
   let codeModelSeen: string | null = null;
   let finalTextTotal = 0;
-  let finalCodeTotal = 0;
 
   const result = await client.reEmbed({
     onProgress(phase, current, total, model) {
@@ -26,7 +25,6 @@ export async function refreshEmbeddingsCommand(client: WorkerClient): Promise<vo
         const label = `Embedding [code${model ? ` · ${model}` : ""}]`;
         if (!bars.code) {
           bars.code = createProgressBar(label, { total });
-          finalCodeTotal = total;
         }
         bars.code.update(current, label);
       }
