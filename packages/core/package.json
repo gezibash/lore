@@ -1,0 +1,46 @@
+{
+  "name": "@lore/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types/index.ts",
+    "./config": "./src/config/index.ts",
+    "./config/prompts": "./src/config/prompts.ts",
+    "./db": "./src/db/index.ts",
+    "./format": "./src/format.ts",
+    "./mcp-formatters": "./src/mcp-formatters.ts",
+    "./engine/line-diff": "./src/engine/line-diff.ts"
+  },
+  "scripts": {
+    "typecheck": "bun x tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-sdk/alibaba": "^1.0.4",
+    "@ai-sdk/cohere": "^3.0.21",
+    "@ai-sdk/gateway": "^3.0.53",
+    "@ai-sdk/groq": "^3.0.24",
+    "@ai-sdk/moonshotai": "^2.0.5",
+    "@ai-sdk/openai": "^3.0.30",
+    "@ai-sdk/openai-compatible": "^2.0.30",
+    "@repomix/tree-sitter-wasms": "^0.1.16",
+    "ai": "^6.0.97",
+    "exa-js": "^2.4.0",
+    "gray-matter": "^4.0.3",
+    "ml-matrix": "^6.12.1",
+    "ollama-ai-provider-v2": "^3.3.1",
+    "p-retry": "^7.1.1",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "ulid": "^3.0.2",
+    "voyage-ai-provider": "^3.0.0",
+    "web-tree-sitter": "^0.26.6",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,8 @@
+# Test directories — benchmark question files contain ground-truth answers
+# that contaminate retrieval if indexed as doc chunks
+tests/
+test/
+__tests__/
+spec/
+benchmarks/
+fixtures/

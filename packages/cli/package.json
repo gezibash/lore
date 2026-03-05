@@ -1,0 +1,23 @@
+{
+  "name": "@lore/cli",
+  "version": "0.1.0",
+  "bin": {
+    "lore": "src/index.ts"
+  },
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "typecheck": "bun x tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@lore/rendering": "workspace:*",
+    "@lore/worker": "workspace:*",
+    "boune": "^0.10.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

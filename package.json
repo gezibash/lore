@@ -1,0 +1,30 @@
+{
+  "name": "@lore/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "tests/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "bun --cwd packages/cli run src/index.ts",
+    "mcp": "bun --cwd packages/mcp run src/index.ts",
+    "link": "bun link --cwd packages/cli",
+    "link:global": "bun link --global --cwd packages/cli",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/worker typecheck && bun run --cwd packages/rendering typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/cli typecheck",
+    "test": "bun run --cwd packages/core test && bun run --cwd packages/sdk test && bun run --cwd packages/worker test && bun run --cwd packages/rendering test && bun run --cwd packages/mcp test && bun run --cwd packages/cli test",
+    "release": "bunx changelogen --release"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "changelogen": "^0.6.2",
+    "oxfmt": "^0.35.0",
+    "oxlint": "^1.51.0",
+    "typescript": "^5.9.3"
+  }
+}

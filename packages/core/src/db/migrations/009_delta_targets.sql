@@ -1,0 +1,1 @@
+ALTER TABLE deltas ADD COLUMN targets TEXT;

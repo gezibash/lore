@@ -1,0 +1,169 @@
+export { openDb, ensureCustomSqlite } from "./connection.ts";
+export { runMigrations } from "./migrations.ts";
+export {
+  insertChunk,
+  getChunk,
+  getActiveChunks,
+  getChunksForConcept,
+  getJournalChunksForNarrative,
+  getJournalTopicsForNarrative,
+  getChunkCount,
+  assignChunkToConcept,
+  getChunkConceptId,
+  getLastNarrativeForConcept,
+  getSourceChunkPathsForFile,
+  deleteSourceChunksForFile,
+  getDocChunkByPath,
+  getDocChunkPaths,
+  deleteDocChunksForFile,
+  getSourceChunkCount,
+  getDocChunkCount,
+  getLastDocIndexedAt,
+  getJournalEntryCount,
+} from "./chunks.ts";
+export type { InsertChunkOpts } from "./chunks.ts";
+export {
+  insertConcept,
+  insertConceptRaw,
+  insertConceptVersion,
+  getConcept,
+  getConceptByName,
+  getActiveConceptByName,
+  getConceptsByNameCaseInsensitive,
+  isConceptNameTaken,
+  getConcepts,
+  getActiveConcepts,
+  getPreviousConceptMetrics,
+  getConceptCount,
+  getActiveConceptCount,
+} from "./concepts.ts";
+export { insertEdge, getEdges } from "./edges.ts";
+export {
+  insertEmbedding,
+  getEmbeddingForChunk,
+  vectorSearch,
+  getAllEmbeddings,
+  deleteAllEmbeddings,
+  insertSymbolEmbedding,
+  symbolVectorSearch,
+  deleteAllSymbolEmbeddings,
+} from "./embeddings.ts";
+export { insertFtsContent, bm25Search, deleteAllFts } from "./fts.ts";
+export {
+  insertNarrative,
+  insertNarrativeRaw,
+  getNarrative,
+  getNarrativeByName,
+  getOpenNarrativeByName,
+  getOpenNarratives,
+  closeNarrative,
+  abandonNarrative,
+  updateNarrativeMetrics,
+  getDanglingNarratives,
+  getAllNarratives,
+  getMergeBaseCommitId,
+} from "./narratives.ts";
+export {
+  insertCommit,
+  insertCommitTree,
+  getCommit,
+  getHeadCommit,
+  getCommitTree,
+  getCommitTreeAsMap,
+  walkHistory,
+  diffCommitTrees,
+  resolveRef,
+  parseLifecycleMessage,
+} from "./commits.ts";
+export { insertSnapshot, getSnapshotsForNarrative } from "./snapshots.ts";
+export { insertResidualHistory, getResidualHistory, getLatestDebt } from "./residuals.ts";
+export { upsertLaplacianCache, getLaplacianCache } from "./laplacian.ts";
+export { upsertManifest, getManifest, getPreviousManifest, markGraphStale } from "./manifest.ts";
+export { rebuildFromDisk } from "./rebuild.ts";
+export {
+  upsertConceptRelation,
+  deactivateConceptRelation,
+  getConceptRelations,
+  getActiveRelationNeighbors,
+} from "./concept-relations.ts";
+export {
+  upsertConceptTag,
+  removeConceptTag,
+  getConceptTags,
+  hasConceptTag,
+} from "./concept-tags.ts";
+export {
+  insertConceptHealthSignal,
+  getCurrentConceptHealthSignal,
+  getCurrentConceptHealthSignals,
+  getConceptHealthSignalsForRun,
+  getLatestConceptHealthRun,
+  getTopCurrentConceptHealthRows,
+  getConceptHealthExplainRow,
+} from "./concept-health-signals.ts";
+export {
+  queueConceptHealLeases,
+  getConceptHealLease,
+  listConceptHealLeasesForRun,
+  claimConceptHealLease,
+  completeConceptHealLease,
+  skipConceptHealLease,
+  failConceptHealLease,
+  getConceptHealLeaseStatusCounts,
+} from "./concept-heal-leases.ts";
+export { auditSchema, repairSchema, describeSchemaIssue } from "./repair.ts";
+export type { SchemaIssue, SchemaRepairOptions, SchemaRepairResult } from "./repair.ts";
+export {
+  insertSourceFile,
+  upsertSourceFile,
+  getSourceFileByPath,
+  getSourceFile,
+  getAllSourceFiles,
+  deleteSourceFile,
+  deleteSourceFileByPath,
+  deleteSourceFilesNotIn,
+  getSourceFileCount,
+  getSourceFileLanguageCounts,
+  getLastScannedAt,
+} from "./source-files.ts";
+export {
+  insertSymbol,
+  insertSymbolBatch,
+  deleteSymbolsForSourceFile,
+  getSymbolsForSourceFile,
+  getSymbolsForFilePath,
+  searchSymbols,
+  getSymbolByQualifiedName,
+  getSymbolCount,
+  getSymbolKindCounts,
+} from "./symbols.ts";
+export {
+  upsertConceptSymbol,
+  getBindingsForConcept,
+  getBindingsForSymbol,
+  getDriftedBindings,
+  deleteBindingsForConcept,
+  pruneOrphanedBindings,
+  getBindingCounts,
+  getFilesForConcept,
+  getSymbolLinesForConcept,
+  getExportedFilePaths,
+} from "./concept-symbols.ts";
+export type { ConceptSymbolLineRange } from "./concept-symbols.ts";
+export {
+  insertQueryCache,
+  getQueryCache,
+  scoreQueryCache,
+  getTopScoredQueries,
+  pruneExpiredQueryCache,
+} from "./query-cache.ts";
+export type { QueryCacheRow } from "./query-cache.ts";
+export {
+  insertCallSiteBatch,
+  deleteCallSitesForSourceFile,
+  getCallSitesForCallee,
+  getCallSitesByCaller,
+  getCallSitesInFile,
+  getCallSiteCount,
+} from "./call-sites.ts";
+export type { InsertCallSiteOpts } from "./call-sites.ts";
