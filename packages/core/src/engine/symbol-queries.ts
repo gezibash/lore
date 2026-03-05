@@ -51,10 +51,17 @@ const RUST_QUERY = `
 // def/defp/defmacro/defmacrop — function definitions
 // defmodule — module (treated as class)
 // defprotocol — protocol (treated as interface)
+// Two forms per def:
+//   with parens:  def foo(args) do   → arguments contains a call node
+//   without parens: def foo do       → arguments contains a bare identifier
 const ELIXIR_QUERY = `
 (call
   target: (identifier) @_kw
   (arguments (call target: (identifier) @name))
+  (#match? @_kw "^defp?$")) @definition.function
+(call
+  target: (identifier) @_kw
+  (arguments (identifier) @name)
   (#match? @_kw "^defp?$")) @definition.function
 (call
   target: (identifier) @_kw
@@ -63,6 +70,10 @@ const ELIXIR_QUERY = `
 (call
   target: (identifier) @_kw
   (arguments (call target: (identifier) @name))
+  (#match? @_kw "^defmacrop?$")) @definition.function
+(call
+  target: (identifier) @_kw
+  (arguments (identifier) @name)
   (#match? @_kw "^defmacrop?$")) @definition.function
 (call
   target: (identifier) @_kw
@@ -235,13 +246,21 @@ function findParentClass(node: TreeSitterNode): string | null {
         current.namedChildren.find((c) => c.type === "type_identifier" || c.type === "identifier");
       if (nameNode) return nameNode.text;
     }
-    // Elixir: defmodule call nodes
+    // Elixir: defmodule/defprotocol call nodes.
+    // tree-sitter-elixir only names the "target" field; arguments/do_block are
+    // plain named children. Walk namedChildren to find the alias.
     if (current.type === "call") {
       const target = current.childForFieldName("target");
-      if (target?.text === "defmodule") {
-        const args = current.namedChildren.find((c) => c.type === "arguments");
-        const alias = args?.namedChildren.find((c) => c.type === "alias");
-        if (alias) return alias.text;
+      if (target?.text === "defmodule" || target?.text === "defprotocol") {
+        // Try: alias is a direct named child (e.g. defmodule Foo do)
+        const directAlias = current.namedChildren.find((c) => c.type === "alias");
+        if (directAlias) return directAlias.text;
+        // Try: alias inside an arguments node
+        const argsNode = current.namedChildren.find((c) => c.type === "arguments");
+        if (argsNode) {
+          const alias = argsNode.namedChildren.find((c) => c.type === "alias");
+          if (alias) return alias.text;
+        }
       }
     }
     current = current.parent;
@@ -291,7 +310,10 @@ export function extractSymbols(
 
     if (!nameText || !kind || !definitionNode) continue;
 
-    const parentClass = kind === "method" ? findParentClass(definitionNode) : null;
+    // For Elixir, qualify functions and nested modules with their parent defmodule
+    const needsParent =
+      kind === "method" || (language === "elixir" && (kind === "function" || kind === "class" || kind === "interface"));
+    const parentClass = needsParent ? findParentClass(definitionNode) : null;
     const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
 
     symbols.push({
