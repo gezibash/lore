@@ -35,7 +35,7 @@ test("writeJournalChunk adds intent when provided", async () => {
 
   const result = await writeJournalChunk({
     lorePath: root,
-    narrativeName: "delta-1",
+    narrativeName: "narrative-1",
     content: "journal entry",
     intent: "investigate",
   });
@@ -52,7 +52,7 @@ test("markSuperseded and updateChunkFrontmatter patch frontmatter", async () => 
 
   const result = await writeJournalChunk({
     lorePath: root,
-    narrativeName: "delta-1",
+    narrativeName: "narrative-1",
     content: "journal entry",
     status: null,
   });

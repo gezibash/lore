@@ -693,7 +693,7 @@ export async function computeSuggestions(
   // Concepts with high lore_residual but low ground_residual are cluster topology
   // outliers — their content is accurate relative to source (ground is low) but
   // their embedding doesn't align well with cluster peers (lore is high). This
-  // typically resolves naturally over subsequent delta closes as discoverConcepts
+  // typically resolves naturally over subsequent narrative closes as discoverConcepts
   // re-equilibrates the cluster topology with updated embeddings.
   const CLUSTER_DRIFT_LORE_THRESHOLD = 0.55;
   const CLUSTER_DRIFT_GROUND_MAX = 0.35;
@@ -719,7 +719,7 @@ export async function computeSuggestions(
       confidence: hr,
       title: `${concept.name} — cluster outlier (lore ${(hr * 100).toFixed(0)}%, ground ${(gr * 100).toFixed(0)}%)`,
       rationale:
-        "High lore_residual with low ground_residual: this concept's source accuracy is fine but it embeds differently from its cluster peers. This is a topology perturbation — common after large coordinated changes to many concepts. It self-heals as normal delta activity re-equilibrates the cluster over time. No immediate action required.",
+        "High lore_residual with low ground_residual: this concept's source accuracy is fine but it embeds differently from its cluster peers. This is a topology perturbation — common after large coordinated changes to many concepts. It self-heals as normal narrative activity re-equilibrates the cluster over time. No immediate action required.",
       steps: [],
       concepts: [concept.name],
       evidence: {
@@ -727,7 +727,7 @@ export async function computeSuggestions(
         lore_residual: concept.lore_residual,
         self_healing: true,
       },
-      impact: { ...ZERO_IMPACT, rationale: "Self-healing; resolves with normal delta activity" },
+      impact: { ...ZERO_IMPACT, rationale: "Self-healing; resolves with normal narrative activity" },
     });
   }
 

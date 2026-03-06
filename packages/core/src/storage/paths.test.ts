@@ -4,22 +4,22 @@ import { basename, join } from "path";
 import { createTempDir, removeDir } from "../../test/support/db.ts";
 import {
   mainDir,
-  deltaDir,
+  narrativeDir,
   journalDir,
   stateChunkFile,
   journalChunkFile,
   listChunkFiles,
-  listDeltaDirs,
+  listNarrativeDirs,
 } from "./paths.ts";
 
 test("path helpers compose expected directories and files", () => {
   const root = "/tmp/lore-mind";
   expect(mainDir(root)).toBe(join(root, "main"));
-  expect(deltaDir(root, "alpha")).toBe(join(root, "delta", "alpha"));
+  expect(narrativeDir(root, "alpha")).toBe(join(root, "delta", "alpha"));
   expect(journalDir(root, "alpha")).toBe(join(root, "delta", "alpha", "journal"));
   expect(stateChunkFile(root, "abc")).toBe(join(root, "main", "abc.md"));
-  expect(journalChunkFile(root, "delta", "id")).toBe(
-    join(root, "delta", "delta", "journal", "id.md"),
+  expect(journalChunkFile(root, "narrative", "id")).toBe(
+    join(root, "delta", "narrative", "journal", "id.md"),
   );
 });
 
@@ -38,15 +38,15 @@ test("listChunkFiles filters and sorts markdown", async () => {
   removeDir(root);
 });
 
-test("listDeltaDirs returns delta directories only", async () => {
+test("listNarrativeDirs returns narrative directories only", async () => {
   const root = createTempDir();
 
-  const deltaRoot = join(root, "delta");
-  mkdirSync(join(deltaRoot, "one"), { recursive: true });
-  mkdirSync(join(deltaRoot, "two"), { recursive: true });
-  writeFileSync(join(deltaRoot, "file.md"), "x");
+  const narrativeRoot = join(root, "delta");
+  mkdirSync(join(narrativeRoot, "one"), { recursive: true });
+  mkdirSync(join(narrativeRoot, "two"), { recursive: true });
+  writeFileSync(join(narrativeRoot, "file.md"), "x");
 
-  const dirs = await listDeltaDirs(root);
+  const dirs = await listNarrativeDirs(root);
   expect(dirs.sort()).toEqual(["one", "two"]);
 
   removeDir(root);

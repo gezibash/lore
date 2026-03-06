@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { basename } from "path";
 import { parseChunk } from "./frontmatter.ts";
-import { mainDir, journalDir, listChunkFiles, listDeltaDirs } from "./paths.ts";
+import { mainDir, journalDir, listChunkFiles, listNarrativeDirs } from "./paths.ts";
 import type {
   ParsedChunk,
   StateChunkFrontmatter,
@@ -30,9 +30,9 @@ export async function readAllMainChunks(
 
 export async function readAllJournalChunks(
   lorePath: string,
-  deltaName: string,
+  narrativeName: string,
 ): Promise<ParsedChunk<JournalChunkFrontmatter>[]> {
-  const files = await listChunkFiles(journalDir(lorePath, deltaName));
+  const files = await listChunkFiles(journalDir(lorePath, narrativeName));
   const chunks: ParsedChunk<JournalChunkFrontmatter>[] = [];
   for (const file of files) {
     chunks.push(await readChunk<JournalChunkFrontmatter>(file));
@@ -49,8 +49,8 @@ export async function scanLore(lorePath: string): Promise<LoreScan> {
   const stateChunks = await readAllMainChunks(lorePath);
   const journalChunks = new Map<string, ParsedChunk<JournalChunkFrontmatter>[]>();
 
-  const deltaNames = await listDeltaDirs(lorePath);
-  for (const name of deltaNames) {
+  const narrativeNames = await listNarrativeDirs(lorePath);
+  for (const name of narrativeNames) {
     const chunks = await readAllJournalChunks(lorePath, name);
     if (chunks.length > 0) {
       journalChunks.set(name, chunks);

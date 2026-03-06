@@ -1,7 +1,7 @@
 export { parseChunk, serializeChunk, updateFrontmatterField } from "./frontmatter.ts";
 export {
   mainDir,
-  deltaDir,
+  narrativeDir,
   journalDir,
   stateChunkFile,
   journalChunkFile,
@@ -9,7 +9,7 @@ export {
   sourceChunkFile,
   ensureDir,
   listChunkFiles,
-  listDeltaDirs,
+  listNarrativeDirs,
 } from "./paths.ts";
 export {
   writeStateChunk,

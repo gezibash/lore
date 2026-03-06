@@ -83,7 +83,7 @@ test("getChunksForConcept and getJournalChunksForNarrative query as expected", (
     id: "chunk-j",
     filePath: "./journal.md",
     flType: "journal",
-    narrativeId: "delta-1",
+    narrativeId: "narrative-1",
     createdAt: "2024-01-03T00:00:00.000Z",
   });
 
@@ -91,7 +91,7 @@ test("getChunksForConcept and getJournalChunksForNarrative query as expected", (
     "chunk-early",
     "chunk-late",
   ]);
-  expect(getJournalChunksForNarrative(db, "delta-1").map((c) => c.id)).toEqual(["chunk-j"]);
+  expect(getJournalChunksForNarrative(db, "narrative-1").map((c) => c.id)).toEqual(["chunk-j"]);
 
   db.close();
 });

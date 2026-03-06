@@ -55,7 +55,7 @@ export function parseTargetSpec(spec: string): NarrativeTarget {
 
 export async function openCommand(
   client: WorkerClient,
-  delta: string,
+  narrative: string,
   intent: string,
   resolve?: string,
   targetSpecs?: string[],
@@ -78,6 +78,6 @@ export async function openCommand(
   const targets: NarrativeTarget[] | undefined =
     targetSpecs && targetSpecs.length > 0 ? targetSpecs.map(parseTargetSpec) : undefined;
 
-  const result = await client.open(delta, intent, { resolveDangling, targets, fromResultId });
+  const result = await client.open(narrative, intent, { resolveDangling, targets, fromResultId });
   console.log(formatOpen(result));
 }

@@ -20,6 +20,27 @@ export function insertEmbedding(
   return id;
 }
 
+export function insertEmbeddingBatch(
+  db: Database,
+  items: Array<{ chunkId: string; embedding: Float32Array; model: string }>,
+): void {
+  if (items.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO embeddings (id, chunk_id, embedding, model, embedded_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const now = new Date().toISOString();
+  for (const item of items) {
+    stmt.run(
+      ulid(),
+      item.chunkId,
+      new Uint8Array(item.embedding.buffer),
+      item.model,
+      now,
+    );
+  }
+}
+
 export function getEmbeddingForChunk(db: Database, chunkId: string): EmbeddingRow | null {
   return (
     db.query<EmbeddingRow, [string]>("SELECT * FROM embeddings WHERE chunk_id = ?").get(chunkId) ??
@@ -148,6 +169,27 @@ export function insertSymbolEmbedding(
     [id, symbolId, new Uint8Array(embedding.buffer), model, now],
   );
   return id;
+}
+
+export function insertSymbolEmbeddingBatch(
+  db: Database,
+  items: Array<{ symbolId: string; embedding: Float32Array; model: string }>,
+): void {
+  if (items.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO symbol_embeddings (id, symbol_id, embedding, model, embedded_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const now = new Date().toISOString();
+  for (const item of items) {
+    stmt.run(
+      ulid(),
+      item.symbolId,
+      new Uint8Array(item.embedding.buffer),
+      item.model,
+      now,
+    );
+  }
 }
 
 export function symbolVectorSearch(

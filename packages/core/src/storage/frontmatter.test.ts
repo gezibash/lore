@@ -13,7 +13,7 @@ test("serialize and parse preserves frontmatter and content", () => {
   const fm = {
     fl_id: "id-1",
     fl_type: "journal",
-    fl_narrative: "delta-1",
+    fl_narrative: "narrative-1",
     fl_prev: null,
     fl_status: null,
     fl_topics: ["x", "y"],
@@ -29,7 +29,7 @@ test("serialize and parse preserves frontmatter and content", () => {
 
   expect(parsed.frontmatter.fl_id).toBe(fm.fl_id);
   expect(parsed.content).toBe("payload");
-  expect((parsed.frontmatter as JournalChunkFrontmatter).fl_narrative).toBe("delta-1");
+  expect((parsed.frontmatter as JournalChunkFrontmatter).fl_narrative).toBe("narrative-1");
 });
 
 test("updateFrontmatterField updates and preserves content", () => {

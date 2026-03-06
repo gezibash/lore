@@ -106,13 +106,16 @@ const cli = defineCli({
     }),
     open: defineCommand({
       name: "open",
-      description: "Open a new delta",
+      description: "Open a new narrative",
       arguments: {
-        delta: { type: "string", required: true, description: "Delta name" },
+        narrative: { type: "string", required: true, description: "Narrative name" },
         intent: { type: "string", required: true, description: "Intent description" },
       },
       options: {
-        resolve: { type: "string", description: "Resolve dangling delta (name:resume|abandon)" },
+        resolve: {
+          type: "string",
+          description: "Resolve dangling narrative (name:resume|abandon)",
+        },
         "from-result": {
           type: "string",
           description: "Associate this follow-up with a prior lore ask result ID",
@@ -133,7 +136,7 @@ const cli = defineCli({
         const targetSpecs = rawTargets && rawTargets.length > 0 ? rawTargets : undefined;
         await openCommand(
           getWorker(),
-          args.delta,
+          args.narrative,
           args.intent,
           options.resolve as string | undefined,
           targetSpecs,
@@ -143,9 +146,9 @@ const cli = defineCli({
     }),
     write: defineCommand({
       name: "write",
-      description: "Write a journal entry to an open delta",
+      description: "Write a journal entry to an open narrative",
       arguments: {
-        delta: { type: "string", required: true, description: "Delta name" },
+        narrative: { type: "string", required: true, description: "Narrative name" },
         entry: { type: "string", required: true, description: "Journal entry" },
         topics: { type: "string", required: true, description: "Comma-separated topic keywords" },
       },
@@ -163,7 +166,7 @@ const cli = defineCli({
               .map((r: string) => r.trim())
               .filter(Boolean)
           : undefined;
-        await logCommand(getWorker(), args.delta, args.entry, topics, refs);
+        await logCommand(getWorker(), args.narrative, args.entry, topics, refs);
       },
     }),
     ask: defineCommand({
@@ -313,7 +316,7 @@ const cli = defineCli({
         kind: {
           type: "string",
           description:
-            "Filter suggestions by kind (merge, relate, close-delta, abandon-delta, clean-relation, symbol-drift, coverage-gap, review, cluster-drift, archive)",
+            "Filter suggestions by kind (merge, relate, close-narrative, abandon-narrative, clean-relation, symbol-drift, coverage-gap, review, cluster-drift, archive)",
         },
       },
       async action({ options }) {
@@ -341,9 +344,9 @@ const cli = defineCli({
     }),
     close: defineCommand({
       name: "close",
-      description: "Close a delta (merge or discard)",
+      description: "Close a narrative (merge or discard)",
       arguments: {
-        delta: { type: "string", required: true, description: "Delta name" },
+        narrative: { type: "string", required: true, description: "Narrative name" },
       },
       options: {
         mode: { type: "string", description: "merge (default) or discard" },
@@ -367,7 +370,7 @@ const cli = defineCli({
               : undefined;
         await closeCommand(
           getWorker(),
-          args.delta,
+          args.narrative,
           mode,
           mergeStrategy,
           options["from-result"] as string | undefined,
@@ -923,9 +926,13 @@ const cli = defineCli({
     }),
     diff: defineCommand({
       name: "diff",
-      description: "Preview close or compare commits (delta or ref..ref)",
+      description: "Preview close or compare commits (narrative or ref..ref)",
       arguments: {
-        target: { type: "string", required: true, description: "Delta name or ref..ref range" },
+        target: {
+          type: "string",
+          required: true,
+          description: "Narrative name or ref..ref range",
+        },
       },
       async action({ args }) {
         await diffCommand(getWorker(), args.target);

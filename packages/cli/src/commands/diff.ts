@@ -110,7 +110,7 @@ export async function diffCommand(client: WorkerClient, target: string): Promise
     return;
   }
 
-  // Delta dry-run: show what close would produce
+  // Narrative dry-run: show what close would produce
   const { narrative, plan } = await client.dryRunClose(target);
 
   const lines: string[] = [];

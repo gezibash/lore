@@ -5,20 +5,20 @@ export function mainDir(lorePath: string): string {
   return join(lorePath, "main");
 }
 
-export function deltaDir(lorePath: string, deltaName: string): string {
-  return join(lorePath, "delta", deltaName);
+export function narrativeDir(lorePath: string, narrativeName: string): string {
+  return join(lorePath, "delta", narrativeName);
 }
 
-export function journalDir(lorePath: string, deltaName: string): string {
-  return join(lorePath, "delta", deltaName, "journal");
+export function journalDir(lorePath: string, narrativeName: string): string {
+  return join(lorePath, "delta", narrativeName, "journal");
 }
 
 export function stateChunkFile(lorePath: string, id: string): string {
   return join(mainDir(lorePath), `${id}.md`);
 }
 
-export function journalChunkFile(lorePath: string, deltaName: string, id: string): string {
-  return join(journalDir(lorePath, deltaName), `${id}.md`);
+export function journalChunkFile(lorePath: string, narrativeName: string, id: string): string {
+  return join(journalDir(lorePath, narrativeName), `${id}.md`);
 }
 
 export function sourceDir(lorePath: string): string {
@@ -53,10 +53,10 @@ export async function listChunkFiles(dir: string): Promise<string[]> {
   }
 }
 
-export async function listDeltaDirs(lorePath: string): Promise<string[]> {
-  const deltaRoot = join(lorePath, "delta");
+export async function listNarrativeDirs(lorePath: string): Promise<string[]> {
+  const narrativeRoot = join(lorePath, "delta");
   try {
-    const entries = await readdir(deltaRoot, { withFileTypes: true });
+    const entries = await readdir(narrativeRoot, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];

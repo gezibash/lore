@@ -143,7 +143,7 @@ test("computeAskDebtSnapshot keeps debt signal independent from write activity",
     });
   }
   for (let i = 0; i < 5; i++) {
-    const narrative = insertNarrative(db, `delta-${i}`, "test");
+    const narrative = insertNarrative(db, `narrative-${i}`, "test");
     closeNarrative(db, narrative.id);
   }
 
@@ -160,7 +160,7 @@ test("computeAskDebtSnapshot keeps debt signal independent from write activity",
   db.close();
 });
 
-test("computeAskDebtSnapshot penalizes empty active deltas", () => {
+test("computeAskDebtSnapshot penalizes empty active narratives", () => {
   const db = createTestDb();
   const input = {
     db,

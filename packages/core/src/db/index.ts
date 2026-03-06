@@ -26,7 +26,9 @@ export type { InsertChunkOpts } from "./chunks.ts";
 export {
   insertConcept,
   insertConceptRaw,
+  insertConceptRawBatch,
   insertConceptVersion,
+  insertConceptVersionBatch,
   getConcept,
   getConceptByName,
   getActiveConceptByName,
@@ -41,11 +43,13 @@ export {
 export { insertEdge, getEdges } from "./edges.ts";
 export {
   insertEmbedding,
+  insertEmbeddingBatch,
   getEmbeddingForChunk,
   vectorSearch,
   getAllEmbeddings,
   deleteAllEmbeddings,
   insertSymbolEmbedding,
+  insertSymbolEmbeddingBatch,
   symbolVectorSearch,
   deleteAllSymbolEmbeddings,
 } from "./embeddings.ts";

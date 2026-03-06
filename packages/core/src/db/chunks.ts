@@ -244,7 +244,7 @@ export function getLastDocIndexedAt(db: Database): string | null {
   );
 }
 
-/** Count all journal chunks (cumulative entries across all deltas). */
+/** Count all journal chunks (cumulative entries across all narratives). */
 export function getJournalEntryCount(db: Database): number {
   return (
     db

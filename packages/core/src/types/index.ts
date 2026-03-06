@@ -674,10 +674,10 @@ export type CloseMode = "merge" | "discard";
 
 export type MergeStrategy = "replace" | "extend" | "patch" | "correct";
 
-/** Semantic distance between incoming delta content and existing concept. */
+/** Semantic distance between incoming narrative content and existing concept. */
 export interface PhaseTransitionWarning {
   concept_name: string;
-  /** Cosine distance ∈ [0,1] between delta centroid and existing concept embedding. */
+  /** Cosine distance ∈ [0,1] between narrative centroid and existing concept embedding. */
   distance: number;
   /** moderate: 0.45-0.60 (normal evolution), strong: 0.60-0.75 (possible restructure), structural: >0.75 (likely contradiction) */
   magnitude: "moderate" | "strong" | "structural";
@@ -708,7 +708,7 @@ export interface CloseResult {
     after: { exported_covered: number; exported_total: number; ratio: number };
   };
   concept_overlaps?: Array<{ concept: string; overlaps_with: string; similarity: number }>;
-  /** Semantic distance warnings: detected when incoming delta entries differ strongly from existing concept. */
+  /** Semantic distance warnings: detected when incoming narrative entries differ strongly from existing concept. */
   phase_transitions?: PhaseTransitionWarning[];
 }
 

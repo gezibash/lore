@@ -28,7 +28,7 @@ export interface IntegrationPlan {
 }
 
 /**
- * Analyze journal entries from a delta and produce integration plan.
+ * Analyze journal entries from a narrative and produce integration plan.
  * Uses hybrid search to narrow concept candidates, then LLM topic
  * segmentation to route entries to existing concepts or create new ones.
  *

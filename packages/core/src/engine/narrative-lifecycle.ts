@@ -38,8 +38,11 @@ import {
   getManifest,
   upsertManifest,
   insertChunk,
+  insertChunkBatch,
   insertEmbedding,
+  insertEmbeddingBatch,
   insertFtsContent,
+  insertFtsContentBatch,
   insertSnapshot,
   getEmbeddingForChunk,
   getChunkCount,
@@ -57,10 +60,13 @@ import {
   getJournalTopicsForNarrative,
   getFilesForConcept,
   insertSymbolEmbedding,
+  insertSymbolEmbeddingBatch,
 } from "@/db/index.ts";
 import {
   insertConceptVersion,
   insertConceptRaw,
+  insertConceptVersionBatch,
+  insertConceptRawBatch,
   getConceptByName,
   getConceptsByCluster,
 } from "@/db/concepts.ts";
@@ -2674,20 +2680,24 @@ export async function closeNarrativeOp(
       unemeddedJournals.map((c) => readChunk(c.file_path).then((p) => p.content)),
     );
     const journalEmbeddings = await embedder.embedBatch(journalTexts);
+    insertEmbeddingBatch(
+      db,
+      unemeddedJournals.map((chunk, index) => ({
+        chunkId: chunk.id,
+        embedding: journalEmbeddings[index]!,
+        model: config.ai.embedding.model,
+      })),
+    );
     for (let i = 0; i < unemeddedJournals.length; i++) {
-      insertEmbedding(
-        db,
-        unemeddedJournals[i]!.id,
-        journalEmbeddings[i]!,
-        config.ai.embedding.model,
-      );
       journalEmbeddingsByChunkId.set(unemeddedJournals[i]!.id, journalEmbeddings[i]!);
-      await writeEmbeddingFile(
-        embeddingFilePath(unemeddedJournals[i]!.file_path),
-        config.ai.embedding.model,
-        journalEmbeddings[i]!,
-      );
     }
+    await mapConcurrent(unemeddedJournals, 6, async (chunk, index) => {
+      await writeEmbeddingFile(
+        embeddingFilePath(chunk.file_path),
+        config.ai.embedding.model,
+        journalEmbeddings[index]!,
+      );
+    });
   }
   embedSpan.end();
 
@@ -3178,26 +3188,53 @@ export async function closeNarrativeOp(
 
   try {
     db.run("BEGIN IMMEDIATE TRANSACTION");
-    for (const concept of preparedConceptCreates) {
-      insertConceptRaw(db, concept.id, concept.name, { activeChunkId: null });
-    }
-    for (const chunk of preparedChunkWrites) {
-      insertChunk(db, {
+    insertConceptRawBatch(
+      db,
+      preparedConceptCreates.map((concept) => ({
+        id: concept.id,
+        name: concept.name,
+        opts: { activeChunkId: null },
+      })),
+    );
+    const chunkCreatedAt = new Date().toISOString();
+    insertChunkBatch(
+      db,
+      preparedChunkWrites.map((chunk) => ({
         id: chunk.chunkId,
         filePath: chunk.filePath,
         flType: "chunk",
         conceptId: chunk.conceptId,
         narrativeId: narrative.id,
         supersedesId: chunk.existingChunkId,
-        createdAt: new Date().toISOString(),
-      });
-      insertFtsContent(db, chunk.content, chunk.chunkId);
-      const embedding = embeddingByChunkId.get(chunk.chunkId);
-      if (embedding) {
-        insertEmbedding(db, chunk.chunkId, embedding, config.ai.embedding.model);
-      }
-      insertConceptVersion(db, chunk.conceptId, { active_chunk_id: chunk.chunkId, staleness: 0 });
-    }
+        createdAt: chunkCreatedAt,
+      })),
+    );
+    insertFtsContentBatch(
+      db,
+      preparedChunkWrites.map((chunk) => ({ content: chunk.content, chunkId: chunk.chunkId })),
+    );
+    insertEmbeddingBatch(
+      db,
+      preparedChunkWrites
+        .map((chunk) => {
+          const embedding = embeddingByChunkId.get(chunk.chunkId);
+          return embedding
+            ? { chunkId: chunk.chunkId, embedding, model: config.ai.embedding.model }
+            : null;
+        })
+        .filter(
+          (
+            item,
+          ): item is { chunkId: string; embedding: Float32Array; model: string } => item != null,
+        ),
+    );
+    insertConceptVersionBatch(
+      db,
+      preparedChunkWrites.map((chunk) => ({
+        id: chunk.conceptId,
+        fields: { active_chunk_id: chunk.chunkId, staleness: 0 },
+      })),
+    );
     const treeEntries: Array<{ conceptId: string; chunkId: string; conceptName: string }> = [];
     for (const concept of getConcepts(db)) {
       if (
@@ -3349,10 +3386,22 @@ export async function closeNarrativeOp(
             );
           }
           const symbolOffset = conceptCodeTargets.length;
+          const symbolEmbeddingWrites: Array<{
+            symbolId: string;
+            embedding: Float32Array;
+            model: string;
+          }> = [];
           for (let i = 0; i < symbolContentEntries.length; i++) {
             const embedding = codeEmbeddings[symbolOffset + i]!;
             symbolCodeEmbeddingsById.set(symbolContentEntries[i]!.symbolId, embedding);
-            insertSymbolEmbedding(db, symbolContentEntries[i]!.symbolId, embedding, codeModel);
+            symbolEmbeddingWrites.push({
+              symbolId: symbolContentEntries[i]!.symbolId,
+              embedding,
+              model: codeModel,
+            });
+          }
+          if (symbolEmbeddingWrites.length > 0) {
+            insertSymbolEmbeddingBatch(db, symbolEmbeddingWrites);
           }
         }
       } catch {
@@ -3378,6 +3427,11 @@ export async function closeNarrativeOp(
       }
     }
 
+    const residualConceptUpdates: Array<{
+      id: string;
+      fields: { churn: number; ground_residual: number | null; residual: number };
+    }> = [];
+    const conceptsBeforeResidualsById = new Map(getConcepts(db).map((concept) => [concept.id, concept]));
     for (const pair of residualPairs) {
       const newEmb = embeddingByChunkId.get(pair.newChunkId);
 
@@ -3452,10 +3506,13 @@ export async function closeNarrativeOp(
       // residual (deprecated) = max(ground_residual, lore_residual) — lore_residual computed later
       const residual = groundResidual ?? churn;
 
-      insertConceptVersion(db, pair.conceptId, {
-        churn,
-        ground_residual: groundResidual,
-        residual,
+      residualConceptUpdates.push({
+        id: pair.conceptId,
+        fields: {
+          churn,
+          ground_residual: groundResidual,
+          residual,
+        },
       });
       const filePath = preparedChunkFilePathById.get(pair.newChunkId);
       if (filePath) {
@@ -3465,6 +3522,7 @@ export async function closeNarrativeOp(
         });
       }
     }
+    insertConceptVersionBatch(db, residualConceptUpdates, conceptsBeforeResidualsById);
   }
   stateEmbedSpan.end();
 
@@ -3572,6 +3630,11 @@ export async function closeNarrativeOp(
       .filter((concept) => scopedConcepts.has(concept.id) && concept.active_chunk_id)
       .map((concept) => concept.active_chunk_id!),
   );
+  const driftConceptUpdates: Array<{
+    id: string;
+    fields: { staleness: number; ground_residual: number; residual: number };
+  }> = [];
+  const conceptsById = new Map(concepts.map((concept) => [concept.id, concept]));
   for (const concept of concepts) {
     if (!scopedConcepts.has(concept.id)) continue;
     const chunkId = concept.active_chunk_id;
@@ -3603,10 +3666,13 @@ export async function closeNarrativeOp(
     if (stalenessChanged || groundResidualChanged) {
       // residual (deprecated) = max(ground_residual, lore_residual)
       const newResidual = Math.max(newGroundResidual, concept.lore_residual ?? 0);
-      insertConceptVersion(db, concept.id, {
-        staleness: newStaleness,
-        ground_residual: newGroundResidual,
-        residual: newResidual,
+      driftConceptUpdates.push({
+        id: concept.id,
+        fields: {
+          staleness: newStaleness,
+          ground_residual: newGroundResidual,
+          residual: newResidual,
+        },
       });
       mergeFrontmatterUpdates(frontmatterUpdatesByPath, chunkRow.file_path, {
         fl_staleness: newStaleness,
@@ -3614,6 +3680,7 @@ export async function closeNarrativeOp(
       });
     }
   }
+  insertConceptVersionBatch(db, driftConceptUpdates, conceptsById);
   driftSpan.end();
 
   // Compute residuals and debt using fresh Fiedler from discoverConcepts

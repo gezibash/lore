@@ -20,12 +20,12 @@ function parseRef(raw: string): FileRef {
 
 export async function logCommand(
   client: WorkerClient,
-  delta: string,
+  narrative: string,
   entry: string,
   topics: string[],
   refStrs?: string[],
 ): Promise<void> {
   const refs = refStrs && refStrs.length > 0 ? refStrs.map(parseRef) : undefined;
-  const result = await client.log(delta, entry, { topics, refs });
+  const result = await client.log(narrative, entry, { topics, refs });
   console.log(formatLogCli(result.note));
 }

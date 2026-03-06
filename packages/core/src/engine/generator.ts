@@ -83,16 +83,16 @@ Rules:
       const conceptName = ctx?.conceptName ?? "<concept>";
       const base = `You perform a 3-way semantic merge for concept "${conceptName}".
 You are given three versions:
-- BASE: the content at the time the delta was opened (may be null if concept didn't exist)
+- BASE: the content at the time the narrative was opened (may be null if concept didn't exist)
 - HEAD: the current content on main (what others changed since BASE)
-- DELTA: the proposed new content from the closing delta
+- NARRATIVE: the proposed new content from the closing narrative
 
 Rules:
 - Identify what HEAD changed vs BASE
-- Identify what DELTA changed vs BASE
+- Identify what NARRATIVE changed vs BASE
 - Merge non-overlapping changes from both
 - For overlapping changes: combine intelligently, keeping the most specific/accurate information
-- For contradictions: note the discrepancy inline, prefer DELTA's version (it's newer)
+- For contradictions: note the discrepancy inline, prefer NARRATIVE's version (it's newer)
 - Output the final merged content only — no metadata, no markers, no explanation`;
       return withProjectGuidance(base, prompts.three_way_merge.guidance);
     }
@@ -139,7 +139,7 @@ Rules:
       }
 
       const base = `You are integrating journal entries into a knowledge base state chunk.
-Given journal entries from a delta and the existing state for concept "${conceptName}",
+Given journal entries from a narrative and the existing state for concept "${conceptName}",
 produce an updated state chunk that reflects the current truth.
 
 ${rules}`;

@@ -2,6 +2,51 @@ import type { Database } from "bun:sqlite";
 import { ulid } from "ulid";
 import type { ConceptLifecycleStatus, ConceptRow } from "@/types/index.ts";
 
+export interface InsertConceptRawOpts {
+  id: string;
+  name: string;
+  opts?: {
+    activeChunkId?: string | null;
+    residual?: number | null;
+    staleness?: number | null;
+    cluster?: number | null;
+    lifecycleStatus?: ConceptLifecycleStatus;
+    archivedAt?: string | null;
+    lifecycleReason?: string | null;
+    mergedIntoConceptId?: string | null;
+  };
+}
+
+export type ConceptVersionFields = Partial<
+  Pick<
+    ConceptRow,
+    | "name"
+    | "active_chunk_id"
+    | "residual"
+    | "churn"
+    | "ground_residual"
+    | "lore_residual"
+    | "staleness"
+    | "cluster"
+    | "is_hub"
+    | "lifecycle_status"
+    | "archived_at"
+    | "lifecycle_reason"
+    | "merged_into_concept_id"
+  >
+>;
+
+function loadCurrentConceptsByIds(db: Database, ids: readonly string[]): Map<string, ConceptRow> {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = db
+    .query<ConceptRow, string[]>(
+      `SELECT * FROM current_concepts WHERE id IN (${placeholders})`,
+    )
+    .all(...ids);
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
 /** Insert a concept with a caller-supplied id (used by rebuild). */
 export function insertConceptRaw(
   db: Database,
@@ -18,26 +63,32 @@ export function insertConceptRaw(
     mergedIntoConceptId?: string | null;
   },
 ): void {
-  const versionId = ulid();
-  const now = new Date().toISOString();
-  db.run(
+  insertConceptRawBatch(db, [{ id, name, opts }]);
+}
+
+export function insertConceptRawBatch(db: Database, items: InsertConceptRawOpts[]): void {
+  if (items.length === 0) return;
+  const stmt = db.prepare(
     `INSERT INTO concepts (version_id, id, name, active_chunk_id, residual, staleness, cluster, lifecycle_status, archived_at, lifecycle_reason, merged_into_concept_id, inserted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      versionId,
-      id,
-      name,
-      opts?.activeChunkId ?? null,
-      opts?.residual ?? null,
-      opts?.staleness ?? null,
-      opts?.cluster ?? null,
-      opts?.lifecycleStatus ?? "active",
-      opts?.archivedAt ?? null,
-      opts?.lifecycleReason ?? null,
-      opts?.mergedIntoConceptId ?? null,
-      now,
-    ],
   );
+  const now = new Date().toISOString();
+  for (const item of items) {
+    stmt.run(
+      ulid(),
+      item.id,
+      item.name,
+      item.opts?.activeChunkId ?? null,
+      item.opts?.residual ?? null,
+      item.opts?.staleness ?? null,
+      item.opts?.cluster ?? null,
+      item.opts?.lifecycleStatus ?? "active",
+      item.opts?.archivedAt ?? null,
+      item.opts?.lifecycleReason ?? null,
+      item.opts?.mergedIntoConceptId ?? null,
+      now,
+    );
+  }
 }
 
 export function insertConcept(
@@ -88,33 +139,28 @@ export function insertConcept(
 export function insertConceptVersion(
   db: Database,
   id: string,
-  fields: Partial<
-    Pick<
-      ConceptRow,
-      | "name"
-      | "active_chunk_id"
-      | "residual"
-      | "churn"
-      | "ground_residual"
-      | "lore_residual"
-      | "staleness"
-      | "cluster"
-      | "is_hub"
-      | "lifecycle_status"
-      | "archived_at"
-      | "lifecycle_reason"
-      | "merged_into_concept_id"
-    >
-  >,
+  fields: ConceptVersionFields,
 ): void {
-  const current = getConcept(db, id);
-  if (!current) return;
+  insertConceptVersionBatch(db, [{ id, fields }]);
+}
 
-  const now = new Date().toISOString();
-  db.run(
+export function insertConceptVersionBatch(
+  db: Database,
+  items: Array<{ id: string; fields: ConceptVersionFields }>,
+  currentById?: Map<string, ConceptRow>,
+): void {
+  if (items.length === 0) return;
+  const conceptMap = currentById ?? loadCurrentConceptsByIds(db, [...new Set(items.map((item) => item.id))]);
+  const stmt = db.prepare(
     `INSERT INTO concepts (version_id, id, name, active_chunk_id, residual, churn, ground_residual, lore_residual, staleness, cluster, is_hub, lifecycle_status, archived_at, lifecycle_reason, merged_into_concept_id, inserted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+  );
+  const now = new Date().toISOString();
+  for (const item of items) {
+    const current = conceptMap.get(item.id);
+    if (!current) continue;
+    const fields = item.fields;
+    stmt.run(
       ulid(),
       current.id,
       fields.name ?? current.name,
@@ -135,8 +181,8 @@ export function insertConceptVersion(
         ? fields.merged_into_concept_id
         : current.merged_into_concept_id,
       now,
-    ],
-  );
+    );
+  }
 }
 
 export function getConcept(db: Database, id: string): ConceptRow | null {

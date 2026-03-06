@@ -477,7 +477,7 @@ export async function scanProject(
 
 /**
  * Targeted rescan of specific file paths. Same incremental logic as scanProject
- * but scoped to only the given files. Used during delta close to ensure symbol
+ * but scoped to only the given files. Used during narrative close to ensure symbol
  * index is fresh for files touched by refs before binding extraction.
  */
 export async function rescanFiles(

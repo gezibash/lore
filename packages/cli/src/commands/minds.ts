@@ -70,7 +70,7 @@ export async function mindResetCommand(
 ): Promise<void> {
   if (!force) {
     console.log(
-      `${RED}${BOLD}This will wipe all Lore data (DB, concepts, deltas) for the current lore mind.${RESET}`,
+      `${RED}${BOLD}This will wipe all Lore data (DB, concepts, narratives) for the current lore mind.${RESET}`,
     );
     console.log(`${DIM}The lore mind will stay registered — only lore data is deleted.${RESET}`);
 
