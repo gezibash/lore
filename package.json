@@ -10,8 +10,8 @@
   "scripts": {
     "dev": "bun --cwd packages/cli run src/index.ts",
     "mcp": "bun --cwd packages/mcp run src/index.ts",
-    "link": "bun link --cwd packages/cli",
-    "link:global": "bun link --global --cwd packages/cli",
+    "link": "bun ./scripts/link-local.ts",
+    "link:global": "bun ./scripts/link-global.ts",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "fmt": "oxfmt .",
