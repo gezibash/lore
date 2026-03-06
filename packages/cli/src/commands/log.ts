@@ -22,10 +22,19 @@ export async function logCommand(
   client: WorkerClient,
   narrative: string,
   entry: string,
-  topics: string[],
-  refStrs?: string[],
+  opts: {
+    concepts: string[];
+    topics?: string[];
+    symbols?: string[];
+    refs?: string[];
+  },
 ): Promise<void> {
-  const refs = refStrs && refStrs.length > 0 ? refStrs.map(parseRef) : undefined;
-  const result = await client.log(narrative, entry, { topics, refs });
+  const refs = opts.refs && opts.refs.length > 0 ? opts.refs.map(parseRef) : undefined;
+  const result = await client.log(narrative, entry, {
+    concepts: opts.concepts,
+    topics: opts.topics,
+    symbols: opts.symbols,
+    refs,
+  });
   console.log(formatLogCli(result.note));
 }

@@ -159,6 +159,10 @@ export async function rebuildFromDisk(
         theta: fm.fl_theta,
         magnitude: fm.fl_magnitude,
         createdAt: fm.fl_created_at,
+        conceptDesignations: fm.fl_concept_designations ?? null,
+        conceptRefs: fm.fl_concept_refs ?? null,
+        symbolRefs: fm.fl_symbol_refs ?? null,
+        fileRefs: fm.fl_refs ?? null,
       });
       insertFtsContent(db, chunk.content, fm.fl_id);
       journalChunkCount++;

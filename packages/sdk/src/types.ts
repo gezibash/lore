@@ -99,6 +99,10 @@ export interface JournalChunkFrontmatter {
   fl_created_at: string;
   fl_embedding_model: string;
   fl_intent?: string;
+  fl_concept_designations?: string[];
+  fl_concept_refs?: string[];
+  fl_symbol_refs?: string[];
+  fl_refs?: FileRef[];
 }
 
 export type ChunkFrontmatter = StateChunkFrontmatter | JournalChunkFrontmatter;
@@ -168,6 +172,10 @@ export interface ChunkRow {
   theta: number | null;
   magnitude: number | null;
   created_at: string;
+  concept_designations: string | null;
+  concept_refs: string | null;
+  symbol_refs: string | null;
+  file_refs: string | null;
 }
 
 export interface ConceptEdgeRow {
@@ -378,6 +386,13 @@ export interface OpenResult {
 
 export interface LogResult {
   saved: boolean;
+  note?: string;
+}
+
+export interface JournalDesignationResult {
+  narrative: string;
+  chunk_id: string;
+  concepts: string[];
   note?: string;
 }
 
@@ -647,14 +662,21 @@ export interface CloseResult {
   conflicts: MergeConflict[];
   impact: {
     summary: string;
-    debt_before: number;
-    debt_after: number;
+    debt_before: number | null;
+    debt_after: number | null;
     concept_impacts?: Array<{
       concept: string;
       residual_before: number | null;
       residual_after: number | null;
       content_diff?: { adds: number; removes: number };
     }>;
+  };
+  maintenance?: {
+    status: "queued" | "completed";
+    job_id?: string;
+    pending_jobs: number;
+    failed_jobs: number;
+    note?: string;
   };
   follow_up?: string;
   coverage_change?: {
@@ -736,6 +758,9 @@ export interface StatusResult {
     status: string;
     min_delta_rate: number;
     current_rate: number;
+    pending_close_jobs?: number;
+    failed_close_jobs?: number;
+    oldest_close_job_at?: string | null;
   };
   embedding_status?: {
     total: number;
@@ -989,6 +1014,7 @@ export interface DryRunCloseResult {
       existingChunkId: string | null;
       newContent: string;
       sourceEntryIndices: number[];
+      strategy?: "patch" | "rewrite";
     }>;
     creates: Array<{
       conceptName: string;
@@ -996,6 +1022,11 @@ export interface DryRunCloseResult {
       sourceEntryIndices: number[];
     }>;
   };
+  unresolved_entries?: Array<{
+    chunk_id: string;
+    created_at: string;
+    reason: string;
+  }>;
 }
 
 export type SchemaIssueKind =
@@ -1331,7 +1362,10 @@ export type LoreErrorCode =
   | "LORE_NOT_REGISTERED"
   | "MERGE_CONFLICT"
   | "COMMIT_NOT_FOUND"
+  | "CHUNK_NOT_FOUND"
   | "LOG_TOO_LONG"
+  | "JOURNAL_CONCEPTS_REQUIRED"
+  | "JOURNAL_CONCEPT_OUTSIDE_TARGETS"
   | "CONCEPT_NOT_FOUND"
   | "CONCEPT_NAME_CONFLICT"
   | "CONCEPT_INVALID_STATE"

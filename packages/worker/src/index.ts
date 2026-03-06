@@ -72,6 +72,7 @@ type WorkerClientDeps = Pick<
   | "open"
   | "write"
   | "log"
+  | "designateJournalEntry"
   | "ask"
   | "query"
   | "close"
@@ -172,6 +173,12 @@ export class WorkerClient {
 
   log(...args: Parameters<WorkerClientDeps["log"]>): ReturnType<WorkerClientDeps["log"]> {
     return this.client.log(...args);
+  }
+
+  designateJournalEntry(
+    ...args: Parameters<WorkerClientDeps["designateJournalEntry"]>
+  ): ReturnType<WorkerClientDeps["designateJournalEntry"]> {
+    return this.client.designateJournalEntry(...args);
   }
 
   ask(...args: Parameters<WorkerClientDeps["ask"]>): ReturnType<WorkerClientDeps["ask"]> {

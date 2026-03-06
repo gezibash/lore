@@ -10,7 +10,7 @@ Lore turns a codebase into a queryable knowledge graph — named concepts, narra
 
 **Concepts** are named knowledge units (e.g. `auth-model`, `cache-layer`, `query-pipeline`). Each has prose content, embeddings, source symbol bindings, staleness, and a residual score that tracks drift from reality.
 
-**Narratives** are bounded exploration sessions. You open one, write journal entries as you discover things, and close it. On close, an LLM synthesizes the entries into the relevant concepts and creates a commit. The concept graph grows with every session.
+**Narratives** are bounded exploration sessions. You open one, write journal entries against explicit concept designations, and close it. On close, Lore groups entries by those designations, synthesizes updated concept state, commits the authoritative merge, and queues residual/binding/graph maintenance behind it. The concept graph grows with every session.
 
 **Debt** is a score that tracks how reliable the knowledge is — how stale, how drifted from source, how clustered. Routine maintenance (heal stale concepts, merge overlaps, refresh bindings) keeps debt low.
 
@@ -45,7 +45,7 @@ lore ask "how does the auth flow work?"
 
 # Open a narrative, journal findings, close
 lore open fix-auth-race "Investigate race condition in token refresh"
-lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" auth-model
+lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --concept auth-model
 lore close fix-auth-race
 
 # Check status and debt
@@ -64,7 +64,7 @@ lore suggest
 | `lore init [path] [name]` | Register a codebase |
 | `lore ingest [file]` | Index source code and docs |
 | `lore open <narrative> <intent>` | Start an exploration session |
-| `lore write <narrative> <entry> <topics>` | Journal a finding |
+| `lore write <narrative> <entry> --concept <name> [--concept <name> ...]` | Journal a finding against explicit concept designations |
 | `lore ask <query>` | Query the knowledge graph |
 | `lore close <narrative>` | Integrate and commit findings |
 

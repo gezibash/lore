@@ -7,6 +7,7 @@ export {
   getActiveChunks,
   getChunksForConcept,
   getJournalChunksForNarrative,
+  updateJournalChunkRouting,
   getJournalTopicsForNarrative,
   getChunkCount,
   assignChunkToConcept,
@@ -116,6 +117,16 @@ export {
   failConceptHealLease,
   getConceptHealLeaseStatusCounts,
 } from "./concept-heal-leases.ts";
+export {
+  queueCloseMaintenanceJob,
+  getCloseMaintenanceJob,
+  claimCloseMaintenanceJob,
+  completeCloseMaintenanceJob,
+  failCloseMaintenanceJob,
+  getCloseMaintenanceJobCounts,
+  hasPendingCloseMaintenanceJobs,
+} from "./close-maintenance-jobs.ts";
+export type { CloseMaintenanceJobCounts } from "./close-maintenance-jobs.ts";
 export { auditSchema, repairSchema, describeSchemaIssue } from "./repair.ts";
 export type { SchemaIssue, SchemaRepairOptions, SchemaRepairResult } from "./repair.ts";
 export {

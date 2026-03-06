@@ -39,7 +39,6 @@ import {
   upsertManifest,
   insertChunk,
   insertChunkBatch,
-  insertEmbedding,
   insertEmbeddingBatch,
   insertFtsContent,
   insertFtsContentBatch,
@@ -59,8 +58,9 @@ import {
   getJournalChunksForNarrative,
   getJournalTopicsForNarrative,
   getFilesForConcept,
-  insertSymbolEmbedding,
   insertSymbolEmbeddingBatch,
+  queueCloseMaintenanceJob,
+  getCloseMaintenanceJobCounts,
 } from "@/db/index.ts";
 import {
   insertConceptVersion,
@@ -82,9 +82,8 @@ import { hybridSearch } from "./search.ts";
 import type { HybridSearchResult } from "./search.ts";
 import { webSearch } from "./web-search.ts";
 import { cosineDistance, averageVectors, weightedAverageVectors } from "./residuals.ts";
-import { analyzeJournal } from "./integration.ts";
-import type { IntegrationPlan } from "./integration.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
+import { buildExplicitClosePlan } from "./close-planner.ts";
 import {
   computeTotalDebt,
   computeDebtTrend,
@@ -126,6 +125,7 @@ import {
   type AskDebtBand,
 } from "./ask-debt.ts";
 import { mapConcurrent } from "./async.ts";
+import { resolveJournalConceptDesignations } from "./journal-routing.ts";
 
 /**
  * Create a genesis commit that snapshots the current concept→chunk state.
@@ -594,17 +594,8 @@ export async function logEntry(
   // Status: simple heuristic (only used for advisory note)
   const status = inferStatusHeuristic(text);
 
-  // Resolve concept names → IDs
-  const resolvedConceptIds: string[] = [];
-  if (concepts && concepts.length > 0) {
-    for (const name of concepts) {
-      const concept = getActiveConceptByName(db, name);
-      if (concept) {
-        resolvedConceptIds.push(concept.id);
-      }
-      // If not found, concept may be created at close time — skip silently
-    }
-  }
+  const { designations: conceptDesignations, conceptRefs: resolvedConceptIds } =
+    resolveJournalConceptDesignations(db, narrative, concepts);
 
   // Resolve symbol names → IDs
   const resolvedSymbolIds: string[] = [];
@@ -627,7 +618,7 @@ export async function logEntry(
 
   // Auto-derive topics from concept names if concepts provided but topics empty
   const effectiveTopics =
-    topics.length === 0 && concepts && concepts.length > 0 ? [...concepts] : topics;
+    topics.length === 0 ? [...conceptDesignations] : topics;
 
   // Embedding deferred to close time (batch embed) — log is pure I/O + DB
 
@@ -643,6 +634,7 @@ export async function logEntry(
     magnitude: null,
     content: text,
     intent: narrative.intent,
+    conceptDesignations,
     conceptRefs: resolvedConceptIds.length > 0 ? resolvedConceptIds : null,
     symbolRefs: resolvedSymbolIds.length > 0 ? resolvedSymbolIds : null,
     refs: refs && refs.length > 0 ? refs : null,
@@ -660,6 +652,7 @@ export async function logEntry(
     theta: null,
     magnitude: null,
     createdAt: new Date().toISOString(),
+    conceptDesignations,
     conceptRefs: resolvedConceptIds.length > 0 ? resolvedConceptIds : null,
     symbolRefs: resolvedSymbolIds.length > 0 ? resolvedSymbolIds : null,
     fileRefs: refs && refs.length > 0 ? refs : null,
@@ -2627,6 +2620,13 @@ function extractBriefExcerpts(content: string, query: string, max: number = 3): 
   return top.map((t) => t.paragraph);
 }
 
+export interface CloseMaintenancePayload {
+  narrativeId: string;
+  codePath: string | null;
+  residualPairs: Array<{ conceptId: string; newChunkId: string; oldChunkId: string | null }>;
+  entryConceptPairs: Array<{ entryIndex: number; conceptId: string }>;
+}
+
 export async function closeNarrativeOp(
   db: Database,
   lorePath: string,
@@ -2650,20 +2650,6 @@ export async function closeNarrativeOp(
 
   const closeSpan = tracer.span("close");
   const debtBefore = getLatestDebt(db);
-
-  // Snapshot coverage before integration
-  let coverageBefore: { exported_covered: number; exported_total: number; ratio: number } | null =
-    null;
-  try {
-    const stats = getCoverageStats(db);
-    coverageBefore = {
-      exported_covered: stats.bound_exported,
-      exported_total: stats.total_exported,
-      ratio: stats.total_exported > 0 ? stats.bound_exported / stats.total_exported : 0,
-    };
-  } catch {
-    /* symbols table may not exist */
-  }
 
   // Batch embed journal chunks (deferred from log time for speed)
   const embedSpan = tracer.span("batch-embed-journals");
@@ -2759,125 +2745,16 @@ export async function closeNarrativeOp(
   const declaredTargets: NarrativeTarget[] = narrative.targets
     ? (JSON.parse(narrative.targets) as NarrativeTarget[])
     : [];
-
-  // Pre-routing: handle chunks with explicit concept_refs (bypass LLM routing for targeted entries)
-  const preRouteSpan = tracer.span("pre-route-journal");
-  const prePlan: IntegrationPlan = { updates: [], creates: [] };
-  const preTargetedConceptIds = new Set<string>();
-
-  const allJournalChunks = getJournalChunksForNarrative(db, narrative.id);
-  // Map conceptId → { entries, indices } for pre-targeted chunks
-  const preTargetGroups = new Map<string, { entries: string[]; indices: number[] }>();
-  const preTargetedChunks = await mapConcurrent(
-    allJournalChunks.map((chunk, index) => ({ chunk, index })),
-    6,
-    async ({ chunk, index }) => {
-      if (!chunk.concept_refs) return null;
-      const conceptIds: string[] = JSON.parse(chunk.concept_refs);
-      if (conceptIds.length === 0) return null;
-      return {
-        conceptIds,
-        content: (await readChunk(chunk.file_path)).content,
-        index,
-      };
-    },
-  );
-  for (const targeted of preTargetedChunks) {
-    if (!targeted) continue;
-    for (const conceptId of targeted.conceptIds) {
-      if (!preTargetGroups.has(conceptId)) {
-        preTargetGroups.set(conceptId, { entries: [], indices: [] });
-      }
-      const group = preTargetGroups.get(conceptId)!;
-      group.entries.push(targeted.content);
-      group.indices.push(targeted.index);
-    }
-  }
-
-  // Generate integrations for pre-targeted groups
-  const preTargetConceptIds = [...preTargetGroups.keys()];
-  const preTargetConceptMap = batchLoadConceptsByIds(db, preTargetConceptIds);
-  const preTargetChunkRows = batchLoadChunksByIds(
-    db,
-    preTargetConceptIds
-      .map((conceptId) => preTargetConceptMap.get(conceptId)?.active_chunk_id)
-      .filter((chunkId): chunkId is string => !!chunkId),
-  );
-  const preTargetParsedChunks = await batchReadParsedChunksByIds(
-    preTargetChunkRows,
-    preTargetConceptIds.map((conceptId) => preTargetConceptMap.get(conceptId)?.active_chunk_id),
-  );
-  const preTargetIntegrations = await mapConcurrent(
-    [...preTargetGroups.entries()],
-    4,
-    async ([conceptId, group]) => {
-      const concept = preTargetConceptMap.get(conceptId) ?? getConcept(db, conceptId);
-      if (!concept) return null;
-
-      const existingChunkId = concept.active_chunk_id;
-      const existingContent =
-        (existingChunkId ? preTargetParsedChunks.get(existingChunkId)?.content : null) ?? "";
-      const newContent = await generator.generateIntegration(
-        group.entries,
-        existingContent ? [existingContent] : [],
-        concept.name,
-        opts?.mergeStrategy,
-      );
-      return {
-        conceptId,
-        update:
-          existingContent && newContent.trim() === existingContent.trim()
-            ? null
-            : {
-                conceptId: concept.id,
-                conceptName: concept.name,
-                existingChunkId,
-                newContent,
-                sourceEntryIndices: group.indices,
-              },
-      };
-    },
-  );
-  for (const integration of preTargetIntegrations) {
-    if (!integration) continue;
-    preTargetedConceptIds.add(integration.conceptId);
-    if (integration.update) {
-      prePlan.updates.push(integration.update);
-    }
-  }
-  preRouteSpan.end();
-
-  // Analyze journal and produce integration plan (LLM routing for unrouted entries)
-  const analyzeSpan = tracer.span("analyze-journal");
-  const llmPlan = await analyzeJournal(
-    db,
-    narrative.id,
-    generator,
-    embedder,
-    config,
-    declaredTargets,
-    opts?.mergeStrategy,
-  );
-  analyzeSpan.end();
-
-  // Merge plans: pre-targeted entries win over LLM for same concepts
-  const plan: IntegrationPlan = {
-    updates: [...prePlan.updates],
-    creates: [...prePlan.creates],
-  };
-  for (const update of llmPlan.updates) {
-    if (!preTargetedConceptIds.has(update.conceptId)) {
-      plan.updates.push(update);
-    }
-  }
-  for (const create of llmPlan.creates) {
-    plan.creates.push(create);
-  }
-
-  // Snapshot per-concept residuals before integration for impact tracking
-  const residualsBefore = new Map<string, number | null>();
-  for (const c of getActiveConcepts(db)) {
-    residualsBefore.set(c.id, c.residual);
+  const allJournalChunks = journalChunks;
+  const planSpan = tracer.span("plan-explicit-close");
+  const plan = await buildExplicitClosePlan(db, narrative, generator, opts?.mergeStrategy);
+  planSpan.end();
+  if (plan.unresolvedEntries.length > 0) {
+    throw new LoreError(
+      "JOURNAL_CONCEPTS_REQUIRED",
+      `Narrative '${narrativeName}' has journal entries without valid concept designations. Repair them with 'lore sys narrative designate ${narrativeName} <chunk-id> --concept <name>' before closing.`,
+      { unresolved_entries: plan.unresolvedEntries },
+    );
   }
 
   const conceptsUpdated: string[] = [];
@@ -2900,7 +2777,6 @@ export async function closeNarrativeOp(
     preparedChunkWrite: PreparedChunkWrite;
     pendingEmbed: { chunkId: string; content: string };
     residualPair: { conceptId: string; newChunkId: string; oldChunkId: string | null };
-    contentDiff: { adds: number; removes: number } | null;
     conflict: MergeConflict | null;
     createdConcept: { id: string; name: string } | null;
   };
@@ -2908,6 +2784,7 @@ export async function closeNarrativeOp(
   const preparedConceptCreates: Array<{ id: string; name: string }> = [];
   const preparedChunkWrites: PreparedChunkWrite[] = [];
   let commit: ReturnType<typeof insertCommit> | null = null;
+  let queuedMaintenanceJob: { id: string; created_at: string } | null = null;
 
   // Collect chunk contents + IDs for batch embedding after both loops
   const pendingEmbeds: Array<{ chunkId: string; content: string }> = [];
@@ -2915,12 +2792,17 @@ export async function closeNarrativeOp(
   const residualPairs: Array<{ conceptId: string; newChunkId: string; oldChunkId: string | null }> =
     [];
 
-  // Track content diffs per concept for close output
-  const contentDiffs = new Map<string, { adds: number; removes: number }>();
-
-  // Track entry index → conceptId for auto-binding symbol_refs
-  const entryIndexToConceptId = new Map<number, string>();
+  // Track entry index → conceptIds for auto-binding symbol_refs during maintenance.
+  const entryIndexToConceptIds = new Map<number, Set<string>>();
   const touchedConceptIds = new Set<string>();
+  const maintenancePayload = (): CloseMaintenancePayload => ({
+    narrativeId: narrative.id,
+    codePath: codePath ?? null,
+    residualPairs,
+    entryConceptPairs: [...entryIndexToConceptIds.entries()].flatMap(([entryIndex, conceptIds]) =>
+      [...conceptIds].map((conceptId) => ({ entryIndex, conceptId })),
+    ),
+  });
 
   // Get merge base and head trees for 3-way merge
   const mergeBaseId = narrative.merge_base_commit_id;
@@ -3002,20 +2884,6 @@ export async function closeNarrativeOp(
           : 0;
       const nextVersion = currentVersion + 1;
 
-      let contentDiff: { adds: number; removes: number } | null = null;
-      if (oldContent != null && !isDiffTooLarge(oldContent, finalContent)) {
-        const hunks = computeLineDiff(oldContent, finalContent);
-        let adds = 0;
-        let removes = 0;
-        for (const h of hunks) {
-          for (const l of h.lines) {
-            if (l.type === "add") adds++;
-            else if (l.type === "remove") removes++;
-          }
-        }
-        contentDiff = { adds, removes };
-      }
-
       const { id, filePath } = await writeStateChunk({
         lorePath,
         concept: update.conceptName,
@@ -3044,7 +2912,6 @@ export async function closeNarrativeOp(
           newChunkId: id,
           oldChunkId: update.existingChunkId,
         },
-        contentDiff,
         conflict,
         createdConcept: null,
       };
@@ -3055,14 +2922,13 @@ export async function closeNarrativeOp(
     preparedChunkWrites.push(prepared.preparedChunkWrite);
     pendingEmbeds.push(prepared.pendingEmbed);
     residualPairs.push(prepared.residualPair);
-    if (prepared.contentDiff) {
-      contentDiffs.set(prepared.conceptName, prepared.contentDiff);
-    }
     if (prepared.conflict) {
       conflicts.push(prepared.conflict);
     }
     for (const idx of prepared.preparedChunkWrite.sourceEntryIndices) {
-      entryIndexToConceptId.set(idx, prepared.conceptId);
+      const ids = entryIndexToConceptIds.get(idx) ?? new Set<string>();
+      ids.add(prepared.conceptId);
+      entryIndexToConceptIds.set(idx, ids);
     }
     touchedConceptIds.add(prepared.conceptId);
     conceptsUpdated.push(prepared.conceptName);
@@ -3144,7 +3010,6 @@ export async function closeNarrativeOp(
         },
         pendingEmbed: { chunkId: id, content: finalContent },
         residualPair: { conceptId, newChunkId: id, oldChunkId: null },
-        contentDiff: { adds: finalContent.split("\n").length, removes: 0 },
         conflict,
         createdConcept,
       };
@@ -3157,14 +3022,13 @@ export async function closeNarrativeOp(
     preparedChunkWrites.push(prepared.preparedChunkWrite);
     pendingEmbeds.push(prepared.pendingEmbed);
     residualPairs.push(prepared.residualPair);
-    if (prepared.contentDiff) {
-      contentDiffs.set(prepared.conceptName, prepared.contentDiff);
-    }
     if (prepared.conflict) {
       conflicts.push(prepared.conflict);
     }
     for (const idx of prepared.preparedChunkWrite.sourceEntryIndices) {
-      entryIndexToConceptId.set(idx, prepared.conceptId);
+      const ids = entryIndexToConceptIds.get(idx) ?? new Set<string>();
+      ids.add(prepared.conceptId);
+      entryIndexToConceptIds.set(idx, ids);
     }
     touchedConceptIds.add(prepared.conceptId);
     conceptsCreated.push(prepared.conceptName);
@@ -3173,9 +3037,6 @@ export async function closeNarrativeOp(
   // Batch embed all new state chunks
   const stateEmbedSpan = tracer.span("batch-embed-state");
   const embeddingByChunkId = new Map<string, Float32Array>();
-  const preparedChunkFilePathById = new Map(
-    preparedChunkWrites.map((chunk) => [chunk.chunkId, chunk.filePath] as const),
-  );
   const frontmatterUpdatesByPath = new Map<string, Record<string, unknown>>();
   let embeddedAt: string | null = null;
   if (pendingEmbeds.length > 0) {
@@ -3253,6 +3114,15 @@ export async function closeNarrativeOp(
     commit = insertCommit(db, narrative.id, parentId, mergeBaseId, commitMessage);
     insertCommitTree(db, commit.id, treeEntries);
     closeDbNarrative(db, narrative.id);
+    if (touchedConceptIds.size > 0) {
+      queuedMaintenanceJob = queueCloseMaintenanceJob(db, {
+        lorePath,
+        narrativeId: narrative.id,
+        narrativeName,
+        commitId: commit.id,
+        payload: maintenancePayload(),
+      });
+    }
     db.run("COMMIT");
   } catch (error) {
     try {
@@ -3296,287 +3166,361 @@ export async function closeNarrativeOp(
       // Best-effort metadata updates must not invalidate an already committed close.
     }
   });
+  stateEmbedSpan.end();
 
-  if (pendingEmbeds.length > 0) {
-    const contentByChunkId = new Map<string, string>();
-    for (const pe of pendingEmbeds) {
-      contentByChunkId.set(pe.chunkId, pe.content);
-    }
-    const oldEmbeddingsByChunkId = batchLoadEmbeddingsByChunkIds(
-      db,
-      residualPairs.map((pair) => pair.oldChunkId),
+  if (!commit) {
+    throw new LoreError(
+      "COMMIT_NOT_FOUND",
+      `Close commit for narrative '${narrativeName}' was not created`,
     );
-    const codeEmbedder = opts?.codeEmbedder ?? null;
-    const residualConceptIds = [...new Set(residualPairs.map((pair) => pair.conceptId))];
-    const residualPairByConceptId = new Map(
-      residualPairs.map((pair) => [pair.conceptId, pair] as const),
+  }
+
+  // Execute lifecycle targets (rename, archive, restore, merge, split)
+  const lifecycleTargets = declaredTargets.filter((t) => t.op !== "create" && t.op !== "update");
+  if (lifecycleTargets.length > 0 && opts?.lifecycleTargetHandler) {
+    for (const target of lifecycleTargets) {
+      await opts.lifecycleTargetHandler(target);
+    }
+  }
+
+  let maintenance: CloseResult["maintenance"] | undefined;
+  if (queuedMaintenanceJob) {
+    const jobCounts = getCloseMaintenanceJobCounts(db, { lorePath });
+    maintenance = {
+      status: "queued",
+      job_id: queuedMaintenanceJob.id,
+      pending_jobs: jobCounts.queued + jobCounts.leased,
+      failed_jobs: jobCounts.failed,
+      note: "Residuals, bindings, and graph refresh were queued after the authoritative merge.",
+    };
+  }
+
+  const manifestBeforeUpdate = getManifest(db);
+  upsertManifest(db, {
+    chunk_count: getChunkCount(db),
+    concept_count: getActiveConceptCount(db),
+    last_integrated: new Date().toISOString(),
+    debt: manifestBeforeUpdate?.debt ?? debtBefore,
+    debt_trend: manifestBeforeUpdate?.debt_trend ?? "stable",
+    graph_stale: maintenance ? 1 : manifestBeforeUpdate?.graph_stale ?? 0,
+  });
+
+  let followUp: string | undefined;
+  if (phaseTransitions.some((transition) => transition.magnitude !== "moderate")) {
+    const names = phaseTransitions
+      .filter((transition) => transition.magnitude !== "moderate")
+      .map((transition) => transition.concept_name);
+    followUp = `Review phase-transition concepts: ${names.join(", ")}`;
+  }
+  if (conflicts.length > 0) {
+    const conflictNote = `${conflicts.length} merge conflict(s) auto-resolved`;
+    followUp = followUp ? `${followUp}. ${conflictNote}` : conflictNote;
+  }
+  if (maintenance?.note) {
+    followUp = followUp ? `${followUp}. ${maintenance.note}` : maintenance.note;
+  }
+
+  const debtAfter = maintenance ? null : getManifest(db)?.debt ?? debtBefore;
+
+  closeSpan.end();
+  const traceSummary = tracer.summary();
+  if (traceSummary) console.error(traceSummary);
+  tracer.reset();
+
+  return {
+    mode: "merge",
+    integrated: true,
+    commit_id: commit.id,
+    concepts_updated: conceptsUpdated,
+    concepts_created: conceptsCreated,
+    conflicts,
+    impact: {
+      summary: maintenance
+        ? "Authoritative merge committed. Maintenance was queued for residuals, bindings, and graph refresh."
+        : `Debt ${debtAfter! < debtBefore ? "reduced" : "increased"} ${Math.abs(((debtBefore - debtAfter!) / (debtBefore || 1)) * 100).toFixed(0)}%.`,
+      debt_before: debtBefore,
+      debt_after: debtAfter,
+    },
+    maintenance,
+    follow_up: followUp,
+    phase_transitions: phaseTransitions.length > 0 ? phaseTransitions : undefined,
+  };
+}
+
+export async function runCloseMaintenanceJob(
+  db: Database,
+  payload: CloseMaintenancePayload,
+  config: LoreConfig,
+  embedder: Embedder,
+  generator: Generator,
+  codeEmbedder?: Embedder | null,
+): Promise<void> {
+  if (payload.residualPairs.length === 0) {
+    upsertManifest(db, {
+      chunk_count: getChunkCount(db),
+      concept_count: getActiveConceptCount(db),
+      graph_stale: 0,
+      last_integrated: new Date().toISOString(),
+    });
+    return;
+  }
+
+  const debtBefore = getManifest(db)?.debt ?? getLatestDebt(db);
+  const residualPairByConceptId = new Map(
+    payload.residualPairs.map((pair) => [pair.conceptId, pair] as const),
+  );
+  const residualConceptIds = [...new Set(payload.residualPairs.map((pair) => pair.conceptId))];
+  const newChunkRows = batchLoadChunksByIds(
+    db,
+    payload.residualPairs.map((pair) => pair.newChunkId),
+  );
+  const newParsedChunks = await batchReadParsedChunksByIds(
+    newChunkRows,
+    payload.residualPairs.map((pair) => pair.newChunkId),
+  );
+  const newEmbeddingsByChunkId = batchLoadEmbeddingsByChunkIds(
+    db,
+    payload.residualPairs.map((pair) => pair.newChunkId),
+  );
+  const oldEmbeddingsByChunkId = batchLoadEmbeddingsByChunkIds(
+    db,
+    payload.residualPairs.map((pair) => pair.oldChunkId),
+  );
+  const contentByChunkId = new Map<string, string>();
+  for (const [chunkId, parsed] of newParsedChunks.entries()) {
+    contentByChunkId.set(chunkId, parsed.content);
+  }
+
+  const frontmatterUpdatesByPath = new Map<string, Record<string, unknown>>();
+  const symbolLinesByConceptId = payload.codePath
+    ? batchLoadSymbolLinesByConceptIds(db, residualConceptIds)
+    : new Map<string, ConceptSymbolLineRange[]>();
+  const symbolReadTargets = new Map<string, { file_path: string; line_start: number; line_end: number }>();
+  if (payload.codePath) {
+    for (const symbolLines of symbolLinesByConceptId.values()) {
+      for (const sym of symbolLines) {
+        if (!symbolReadTargets.has(sym.symbol_id)) {
+          symbolReadTargets.set(sym.symbol_id, {
+            file_path: sym.file_path,
+            line_start: sym.line_start,
+            line_end: sym.line_end,
+          });
+        }
+      }
+    }
+  }
+
+  const symbolContentById = new Map<string, string>();
+  if (payload.codePath && symbolReadTargets.size > 0) {
+    const symbolReads = await mapConcurrent(
+      [...symbolReadTargets.entries()],
+      8,
+      async ([symbolId, target]) => ({
+        symbolId,
+        content: await readSymbolContent(
+          payload.codePath!,
+          target.file_path,
+          target.line_start,
+          target.line_end,
+        ),
+      }),
     );
-    const symbolLinesByConceptId = codePath
-      ? batchLoadSymbolLinesByConceptIds(db, residualConceptIds)
-      : new Map<string, ConceptSymbolLineRange[]>();
-    const symbolReadTargets = new Map<
-      string,
-      { file_path: string; line_start: number; line_end: number }
-    >();
-    if (codePath) {
-      for (const symbolLines of symbolLinesByConceptId.values()) {
-        for (const sym of symbolLines) {
-          if (!symbolReadTargets.has(sym.symbol_id)) {
-            symbolReadTargets.set(sym.symbol_id, {
-              file_path: sym.file_path,
-              line_start: sym.line_start,
-              line_end: sym.line_end,
-            });
-          }
-        }
+    for (const read of symbolReads) {
+      if (read.content) {
+        symbolContentById.set(read.symbolId, read.content);
       }
     }
-    const symbolContentById = new Map<string, string>();
-    if (codePath && symbolReadTargets.size > 0) {
-      const symbolReads = await mapConcurrent(
-        [...symbolReadTargets.entries()],
-        8,
-        async ([symbolId, target]) => ({
-          symbolId,
-          content: await readSymbolContent(
-            codePath,
-            target.file_path,
-            target.line_start,
-            target.line_end,
-          ),
-        }),
-      );
-      for (const read of symbolReads) {
-        if (read.content) {
-          symbolContentById.set(read.symbolId, read.content);
+  }
+
+  const symbolContentEntries = [...symbolContentById.entries()].map(([symbolId, content]) => ({
+    symbolId,
+    content,
+  }));
+  const conceptCodeEmbeddingsByConceptId = new Map<string, Float32Array>();
+  const symbolCodeEmbeddingsById = new Map<string, Float32Array>();
+  const symbolTextEmbeddingsById = new Map<string, Float32Array>();
+
+  if (codeEmbedder && config.ai.embedding.code?.model && payload.codePath) {
+    const codeModel = config.ai.embedding.code.model;
+    try {
+      const conceptCodeTargets = residualConceptIds
+        .map((conceptId) => {
+          const pair = residualPairByConceptId.get(conceptId);
+          if (!pair) return null;
+          const content = contentByChunkId.get(pair.newChunkId);
+          if (!content) return null;
+          return { conceptId, content };
+        })
+        .filter((target): target is { conceptId: string; content: string } => target != null);
+
+      if (conceptCodeTargets.length > 0 || symbolContentEntries.length > 0) {
+        const codeEmbeddings = await codeEmbedder.embedBatch([
+          ...conceptCodeTargets.map((target) => target.content),
+          ...symbolContentEntries.map((entry) => entry.content),
+        ]);
+        for (let i = 0; i < conceptCodeTargets.length; i++) {
+          conceptCodeEmbeddingsByConceptId.set(conceptCodeTargets[i]!.conceptId, codeEmbeddings[i]!);
         }
-      }
-    }
-    const symbolContentEntries = [...symbolContentById.entries()].map(([symbolId, content]) => ({
-      symbolId,
-      content,
-    }));
-    const conceptCodeEmbeddingsByConceptId = new Map<string, Float32Array>();
-    const symbolCodeEmbeddingsById = new Map<string, Float32Array>();
-    const symbolTextEmbeddingsById = new Map<string, Float32Array>();
-
-    // Store per-symbol code embeddings for code-lane retrieval
-    if (codeEmbedder && config.ai.embedding.code?.model && codePath) {
-      const codeModel = config.ai.embedding.code.model;
-      try {
-        const conceptCodeTargets = residualConceptIds
-          .map((conceptId) => {
-            const pair = residualPairByConceptId.get(conceptId);
-            if (!pair) return null;
-            const content = contentByChunkId.get(pair.newChunkId);
-            if (!content) return null;
-            return { conceptId, content };
-          })
-          .filter((target): target is { conceptId: string; content: string } => target != null);
-
-        if (conceptCodeTargets.length > 0 || symbolContentEntries.length > 0) {
-          const codeEmbeddings = await codeEmbedder.embedBatch([
-            ...conceptCodeTargets.map((target) => target.content),
-            ...symbolContentEntries.map((entry) => entry.content),
-          ]);
-          for (let i = 0; i < conceptCodeTargets.length; i++) {
-            conceptCodeEmbeddingsByConceptId.set(
-              conceptCodeTargets[i]!.conceptId,
-              codeEmbeddings[i]!,
-            );
-          }
-          const symbolOffset = conceptCodeTargets.length;
-          const symbolEmbeddingWrites: Array<{
-            symbolId: string;
-            embedding: Float32Array;
-            model: string;
-          }> = [];
-          for (let i = 0; i < symbolContentEntries.length; i++) {
-            const embedding = codeEmbeddings[symbolOffset + i]!;
-            symbolCodeEmbeddingsById.set(symbolContentEntries[i]!.symbolId, embedding);
-            symbolEmbeddingWrites.push({
-              symbolId: symbolContentEntries[i]!.symbolId,
-              embedding,
-              model: codeModel,
-            });
-          }
-          if (symbolEmbeddingWrites.length > 0) {
-            insertSymbolEmbeddingBatch(db, symbolEmbeddingWrites);
-          }
-        }
-      } catch {
-        // Non-fatal: code embedding storage failure should not block close
-      }
-    }
-
-    if (
-      codePath &&
-      symbolContentEntries.length > 0 &&
-      (!codeEmbedder ||
-        residualConceptIds.some((conceptId) => !conceptCodeEmbeddingsByConceptId.has(conceptId)))
-    ) {
-      try {
-        const symbolTextEmbeddings = await embedder.embedBatch(
-          symbolContentEntries.map((entry) => entry.content),
-        );
+        const symbolOffset = conceptCodeTargets.length;
+        const symbolEmbeddingWrites: Array<{ symbolId: string; embedding: Float32Array; model: string }> = [];
         for (let i = 0; i < symbolContentEntries.length; i++) {
-          symbolTextEmbeddingsById.set(symbolContentEntries[i]!.symbolId, symbolTextEmbeddings[i]!);
+          const embedding = codeEmbeddings[symbolOffset + i]!;
+          symbolCodeEmbeddingsById.set(symbolContentEntries[i]!.symbolId, embedding);
+          symbolEmbeddingWrites.push({
+            symbolId: symbolContentEntries[i]!.symbolId,
+            embedding,
+            model: codeModel,
+          });
         }
-      } catch {
-        // Non-fatal: residuals can still fall back to churn
+        if (symbolEmbeddingWrites.length > 0) {
+          insertSymbolEmbeddingBatch(db, symbolEmbeddingWrites);
+        }
+      }
+    } catch {
+      // Non-fatal: residuals can still fall back to text embeddings/churn.
+    }
+  }
+
+  if (
+    payload.codePath &&
+    symbolContentEntries.length > 0 &&
+    (!codeEmbedder ||
+      residualConceptIds.some((conceptId) => !conceptCodeEmbeddingsByConceptId.has(conceptId)))
+  ) {
+    try {
+      const symbolTextEmbeddings = await embedder.embedBatch(
+        symbolContentEntries.map((entry) => entry.content),
+      );
+      for (let i = 0; i < symbolContentEntries.length; i++) {
+        symbolTextEmbeddingsById.set(symbolContentEntries[i]!.symbolId, symbolTextEmbeddings[i]!);
+      }
+    } catch {
+      // Non-fatal.
+    }
+  }
+
+  const residualConceptUpdates: Array<{
+    id: string;
+    fields: { churn: number; ground_residual: number | null; residual: number };
+  }> = [];
+  const conceptsBeforeResidualsById = new Map(getConcepts(db).map((concept) => [concept.id, concept]));
+  for (const pair of payload.residualPairs) {
+    const newEmb = newEmbeddingsByChunkId.get(pair.newChunkId);
+    let churn = 0;
+    if (pair.oldChunkId && newEmb) {
+      const oldEmb = oldEmbeddingsByChunkId.get(pair.oldChunkId);
+      if (oldEmb) {
+        churn = cosineDistance(oldEmb, newEmb);
       }
     }
 
-    const residualConceptUpdates: Array<{
-      id: string;
-      fields: { churn: number; ground_residual: number | null; residual: number };
-    }> = [];
-    const conceptsBeforeResidualsById = new Map(getConcepts(db).map((concept) => [concept.id, concept]));
-    for (const pair of residualPairs) {
-      const newEmb = embeddingByChunkId.get(pair.newChunkId);
-
-      // churn = version-to-version cosine distance (informational)
-      let churn = 0;
-      if (pair.oldChunkId && newEmb) {
-        const oldEmb = oldEmbeddingsByChunkId.get(pair.oldChunkId);
-        if (oldEmb) {
-          churn = cosineDistance(oldEmb, newEmb);
-        }
-      }
-
-      // ground_residual = concept vs symbol content in code embedding space (or text fallback)
-      let groundResidual: number | null = null;
-      if (codePath) {
-        const symbolLines = symbolLinesByConceptId.get(pair.conceptId) ?? [];
-        const codeGrounding = symbolLines
+    let groundResidual: number | null = null;
+    if (payload.codePath) {
+      const symbolLines = symbolLinesByConceptId.get(pair.conceptId) ?? [];
+      const codeGrounding = symbolLines
+        .map((sym) => {
+          const embedding = symbolCodeEmbeddingsById.get(sym.symbol_id);
+          return embedding ? { embedding, confidence: sym.confidence } : null;
+        })
+        .filter(
+          (
+            item,
+          ): item is { embedding: Float32Array; confidence: number } => item != null,
+        );
+      const conceptCodeEmbedding = conceptCodeEmbeddingsByConceptId.get(pair.conceptId);
+      if (conceptCodeEmbedding && codeGrounding.length > 0) {
+        groundResidual = cosineDistance(
+          conceptCodeEmbedding,
+          weightedAverageVectors(
+            codeGrounding.map((item) => item.embedding),
+            codeGrounding.map((item) => item.confidence),
+          ),
+        );
+      } else if (newEmb) {
+        const textGrounding = symbolLines
           .map((sym) => {
-            const embedding = symbolCodeEmbeddingsById.get(sym.symbol_id);
+            const embedding = symbolTextEmbeddingsById.get(sym.symbol_id);
             return embedding ? { embedding, confidence: sym.confidence } : null;
           })
           .filter(
             (
               item,
-            ): item is {
-              embedding: Float32Array;
-              confidence: number;
-            } => item != null,
+            ): item is { embedding: Float32Array; confidence: number } => item != null,
           );
-        const conceptCodeEmbedding = conceptCodeEmbeddingsByConceptId.get(pair.conceptId);
-        if (conceptCodeEmbedding && codeGrounding.length > 0) {
+        if (textGrounding.length > 0) {
           groundResidual = cosineDistance(
-            conceptCodeEmbedding,
+            newEmb,
             weightedAverageVectors(
-              codeGrounding.map((item) => item.embedding),
-              codeGrounding.map((item) => item.confidence),
+              textGrounding.map((item) => item.embedding),
+              textGrounding.map((item) => item.confidence),
             ),
           );
-        } else if (newEmb) {
-          const textGrounding = symbolLines
-            .map((sym) => {
-              const embedding = symbolTextEmbeddingsById.get(sym.symbol_id);
-              return embedding ? { embedding, confidence: sym.confidence } : null;
-            })
-            .filter(
-              (
-                item,
-              ): item is {
-                embedding: Float32Array;
-                confidence: number;
-              } => item != null,
-            );
-          if (textGrounding.length > 0) {
-            groundResidual = cosineDistance(
-              newEmb,
-              weightedAverageVectors(
-                textGrounding.map((item) => item.embedding),
-                textGrounding.map((item) => item.confidence),
-              ),
-            );
-          } else {
-            groundResidual = churn;
-          }
         } else {
-          // No symbol content available → fall back to churn as ground signal
           groundResidual = churn;
         }
       } else {
         groundResidual = churn;
       }
-
-      // residual (deprecated) = max(ground_residual, lore_residual) — lore_residual computed later
-      const residual = groundResidual ?? churn;
-
-      residualConceptUpdates.push({
-        id: pair.conceptId,
-        fields: {
-          churn,
-          ground_residual: groundResidual,
-          residual,
-        },
-      });
-      const filePath = preparedChunkFilePathById.get(pair.newChunkId);
-      if (filePath) {
-        mergeFrontmatterUpdates(frontmatterUpdatesByPath, filePath, {
-          fl_residual: residual,
-          fl_staleness: 0,
-        });
-      }
+    } else {
+      groundResidual = churn;
     }
-    insertConceptVersionBatch(db, residualConceptUpdates, conceptsBeforeResidualsById);
-  }
-  stateEmbedSpan.end();
 
-  // Re-cluster concepts
-  const discoverSpan = tracer.span("discover-concepts");
-  if (conceptsUpdated.length > 0 || conceptsCreated.length > 0) {
+    const residual = groundResidual ?? churn;
+    residualConceptUpdates.push({
+      id: pair.conceptId,
+      fields: {
+        churn,
+        ground_residual: groundResidual,
+        residual,
+      },
+    });
+    const chunkRow = newChunkRows.get(pair.newChunkId);
+    if (chunkRow) {
+      mergeFrontmatterUpdates(frontmatterUpdatesByPath, chunkRow.file_path, {
+        fl_residual: residual,
+        fl_staleness: 0,
+      });
+    }
+  }
+  insertConceptVersionBatch(db, residualConceptUpdates, conceptsBeforeResidualsById);
+
+  if (residualConceptIds.length > 0) {
     await discoverConcepts(db, generator);
   }
-  discoverSpan.end();
 
-  // ─── Symbol binding extraction ──────────────────────────────────
-  const bindingSpan = tracer.span("symbol-bindings");
-  if (codePath) {
-    if (touchedConceptIds.size > 0) {
-      // Collect unique file paths from symbol bindings for targeted rescan
-      const filePaths = new Set<string>();
-      for (const cid of touchedConceptIds) {
-        for (const fp of getFilesForConcept(db, cid)) {
-          filePaths.add(fp);
-        }
+  if (payload.codePath && residualConceptIds.length > 0) {
+    const filePaths = new Set<string>();
+    for (const conceptId of residualConceptIds) {
+      for (const filePath of getFilesForConcept(db, conceptId)) {
+        filePaths.add(filePath);
       }
-
-      // Targeted rescan to ensure symbol index is fresh
-      if (filePaths.size > 0) {
-        await rescanFiles(db, codePath, [...filePaths]);
-      }
-
-      // Extract bindings for touched concepts (forward: regex mention matching)
-      await extractBindingsForConcepts(db, [...touchedConceptIds]);
-
-      // Auto-bind by file overlap (upgrades mention bindings and adds file-path-based ones)
-      await autoBindByFileOverlap(db, { conceptIds: [...touchedConceptIds] });
-
-      // Prune orphaned bindings
-      pruneOrphanedBindings(db);
     }
+    if (filePaths.size > 0) {
+      await rescanFiles(db, payload.codePath, [...filePaths]);
+    }
+    await extractBindingsForConcepts(db, residualConceptIds);
+    await autoBindByFileOverlap(db, { conceptIds: residualConceptIds });
+    pruneOrphanedBindings(db);
   }
-  bindingSpan.end();
 
-  // ─── Auto-bind symbol_refs from journal entries ──────────────────
-  let autoBoundSymbolCount = 0;
+  const entryConceptIds = new Map<number, Set<string>>();
+  for (const pair of payload.entryConceptPairs) {
+    const ids = entryConceptIds.get(pair.entryIndex) ?? new Set<string>();
+    ids.add(pair.conceptId);
+    entryConceptIds.set(pair.entryIndex, ids);
+  }
+  const allJournalChunks = getJournalChunksForNarrative(db, payload.narrativeId);
   const autoBindPairs = new Map<string, { conceptId: string; symbolId: string }>();
   for (let i = 0; i < allJournalChunks.length; i++) {
     const chunk = allJournalChunks[i]!;
     if (!chunk.symbol_refs) continue;
+    const conceptIds = [...(entryConceptIds.get(i) ?? new Set<string>())];
+    if (conceptIds.length === 0) continue;
     const symbolIds: string[] = JSON.parse(chunk.symbol_refs);
-    if (symbolIds.length === 0) continue;
-    const targetConceptId = entryIndexToConceptId.get(i);
-    if (!targetConceptId) continue;
-    for (const symbolId of symbolIds) {
-      autoBindPairs.set(`${targetConceptId}:${symbolId}`, {
-        conceptId: targetConceptId,
-        symbolId,
-      });
+    for (const conceptId of conceptIds) {
+      for (const symbolId of symbolIds) {
+        autoBindPairs.set(`${conceptId}:${symbolId}`, { conceptId, symbolId });
+      }
     }
   }
   const symbolBodyHashes = batchLoadSymbolBodyHashesByIds(db, [
@@ -3591,31 +3535,22 @@ export async function closeNarrativeOp(
         boundBodyHash: symbolBodyHashes.get(pair.symbolId) ?? null,
         confidence: 0.6,
       });
-      autoBoundSymbolCount++;
     } catch {
-      // Non-fatal: symbol may have been deleted between write and close
+      // Non-fatal.
     }
   }
 
-  // ─── Symbol drift → staleness/residual adjustments ─────────────
-  const driftSpan = tracer.span("symbol-drift");
   const concepts = getConcepts(db);
-
-  // priority set (existing logic) to limit scope
   const priority = concepts
-    .filter((c) => conceptPressureBase(c) > 0.3 || (c.staleness ?? 0) > 0.5)
-    .map((c) => c.id);
-
+    .filter((concept) => conceptPressureBase(concept) > 0.3 || (concept.staleness ?? 0) > 0.5)
+    .map((concept) => concept.id);
   const scopedConcepts = new Set<string>(priority);
-  for (const id of touchedConceptIds) scopedConcepts.add(id);
+  for (const conceptId of residualConceptIds) scopedConcepts.add(conceptId);
 
-  // Get drifted bindings for staleness adjustment
   let closeDriftedBindings: SymbolDriftResult[] = [];
   try {
     closeDriftedBindings = getDriftedBindings(db);
-  } catch {
-    // pre-scan safety
-  }
+  } catch {}
   const closeDriftByConceptId = new Map<string, number>();
   for (const drift of closeDriftedBindings) {
     closeDriftByConceptId.set(
@@ -3645,10 +3580,8 @@ export async function closeNarrativeOp(
     const baseStaleness = computeStaleness(chunkRow.created_at, config);
     let newStaleness = baseStaleness;
     let newGroundResidual = concept.ground_residual ?? concept.churn ?? 0;
-
     const driftCount = closeDriftByConceptId.get(concept.id) ?? 0;
     if (driftCount > 0) {
-      // Symbol drift score: 1 drift = 0.5, 2 = 0.7, 3+ = 0.85, 5+ = 1.0
       let driftScore: number;
       if (driftCount >= 5) driftScore = 1.0;
       else if (driftCount >= 3) driftScore = 0.85;
@@ -3660,11 +3593,10 @@ export async function closeNarrativeOp(
 
     const currentStaleness = concept.staleness ?? 0;
     const currentGroundResidual = concept.ground_residual ?? concept.churn ?? 0;
-    const stalenessChanged = Math.abs(newStaleness - currentStaleness) > 1e-6;
-    const groundResidualChanged = Math.abs(newGroundResidual - currentGroundResidual) > 1e-6;
-
-    if (stalenessChanged || groundResidualChanged) {
-      // residual (deprecated) = max(ground_residual, lore_residual)
+    if (
+      Math.abs(newStaleness - currentStaleness) > 1e-6 ||
+      Math.abs(newGroundResidual - currentGroundResidual) > 1e-6
+    ) {
       const newResidual = Math.max(newGroundResidual, concept.lore_residual ?? 0);
       driftConceptUpdates.push({
         id: concept.id,
@@ -3681,78 +3613,13 @@ export async function closeNarrativeOp(
     }
   }
   insertConceptVersionBatch(db, driftConceptUpdates, conceptsById);
-  driftSpan.end();
 
-  // Compute residuals and debt using fresh Fiedler from discoverConcepts
   const conceptsPost = getConcepts(db);
   const activeConceptsPost = getActiveConcepts(db);
   const postDiscoveryManifest = getManifest(db);
   const fiedlerAfter = postDiscoveryManifest?.fiedler_value ?? 0;
   recordResiduals(db, activeConceptsPost, fiedlerAfter);
 
-  // Compute per-concept residual impacts for touched concepts
-  const touchedNames = new Set([...conceptsUpdated, ...conceptsCreated]);
-  const conceptImpacts: Array<{
-    concept: string;
-    residual_before: number | null;
-    residual_after: number | null;
-    content_diff?: { adds: number; removes: number };
-  }> = [];
-  // Re-read active concepts to get post-recordResiduals values
-  const activeConceptsFresh = getActiveConcepts(db);
-  for (const c of activeConceptsFresh) {
-    if (touchedNames.has(c.name)) {
-      conceptImpacts.push({
-        concept: c.name,
-        residual_before: residualsBefore.get(c.id) ?? null,
-        residual_after: c.residual,
-        content_diff: contentDiffs.get(c.name),
-      });
-    }
-  }
-
-  // ─── Concept overlap detection ─────────────────────────────────
-  // Compare each touched concept's embedding against all other active concepts
-  const conceptOverlaps: Array<{ concept: string; overlaps_with: string; similarity: number }> = [];
-  if (touchedNames.size > 0) {
-    const allActiveForOverlap = getActiveConcepts(db);
-    const chunkIds = allActiveForOverlap
-      .filter((c) => c.active_chunk_id != null)
-      .map((c) => c.active_chunk_id!);
-
-    // Batch fetch all needed embeddings in one query instead of N round-trips
-    const embeddingMap = new Map<string, Float32Array>();
-    if (chunkIds.length > 0) {
-      const ph = chunkIds.map(() => "?").join(", ");
-      const embRows = db
-        .query<{ chunk_id: string; embedding: Uint8Array }, string[]>(
-          `SELECT chunk_id, embedding FROM embeddings WHERE chunk_id IN (${ph})`,
-        )
-        .all(...chunkIds);
-      for (const row of embRows) {
-        embeddingMap.set(row.chunk_id, new Float32Array(row.embedding.buffer));
-      }
-    }
-
-    // For each touched concept, compare against all non-touched active concepts
-    for (const c of allActiveForOverlap) {
-      if (!touchedNames.has(c.name) || !c.active_chunk_id) continue;
-      const touchedEmb = embeddingMap.get(c.active_chunk_id);
-      if (!touchedEmb) continue;
-      for (const other of allActiveForOverlap) {
-        if (other.id === c.id || touchedNames.has(other.name) || !other.active_chunk_id) continue;
-        const otherEmb = embeddingMap.get(other.active_chunk_id);
-        if (!otherEmb) continue;
-        const similarity = 1 - cosineDistance(touchedEmb, otherEmb);
-        if (similarity > 0.75) {
-          conceptOverlaps.push({ concept: c.name, overlaps_with: other.name, similarity });
-        }
-      }
-    }
-    conceptOverlaps.sort((a, b) => b.similarity - a.similarity);
-  }
-
-  // Persist cluster assignments to frontmatter for scoped concepts
   const conceptsPostChunkRows = batchLoadChunksByIds(
     db,
     conceptsPost
@@ -3779,14 +3646,6 @@ export async function closeNarrativeOp(
     }
   });
 
-  if (!commit) {
-    throw new LoreError(
-      "COMMIT_NOT_FOUND",
-      `Close commit for narrative '${narrativeName}' was not created`,
-    );
-  }
-
-  // Update manifest
   const debtAfter = computeTotalDebt(activeConceptsPost, fiedlerAfter);
   const debtTrend = computeDebtTrend(debtAfter, debtBefore);
   upsertManifest(db, {
@@ -3795,74 +3654,8 @@ export async function closeNarrativeOp(
     debt: debtAfter,
     debt_trend: debtTrend,
     last_integrated: new Date().toISOString(),
+    graph_stale: 0,
   });
-
-  // Execute lifecycle targets (rename, archive, restore, merge, split)
-  const lifecycleTargets = declaredTargets.filter((t) => t.op !== "create" && t.op !== "update");
-  if (lifecycleTargets.length > 0 && opts?.lifecycleTargetHandler) {
-    for (const target of lifecycleTargets) {
-      await opts.lifecycleTargetHandler(target);
-    }
-  }
-
-  // Determine follow-up
-  let followUp: string | undefined;
-  const highResidual = concepts.find((c) => conceptPressureBase(c) > 0.5);
-  if (highResidual) {
-    followUp = `${highResidual.name} concept has high pressure — consider a follow-up narrative`;
-  }
-  if (conflicts.length > 0) {
-    const conflictNote = `${conflicts.length} merge conflict(s) auto-resolved`;
-    followUp = followUp ? `${followUp}. ${conflictNote}` : conflictNote;
-  }
-  if (conceptsCreated.length > 0 || conceptsUpdated.length > 0) {
-    // Only suggest manual scan+bind if we didn't auto-bind symbols from entry refs
-    if (autoBoundSymbolCount === 0) {
-      const bindNote = "Run scan() then bind symbols to updated concepts for drift detection.";
-      followUp = followUp ? `${followUp}. ${bindNote}` : bindNote;
-    }
-  }
-
-  // Snapshot coverage after integration
-  let coverageChange: CloseResult["coverage_change"];
-  if (coverageBefore) {
-    try {
-      const statsAfter = getCoverageStats(db);
-      const coverageAfter = {
-        exported_covered: statsAfter.bound_exported,
-        exported_total: statsAfter.total_exported,
-        ratio:
-          statsAfter.total_exported > 0 ? statsAfter.bound_exported / statsAfter.total_exported : 0,
-      };
-      coverageChange = { before: coverageBefore, after: coverageAfter };
-    } catch {
-      /* symbols table may not exist */
-    }
-  }
-
-  closeSpan.end();
-  const traceSummary = tracer.summary();
-  if (traceSummary) console.error(traceSummary);
-  tracer.reset();
-
-  return {
-    mode: "merge",
-    integrated: true,
-    commit_id: commit.id,
-    concepts_updated: conceptsUpdated,
-    concepts_created: conceptsCreated,
-    conflicts,
-    impact: {
-      summary: `Debt ${debtAfter < debtBefore ? "reduced" : "increased"} ${Math.abs(((debtBefore - debtAfter) / (debtBefore || 1)) * 100).toFixed(0)}%.`,
-      debt_before: debtBefore,
-      debt_after: debtAfter,
-      concept_impacts: conceptImpacts.length > 0 ? conceptImpacts : undefined,
-    },
-    follow_up: followUp,
-    coverage_change: coverageChange,
-    concept_overlaps: conceptOverlaps.length > 0 ? conceptOverlaps : undefined,
-    phase_transitions: phaseTransitions.length > 0 ? phaseTransitions : undefined,
-  };
 }
 
 export function discardNarrative(db: Database, narrativeName: string): CloseResult {

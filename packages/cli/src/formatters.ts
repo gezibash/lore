@@ -3,6 +3,7 @@ import type {
   ConceptHealthComputeResult,
   ConceptHealthExplainResult,
   ConceptRelationSummary,
+  JournalDesignationResult,
   LsResult,
   ConceptRow,
   ConceptTagSummary,
@@ -213,6 +214,12 @@ export function formatMcpInstallCli(
 export function formatLogCli(note?: string): string {
   let text = `${GREEN}✓${RESET} Entry saved.`;
   if (note) text += ` ${DIM}${note}${RESET}`;
+  return text;
+}
+
+export function formatJournalDesignationCli(result: JournalDesignationResult): string {
+  let text = `${GREEN}✓${RESET} Journal entry ${CYAN}${result.chunk_id}${RESET} designated for ${result.concepts.join(", ")}.`;
+  if (result.note) text += ` ${DIM}${result.note}${RESET}`;
   return text;
 }
 

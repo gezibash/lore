@@ -39,6 +39,7 @@ import {
 } from "./commands/system.ts";
 import { refreshEmbeddingsCommand } from "./commands/embeddings.ts";
 import { conceptRestoreCommand } from "./commands/concept.ts";
+import { narrativeDesignateCommand } from "./commands/narrative.ts";
 import {
   conceptBindingsCommand,
   conceptBindCommand,
@@ -150,23 +151,53 @@ const cli = defineCli({
       arguments: {
         narrative: { type: "string", required: true, description: "Narrative name" },
         entry: { type: "string", required: true, description: "Journal entry" },
-        topics: { type: "string", required: true, description: "Comma-separated topic keywords" },
       },
       options: {
+        concept: {
+          type: "string",
+          description: "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+        },
+        topic: {
+          type: "string",
+          description: "Optional topic keyword (repeatable). Defaults to the concept names when omitted.",
+        },
+        symbol: {
+          type: "string",
+          description: "Optional symbol qualified name (repeatable).",
+        },
         ref: { type: "string", description: "File refs (comma-separated: path or path:start-end)" },
       },
       async action({ args, options }) {
-        const topics = args.topics
-          .split(",")
-          .map((t: string) => t.trim())
-          .filter(Boolean);
+        const concepts = options.concept
+          ? (Array.isArray(options.concept)
+              ? (options.concept as string[])
+              : [options.concept as string]
+            ).map((concept: string) => concept.trim()).filter(Boolean)
+          : [];
+        const topics = options.topic
+          ? (Array.isArray(options.topic)
+              ? (options.topic as string[])
+              : [options.topic as string]
+            ).map((topic: string) => topic.trim()).filter(Boolean)
+          : [];
+        const symbols = options.symbol
+          ? (Array.isArray(options.symbol)
+              ? (options.symbol as string[])
+              : [options.symbol as string]
+            ).map((symbol: string) => symbol.trim()).filter(Boolean)
+          : [];
         const refs = options.ref
           ? (options.ref as string)
               .split(",")
               .map((r: string) => r.trim())
               .filter(Boolean)
           : undefined;
-        await logCommand(getWorker(), args.narrative, args.entry, topics, refs);
+        await logCommand(getWorker(), args.narrative, args.entry, {
+          concepts,
+          topics,
+          symbols,
+          refs,
+        });
       },
     }),
     ask: defineCommand({
@@ -763,6 +794,39 @@ const cli = defineCli({
               },
               async action({ args }) {
                 await conceptUnbindCommand(getWorker(), args.concept, args.symbol);
+              },
+            }),
+          },
+        }),
+        narrative: defineCommand({
+          name: "narrative",
+          description: "Narrative repair and maintenance commands",
+          subcommands: {
+            designate: defineCommand({
+              name: "designate",
+              description:
+                "Set explicit concept designations on a journal entry by chunk ID",
+              arguments: {
+                narrative: { type: "string", required: true, description: "Open narrative name" },
+                chunk: { type: "string", required: true, description: "Journal chunk ID" },
+              },
+              options: {
+                concept: {
+                  type: "string",
+                  description:
+                    "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+                },
+              },
+              async action({ args, options }) {
+                const concepts = options.concept
+                  ? (Array.isArray(options.concept)
+                      ? (options.concept as string[])
+                      : [options.concept as string]
+                    ).map((concept: string) => concept.trim()).filter(Boolean)
+                  : [];
+                await narrativeDesignateCommand(getWorker(), args.narrative, args.chunk, {
+                  concepts,
+                });
               },
             }),
           },

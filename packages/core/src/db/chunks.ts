@@ -16,6 +16,7 @@ export interface InsertChunkOpts {
   magnitude?: number | null;
   createdAt: string;
   sourceFilePath?: string | null;
+  conceptDesignations?: string[] | null;
   conceptRefs?: string[] | null;
   symbolRefs?: string[] | null;
   fileRefs?: FileRef[] | null;
@@ -25,8 +26,8 @@ export function insertChunk(db: Database, opts: InsertChunkOpts): void {
   db.run(
     `INSERT INTO chunks (id, file_path, fl_type, concept_id, narrative_id,
        supersedes_id, status, topics, convergence, theta, magnitude, created_at, source_file_path,
-       concept_refs, symbol_refs, file_refs)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       concept_designations, concept_refs, symbol_refs, file_refs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       opts.id,
       opts.filePath,
@@ -41,6 +42,7 @@ export function insertChunk(db: Database, opts: InsertChunkOpts): void {
       opts.magnitude ?? null,
       opts.createdAt,
       opts.sourceFilePath ?? null,
+      opts.conceptDesignations ? JSON.stringify(opts.conceptDesignations) : null,
       opts.conceptRefs ? JSON.stringify(opts.conceptRefs) : null,
       opts.symbolRefs ? JSON.stringify(opts.symbolRefs) : null,
       opts.fileRefs ? JSON.stringify(opts.fileRefs) : null,
@@ -53,8 +55,8 @@ export function insertChunkBatch(db: Database, items: InsertChunkOpts[]): void {
   const stmt = db.prepare(
     `INSERT INTO chunks (id, file_path, fl_type, concept_id, narrative_id,
        supersedes_id, status, topics, convergence, theta, magnitude, created_at, source_file_path,
-       concept_refs, symbol_refs, file_refs)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       concept_designations, concept_refs, symbol_refs, file_refs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const opts of items) {
     stmt.run(
@@ -71,6 +73,7 @@ export function insertChunkBatch(db: Database, items: InsertChunkOpts[]): void {
       opts.magnitude ?? null,
       opts.createdAt,
       opts.sourceFilePath ?? null,
+      opts.conceptDesignations ? JSON.stringify(opts.conceptDesignations) : null,
       opts.conceptRefs ? JSON.stringify(opts.conceptRefs) : null,
       opts.symbolRefs ? JSON.stringify(opts.symbolRefs) : null,
       opts.fileRefs ? JSON.stringify(opts.fileRefs) : null,
@@ -105,6 +108,29 @@ export function getJournalChunksForNarrative(db: Database, narrativeId: string):
       `SELECT * FROM chunks WHERE narrative_id = ? AND fl_type = 'journal' ORDER BY created_at`,
     )
     .all(narrativeId);
+}
+
+export function updateJournalChunkRouting(
+  db: Database,
+  opts: {
+    chunkId: string;
+    conceptDesignations: string[];
+    conceptRefs: string[];
+  },
+): boolean {
+  const result = db
+    .query(
+      `UPDATE chunks
+       SET concept_designations = ?,
+           concept_refs = ?
+       WHERE id = ? AND fl_type = 'journal'`,
+    )
+    .run(
+      JSON.stringify(opts.conceptDesignations),
+      opts.conceptRefs.length > 0 ? JSON.stringify(opts.conceptRefs) : null,
+      opts.chunkId,
+    );
+  return Number(result.changes ?? 0) > 0;
 }
 
 export function getJournalTopicsForNarrative(db: Database, narrativeId: string): string[] {

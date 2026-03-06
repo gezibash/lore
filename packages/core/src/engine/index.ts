@@ -10,6 +10,7 @@ import {
   type RegisterResult,
   type OpenResult,
   type LogResult,
+  type JournalDesignationResult,
   type QueryResult,
   type QueryNextAction,
   type RecallResult,
@@ -55,6 +56,7 @@ import {
   getManifest,
   upsertManifest,
   markGraphStale,
+  getOpenNarrativeByName,
   getOpenNarratives,
   getDanglingNarratives,
   getNarrativeByName,
@@ -75,6 +77,7 @@ import {
   getEmbeddingForChunk,
   insertEmbedding,
   getJournalChunksForNarrative,
+  updateJournalChunkRouting,
   getAllNarratives,
   rebuildFromDisk,
   insertFtsContent,
@@ -102,6 +105,11 @@ import {
   skipConceptHealLease,
   failConceptHealLease,
   getConceptHealLeaseStatusCounts,
+  claimCloseMaintenanceJob,
+  completeCloseMaintenanceJob,
+  failCloseMaintenanceJob,
+  getCloseMaintenanceJobCounts,
+  hasPendingCloseMaintenanceJobs,
   getConcept,
   parseLifecycleMessage,
   getLastNarrativeForConcept,
@@ -142,10 +150,13 @@ import {
   queryConcepts,
   generateExecutiveSummary,
   closeNarrativeOp,
+  runCloseMaintenanceJob,
   discardNarrative,
   createGenesisCommit,
 } from "./narrative-lifecycle.ts";
-import { analyzeJournal } from "./integration.ts";
+import type { CloseMaintenancePayload } from "./narrative-lifecycle.ts";
+import { buildExplicitClosePlan } from "./close-planner.ts";
+import { resolveJournalConceptDesignations } from "./journal-routing.ts";
 import { computeTotalDebt, cosineDistance } from "./residuals.ts";
 import { computeDebtTrend } from "./residuals.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
@@ -442,6 +453,63 @@ export class LoreEngine {
     }
   }
 
+  private async drainPendingCloseMaintenance(
+    entry: RegistryEntry,
+    db: Database,
+    maxJobs: number = 1,
+  ): Promise<number> {
+    if (maxJobs <= 0) return 0;
+
+    const ownerBase = `${process.pid}:${ulid()}`;
+    let drained = 0;
+    let config: LoreConfig | null = null;
+    let embedder: Embedder | null = null;
+    let generator: Generator | null = null;
+    let codeEmbedder: Embedder | null = null;
+
+    for (let index = 0; index < maxJobs; index++) {
+      const owner = `${ownerBase}:${index}`;
+      const job = claimCloseMaintenanceJob(db, {
+        lorePath: entry.lore_path,
+        owner,
+        leaseTtlMs: 60_000,
+        maxRetries: 1,
+      });
+      if (!job) break;
+
+      try {
+        const payload = JSON.parse(job.payload_json) as CloseMaintenancePayload;
+        config ??= this.configFor(entry);
+        const loreName = this.loreNameFor(entry);
+        if (!embedder || !generator) {
+          [embedder, generator, codeEmbedder] = await Promise.all([
+            this.embedderFor(config, loreName),
+            this.generatorFor(config, loreName),
+            this.codeEmbedderFor(config, loreName),
+          ]);
+        }
+        await runCloseMaintenanceJob(db, payload, config, embedder, generator, codeEmbedder);
+        completeCloseMaintenanceJob(db, {
+          lorePath: entry.lore_path,
+          id: job.id,
+          owner,
+        });
+        drained += 1;
+      } catch (error) {
+        failCloseMaintenanceJob(db, {
+          lorePath: entry.lore_path,
+          id: job.id,
+          owner,
+          error: error instanceof Error ? error.message : String(error),
+          retry: true,
+          maxRetries: 1,
+        });
+      }
+    }
+
+    return drained;
+  }
+
   private loreNameFor(entry?: RegistryEntry): string {
     if (!entry) return "lore";
     for (const [name, e] of Object.entries(this.registry.lore_minds)) {
@@ -571,6 +639,7 @@ export class LoreEngine {
     },
   ): Promise<OpenResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     const config = this.configFor(entry);
     const result = await openNarrative(
       db,
@@ -597,7 +666,7 @@ export class LoreEngine {
       topics?: string[];
       codePath?: string;
       refs?: FileRef[];
-      concepts?: string[];
+      concepts: string[];
       symbols?: string[];
     },
   ): Promise<LogResult> {
@@ -918,6 +987,7 @@ export class LoreEngine {
     },
   ): Promise<CloseResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     const mode = opts?.mode ?? "merge";
 
     if (mode === "discard") {
@@ -1134,12 +1204,13 @@ export class LoreEngine {
 
   async status(opts?: { codePath?: string }): Promise<StatusResult> {
     const { name, entry, db } = this.resolveLoreMind(opts?.codePath);
-    this.ensureGraphFresh(db);
+    this.ensureGraphFresh(db, entry.lore_path);
     const config = this.configFor(entry);
     const manifest = getManifest(db);
     const concepts = getActiveConcepts(db);
     const openNarrativesList = getOpenNarratives(db);
     const danglingNarratives = getDanglingNarratives(db, config.thresholds.dangling_days);
+    const closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath: entry.lore_path });
     const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
     const { debt: rawDebt, refWarnings, refDriftScoreByConcept } = debtSnapshot;
     const debtPrevious = null;
@@ -1270,6 +1341,19 @@ export class LoreEngine {
         reason: `${staleEmbeddings} embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore embeddings refresh.`,
         last_narrative: undefined,
         changed_at: undefined,
+      });
+    }
+
+    if (closeMaintenance.failed > 0 || closeMaintenance.queued + closeMaintenance.leased > 0) {
+      priorities.unshift({
+        concept: "(maintenance)",
+        action: closeMaintenance.failed > 0 ? "repair queue" : "drain queue",
+        reason:
+          closeMaintenance.failed > 0
+            ? `${closeMaintenance.failed} close maintenance job(s) failed`
+            : `${closeMaintenance.queued + closeMaintenance.leased} close maintenance job(s) pending`,
+        last_narrative: undefined,
+        changed_at: closeMaintenance.oldest_pending_at ?? undefined,
       });
     }
 
@@ -1446,7 +1530,7 @@ export class LoreEngine {
         action: "close or abandon",
       })),
       embedding_status: embeddingStatus,
-      maintenance: this.computeMaintenance(db, concepts.length),
+      maintenance: this.computeMaintenance(db, entry.lore_path, concepts.length),
       suggestions,
       concept_health: {
         run_id: conceptHealth.run_id,
@@ -1541,9 +1625,26 @@ export class LoreEngine {
     };
   }
 
-  private computeMaintenance(db: Database, conceptCount: number): StatusResult["maintenance"] {
+  private computeMaintenance(
+    db: Database,
+    lorePath: string,
+    conceptCount: number,
+  ): StatusResult["maintenance"] {
+    const closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath });
     if (conceptCount === 0) {
-      return { status: "n/a", min_delta_rate: 0, current_rate: 0 };
+      return {
+        status:
+          closeMaintenance.failed > 0
+            ? "close-maintenance-failed"
+            : closeMaintenance.queued + closeMaintenance.leased > 0
+              ? "close-maintenance-pending"
+              : "n/a",
+        min_delta_rate: 0,
+        current_rate: 0,
+        pending_close_jobs: closeMaintenance.queued + closeMaintenance.leased,
+        failed_close_jobs: closeMaintenance.failed,
+        oldest_close_job_at: closeMaintenance.oldest_pending_at,
+      };
     }
 
     const WINDOW_DAYS = 14;
@@ -1559,11 +1660,19 @@ export class LoreEngine {
     // Floor: ~1 narrative per 10 concepts per week, minimum 1
     const minNarrativeRate = Math.max(1, Math.ceil(conceptCount / 10));
 
-    const status = currentRate >= minNarrativeRate ? "above-floor" : "below-floor";
+    let status = currentRate >= minNarrativeRate ? "above-floor" : "below-floor";
+    if (closeMaintenance.failed > 0) {
+      status = "close-maintenance-failed";
+    } else if (closeMaintenance.queued + closeMaintenance.leased > 0) {
+      status = "close-maintenance-pending";
+    }
     return {
       status,
       min_delta_rate: Math.round(minNarrativeRate * 10) / 10,
       current_rate: Math.round(currentRate * 10) / 10,
+      pending_close_jobs: closeMaintenance.queued + closeMaintenance.leased,
+      failed_close_jobs: closeMaintenance.failed,
+      oldest_close_job_at: closeMaintenance.oldest_pending_at,
     };
   }
 
@@ -1572,9 +1681,9 @@ export class LoreEngine {
     return current - previous;
   }
 
-  private ensureGraphFresh(db: Database): void {
+  private ensureGraphFresh(db: Database, lorePath: string): void {
     const manifest = getManifest(db);
-    if (manifest?.graph_stale) {
+    if (manifest?.graph_stale && !hasPendingCloseMaintenanceJobs(db, { lorePath })) {
       recomputeGraph(db);
     }
   }
@@ -2520,7 +2629,7 @@ export class LoreEngine {
 
   async ls(opts?: { codePath?: string }) {
     const { name, entry, db } = this.resolveLoreMind(opts?.codePath);
-    this.ensureGraphFresh(db);
+    this.ensureGraphFresh(db, entry.lore_path);
     const config = this.configFor(entry);
     const concepts = getActiveConcepts(db);
     const manifest = getManifest(db);
@@ -3220,14 +3329,69 @@ export class LoreEngine {
     if (!narrative) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
-    const plan = await analyzeJournal(
+    const plan = await buildExplicitClosePlan(
       db,
-      narrative.id,
+      narrative,
       await this.generatorFor(config, this.loreNameFor(entry)),
-      await this.embedderFor(config, this.loreNameFor(entry)),
-      config,
     );
-    return { narrative, plan };
+    return {
+      narrative,
+      plan: {
+        updates: plan.updates,
+        creates: plan.creates,
+      },
+      unresolved_entries:
+        plan.unresolvedEntries.length > 0 ? plan.unresolvedEntries : undefined,
+    };
+  }
+
+  async designateJournalEntry(
+    narrativeName: string,
+    chunkId: string,
+    opts: { concepts?: string[]; codePath?: string },
+  ): Promise<JournalDesignationResult> {
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    const narrative = getOpenNarrativeByName(db, narrativeName);
+    if (!narrative) {
+      throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+    }
+
+    const chunk = getJournalChunksForNarrative(db, narrative.id).find((item) => item.id === chunkId);
+    if (!chunk) {
+      throw new LoreError(
+        "CHUNK_NOT_FOUND",
+        `No journal chunk '${chunkId}' exists in open narrative '${narrativeName}'`,
+      );
+    }
+
+    const resolved = resolveJournalConceptDesignations(db, narrative, opts.concepts);
+    const parsed = await readChunk(chunk.file_path);
+    const existingTopics =
+      "fl_topics" in parsed.frontmatter && Array.isArray(parsed.frontmatter.fl_topics)
+        ? (parsed.frontmatter.fl_topics as string[])
+        : [];
+    const nextTopics = existingTopics.length > 0 ? existingTopics : resolved.designations;
+
+    await updateChunkFrontmatter(chunk.file_path, {
+      fl_concept_designations: resolved.designations,
+      fl_concept_refs: resolved.conceptRefs.length > 0 ? resolved.conceptRefs : null,
+      fl_topics: nextTopics,
+    });
+    updateJournalChunkRouting(db, {
+      chunkId: chunk.id,
+      conceptDesignations: resolved.designations,
+      conceptRefs: resolved.conceptRefs,
+    });
+
+    return {
+      narrative: narrative.name,
+      chunk_id: chunk.id,
+      concepts: resolved.designations,
+      note:
+        existingTopics.length > 0
+          ? "Journal designations updated."
+          : "Journal designations updated. Topics defaulted to the designated concepts.",
+    };
   }
 
   // ─── Repo Management ──────────────────────────────────
@@ -3424,7 +3588,7 @@ export class LoreEngine {
     kind?: SuggestionKind | SuggestionKind[];
   }): Promise<SuggestResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    this.ensureGraphFresh(db);
+    this.ensureGraphFresh(db, entry.lore_path);
     const config = this.configFor(entry);
     let generator: Generator | undefined;
     try {
@@ -3444,11 +3608,13 @@ export class LoreEngine {
 
   async rescan(opts?: { codePath?: string }): Promise<ScanResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     return rescanProject(db, entry.code_path, entry.lore_path);
   }
 
   async ingestDoc(filePath: string, opts?: { codePath?: string }): Promise<IngestResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     const { resolve } = await import("path");
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
@@ -3465,6 +3631,7 @@ export class LoreEngine {
     codePath?: string;
   }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     const scan = await rescanProject(db, entry.code_path, entry.lore_path);
     const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path);
     return { scan, ingest };
@@ -3551,6 +3718,7 @@ export class LoreEngine {
     codePath?: string;
   }): Promise<{ bound: number; byType: { ref: number; mention: number } }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
+    await this.drainPendingCloseMaintenance(entry, db, 1);
     const config = this.configFor(entry);
     const activeConcepts = getActiveConcepts(db);
     const conceptIds = activeConcepts.map((c) => c.id);

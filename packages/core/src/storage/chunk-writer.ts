@@ -70,6 +70,7 @@ export interface WriteJournalChunkOpts {
   magnitude?: number | null;
   content: string;
   intent?: string;
+  conceptDesignations?: string[] | null;
   conceptRefs?: string[] | null;
   symbolRefs?: string[] | null;
   refs?: FileRef[] | null;
@@ -98,6 +99,9 @@ export async function writeJournalChunk(
 
   if (opts.intent) {
     frontmatter.fl_intent = opts.intent;
+  }
+  if (opts.conceptDesignations?.length) {
+    frontmatter.fl_concept_designations = opts.conceptDesignations;
   }
   if (opts.conceptRefs?.length) {
     frontmatter.fl_concept_refs = opts.conceptRefs;

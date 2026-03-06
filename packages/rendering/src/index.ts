@@ -471,10 +471,14 @@ function compactStatusBand(result: StatusResult): { label: string; color: string
 }
 
 function compactPriorityConcept(concept: string): string {
-  return concept === "(embeddings)" ? "embeddings" : concept;
+  if (concept === "(embeddings)") return "embeddings";
+  if (concept === "(maintenance)") return "maintenance";
+  return concept;
 }
 
 function compactPriorityAction(action: string): string {
+  if (action.startsWith("drain")) return "drain";
+  if (action.startsWith("repair")) return "repair";
   if (action.startsWith("refresh")) return "refresh";
   if (action.startsWith("update")) return "update";
   if (action.startsWith("review")) return "review";
@@ -485,6 +489,12 @@ function compactPriorityReason(priority: StatusResult["priorities"][number]): st
   if (priority.concept === "(embeddings)") {
     const staleMatch = priority.reason.match(/(\d+) embeddings?/);
     return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
+  }
+  if (priority.concept === "(maintenance)") {
+    const pendingMatch = priority.reason.match(/(\d+) close maintenance/);
+    if (pendingMatch) return `${pendingMatch[1]} queued`;
+    if (priority.reason.includes("failed")) return "failed jobs";
+    return "queued";
   }
   if (priority.reason.startsWith("Referenced files changed:")) return "source changed";
   if (priority.reason.startsWith("Not updated in a long time")) return "stale";
@@ -528,6 +538,7 @@ function compactNextCommand(result: StatusResult): string | null {
   if (active) return `lore trail ${active.name}`;
   const priority = result.priorities[0];
   if (priority) {
+    if (priority.concept === "(maintenance)") return "lore ingest";
     if (priority.concept === "(embeddings)") return "lore sys embeddings refresh";
     return `lore show ${priority.concept}`;
   }
@@ -693,6 +704,20 @@ function renderStatusVerbosePlain(result: StatusResult): string {
         `  ${YELLOW}${d.name}${RESET}  ·  ${compactCount(d.age_days)} days old  ·  ${d.action}`,
       );
     }
+  }
+
+  if ((result.maintenance.pending_close_jobs ?? 0) > 0 || (result.maintenance.failed_close_jobs ?? 0) > 0) {
+    lines.push(`\n${BOLD}MAINTENANCE QUEUE${RESET}`);
+    lines.push(
+      `  ${DIM}pending${RESET} ${compactCount(result.maintenance.pending_close_jobs ?? 0)}`,
+    );
+    lines.push(
+      `  ${DIM}failed ${RESET} ${compactCount(result.maintenance.failed_close_jobs ?? 0)}`,
+    );
+    if (result.maintenance.oldest_close_job_at) {
+      lines.push(`  ${DIM}oldest ${RESET} ${timeAgo(result.maintenance.oldest_close_job_at)}`);
+    }
+    lines.push(`  ${DIM}trigger${RESET} lore ingest`);
   }
 
   if (result.suggestions.length > 0) {

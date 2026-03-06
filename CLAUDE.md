@@ -166,7 +166,7 @@ Adapter over worker and rendering:
 ### Core Workflow
 
 - `lore open <narrative> <intent> [--target ...]`
-- `lore write <narrative> <entry> <topics> [--ref file:lines]`
+- `lore write <narrative> <entry> --concept <name> [--concept <name> ...] [--ref file:lines]`
 - `lore ask <query> [--mode arch|code] [--brief] [--sources]`
 - `lore close <narrative> [--mode merge|discard] [--merge-strategy ...]`
 - `lore init [path] [name] [--claude|--codex|--opencode]`
@@ -187,6 +187,7 @@ Adapter over worker and rendering:
 - `lore sys embeddings refresh`
 - `lore sys coverage [--uncovered] [--file path]`
 - `lore sys config {show,get,set,unset,clone,prompt-preview}`
+- `lore sys narrative designate <narrative> <chunk-id> --concept <name> [--concept <name> ...]`
 - `lore sys concept {restore,tag,untag,tags,history,bindings,bind,unbind}`
 - `lore sys relations {set,unset,list}`
 - `lore sys health {compute,explain,heal}`

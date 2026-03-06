@@ -47,6 +47,7 @@ import type {
   LoreConfig,
   LoreHealthSnapshot,
   HistoryResult,
+  JournalDesignationResult,
   LifecycleResult,
   LogResult,
   LsResult,
@@ -203,8 +204,13 @@ interface LoreClientEngine {
   log(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts?: string[]; symbols?: string[] },
+    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
   ): Promise<LogResult>;
+  designateJournalEntry(
+    narrative: string,
+    chunkId: string,
+    opts: { concepts?: string[]; codePath?: string },
+  ): Promise<JournalDesignationResult>;
   query(query: string, opts?: QueryOptions): Promise<QueryResult>;
   queryForOrchestration(query: string, opts?: OrchestrationQueryOptions): Promise<QueryResult>;
   searchWeb(query: string, opts?: { codePath?: string }): Promise<WebSearchResult[]>;
@@ -409,7 +415,7 @@ export class LoreClient {
   write(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts?: string[]; symbols?: string[] },
+    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
   ): Promise<LogResult> {
     return this.engine.log(narrative, entry, { ...opts, topics: opts.topics ?? [] });
   }
@@ -417,9 +423,17 @@ export class LoreClient {
   log(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts?: string[]; symbols?: string[] },
+    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
   ): Promise<LogResult> {
     return this.write(narrative, entry, opts);
+  }
+
+  designateJournalEntry(
+    narrative: string,
+    chunkId: string,
+    opts: { concepts?: string[]; codePath?: string },
+  ): Promise<JournalDesignationResult> {
+    return this.engine.designateJournalEntry(narrative, chunkId, opts);
   }
 
   ask(query: string, opts?: QueryOptions): Promise<QueryResult> {

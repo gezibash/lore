@@ -21,9 +21,10 @@ import { computeLineDiff, isDiffTooLarge } from "@/engine/line-diff.ts";
 export interface DryRunCloseFormatInput {
   narrative: NarrativeRow;
   plan: {
-    updates: Array<{ conceptName: string; newContent: string }>;
+    updates: Array<{ conceptName: string; newContent: string; strategy?: "patch" | "rewrite" }>;
     creates: Array<{ conceptName: string; content: string }>;
   };
+  unresolved_entries?: Array<{ chunk_id: string; created_at: string; reason: string }>;
 }
 import { timeAgo } from "@/format.ts";
 
@@ -288,9 +289,13 @@ export function formatClose(result: CloseResult): string {
       lines.push(`- ${c.conceptName}: ${c.resolution}`);
     }
   }
-  lines.push(
-    `Debt: ${result.impact.debt_before.toFixed(1)} → ${result.impact.debt_after.toFixed(1)}`,
-  );
+  if (result.impact.debt_before != null && result.impact.debt_after != null) {
+    lines.push(
+      `Debt: ${result.impact.debt_before.toFixed(1)} → ${result.impact.debt_after.toFixed(1)}`,
+    );
+  } else {
+    lines.push("Debt: refresh queued");
+  }
   lines.push(result.impact.summary);
   if (result.impact.concept_impacts && result.impact.concept_impacts.length > 0) {
     lines.push("\nPer-concept impact:");
@@ -342,6 +347,11 @@ export function formatClose(result: CloseResult): string {
       }
     }
   }
+  if (result.maintenance) {
+    lines.push(
+      `Maintenance: ${result.maintenance.status} (${result.maintenance.pending_jobs} pending, ${result.maintenance.failed_jobs} failed)`,
+    );
+  }
   if (result.follow_up) lines.push(`\nFollow-up: ${result.follow_up}`);
   return lines.join("\n");
 }
@@ -350,11 +360,22 @@ export function formatDryRunClose(result: DryRunCloseFormatInput): string {
   const lines: string[] = [];
   lines.push(`## Close Preview: ${result.narrative.name}\n`);
 
+  if (result.unresolved_entries && result.unresolved_entries.length > 0) {
+    lines.push("### Unresolved Entries");
+    for (const entry of result.unresolved_entries) {
+      lines.push(`- ${entry.chunk_id}: ${entry.reason}`);
+    }
+    lines.push("");
+  }
+
   if (result.plan.updates.length > 0) {
     lines.push(`### Updates (${result.plan.updates.length})`);
     for (const u of result.plan.updates) {
       const preview = u.newContent.slice(0, 200).trim();
-      lines.push(`- **${u.conceptName}** — ${preview}${u.newContent.length > 200 ? "..." : ""}`);
+      const strategy = u.strategy ? ` (${u.strategy})` : "";
+      lines.push(
+        `- **${u.conceptName}**${strategy} — ${preview}${u.newContent.length > 200 ? "..." : ""}`,
+      );
     }
     lines.push("");
   }
@@ -368,7 +389,11 @@ export function formatDryRunClose(result: DryRunCloseFormatInput): string {
     lines.push("");
   }
 
-  if (result.plan.updates.length === 0 && result.plan.creates.length === 0) {
+  if (
+    result.plan.updates.length === 0 &&
+    result.plan.creates.length === 0 &&
+    (!result.unresolved_entries || result.unresolved_entries.length === 0)
+  ) {
     lines.push("No changes planned.");
   }
 
