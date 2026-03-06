@@ -109,12 +109,16 @@ export interface SourceChunkFrontmatter {
 export interface DocChunkFrontmatter {
   fl_id: string;
   fl_type: "doc";
-  fl_doc_path: string;      // relative path from codePath root
-  fl_body_hash: string;     // SHA256 of file content (for drift)
+  fl_doc_path: string; // relative path from codePath root
+  fl_body_hash: string; // SHA256 of file content (for drift)
   fl_created_at: string;
 }
 
-export type ChunkFrontmatter = StateChunkFrontmatter | JournalChunkFrontmatter | SourceChunkFrontmatter | DocChunkFrontmatter;
+export type ChunkFrontmatter =
+  | StateChunkFrontmatter
+  | JournalChunkFrontmatter
+  | SourceChunkFrontmatter
+  | DocChunkFrontmatter;
 
 export interface ParsedChunk<T extends ChunkFrontmatter = ChunkFrontmatter> {
   frontmatter: T;
@@ -745,6 +749,7 @@ export interface NorthStarScorecard {
 }
 
 export interface StatusResult {
+  lore_name: string;
   health: HealthStatus;
   summary: string;
   /** User-facing ask-quality debt score (0-100, lower is better). */
@@ -1099,8 +1104,8 @@ export interface ScanResult {
 
 export interface IngestResult {
   files_ingested: number;
-  files_skipped: number;   // unchanged hash
-  files_removed: number;   // deleted from disk
+  files_skipped: number; // unchanged hash
+  files_removed: number; // deleted from disk
   files_failed?: number;
   duration_ms: number;
 }

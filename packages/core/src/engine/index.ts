@@ -1133,7 +1133,7 @@ export class LoreEngine {
   }
 
   async status(opts?: { codePath?: string }): Promise<StatusResult> {
-    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const { name, entry, db } = this.resolveLoreMind(opts?.codePath);
     this.ensureGraphFresh(db);
     const config = this.configFor(entry);
     const manifest = getManifest(db);
@@ -1390,6 +1390,7 @@ export class LoreEngine {
     const health: StatusResult["health"] =
       askDebtSnapshot.debt <= 25 ? "good" : askDebtSnapshot.debt <= 50 ? "degrading" : "critical";
     return {
+      lore_name: name,
       health,
       summary: `${concepts.length} concepts, debt ${askDebtSnapshot.debt.toFixed(1)}%`,
       debt: askDebtSnapshot.debt,

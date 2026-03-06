@@ -671,6 +671,7 @@ export interface CloseResult {
 }
 
 export interface StatusResult {
+  lore_name: string;
   health: HealthStatus;
   summary: string;
   /** User-facing ask-quality debt score (0-100, lower is better). */

@@ -176,7 +176,10 @@ const cli = defineCli({
         search: { type: "boolean", description: "Include external web search results" },
         brief: { type: "boolean", description: "Return targeted excerpts instead of full dumps" },
         sources: { type: "boolean", description: "Include matched sources in output" },
-        mode: { type: "string", description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)" },
+        mode: {
+          type: "string",
+          description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)",
+        },
       },
       async action({ args, options }) {
         await queryCommand(getWorker(), args.query, {
@@ -201,7 +204,13 @@ const cli = defineCli({
       },
       async action({ args, options }) {
         const section = options.section as string | undefined;
-        if (section && section !== "sources" && section !== "journal" && section !== "symbols" && section !== "full") {
+        if (
+          section &&
+          section !== "sources" &&
+          section !== "journal" &&
+          section !== "symbols" &&
+          section !== "full"
+        ) {
           throw new Error(`Invalid section '${section}'. Use sources|journal|symbols|full.`);
         }
         await recallCommand(
@@ -238,7 +247,11 @@ const cli = defineCli({
         },
       },
       async action({ args, options }) {
-        await trailCommand(getWorker(), args.narrative, options["from-result"] as string | undefined);
+        await trailCommand(
+          getWorker(),
+          args.narrative,
+          options["from-result"] as string | undefined,
+        );
       },
     }),
     init: defineCommand({
@@ -282,8 +295,14 @@ const cli = defineCli({
     status: defineCommand({
       name: "status",
       description: "Health snapshot for the current lore",
-      async action() {
-        await statusCommand(getWorker());
+      options: {
+        details: {
+          type: "boolean",
+          description: "Show the full diagnostic status report",
+        },
+      },
+      async action({ options }) {
+        await statusCommand(getWorker(), { details: Boolean(options.details) });
       },
     }),
     suggest: defineCommand({
@@ -357,7 +376,8 @@ const cli = defineCli({
     }),
     ingest: defineCommand({
       name: "ingest",
-      description: "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
+      description:
+        "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
       arguments: {
         file: { type: "string", required: false, description: "Specific file to ingest" },
       },
@@ -916,7 +936,10 @@ const cli = defineCli({
       description: "Walk commit history",
       arguments: {
         limit: { type: "number", default: 20, description: "Number of commits to show" },
-        since: { type: "string", description: "Time filter: duration (2w, 3d, 12h), ULID, or main~N" },
+        since: {
+          type: "string",
+          description: "Time filter: duration (2w, 3d, 12h), ULID, or main~N",
+        },
       },
       async action({ args }) {
         await commitlogCommand(getWorker(), args.limit, args.since);

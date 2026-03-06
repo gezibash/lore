@@ -2,18 +2,40 @@ import { expect, test } from "bun:test";
 import type { LsResult, QueryResult, RecallResult, StatusResult } from "@lore/sdk";
 import { renderAsk, renderAskBrief, renderLs, renderRecall, renderStatus } from "./index.ts";
 
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function sampleStatus(): StatusResult {
   return {
+    lore_name: "flowlake",
     health: "degrading",
     summary: "81 concepts, debt 12.3%",
+    debt_band: "caution",
     debt: 12.3,
-    priorities: [],
+    priorities: [
+      {
+        concept: "performance-parallelization",
+        action: "review",
+        reason: "High pressure: 52% (ground=27%, lore=62%)",
+      },
+    ],
     active_narratives: [],
     dangling_narratives: [],
     maintenance: {
       status: "on-track",
       min_delta_rate: 1,
       current_rate: 1,
+    },
+    lake: {
+      source_chunks: 10,
+      source_files: 3,
+      doc_chunks: 2,
+      journal_entries: 5,
+      last_code_indexed_at: "2026-03-06T00:00:00.000Z",
+      last_doc_indexed_at: "2026-03-06T00:00:00.000Z",
+      stale_source_files: 0,
+      stale_doc_files: 0,
     },
     suggestions: [],
   };
@@ -39,8 +61,18 @@ test("renderStatus uses route defaults", () => {
   const status = sampleStatus();
 
   const cli = renderStatus(status, { route: "cli" });
-  expect(cli).toContain("Health:");
-  expect(cli).toContain("debt 12.3%");
+  const plainCli = stripAnsi(cli);
+  expect(plainCli).toContain("flowlake");
+  expect(plainCli).toContain("status");
+  expect(plainCli).toContain("caution");
+  expect(plainCli).toContain("FOCUS");
+  expect(plainCli).toContain("STATE");
+  expect(plainCli).toContain("NEXT");
+  expect(cli).not.toContain("Health:");
+
+  const cliDetails = renderStatus(status, { route: "cli", details: true });
+  expect(cliDetails).toContain("Health:");
+  expect(cliDetails).toContain("debt 12.3%");
 
   const mcp = renderStatus(status, { route: "mcp" });
   expect(mcp).toContain("Health: degrading");
@@ -69,7 +101,7 @@ test("renderLs uses route defaults", () => {
 test("explicit format override beats route defaults", () => {
   const ls = sampleLs();
   const jsonFromCliRoute = renderLs(ls, { route: "cli", format: "json", prettyJson: false });
-  expect(jsonFromCliRoute.startsWith("{\"")).toBe(true);
+  expect(jsonFromCliRoute.startsWith('{"')).toBe(true);
 });
 
 function sampleQueryResult(): QueryResult {

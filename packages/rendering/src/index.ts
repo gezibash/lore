@@ -24,6 +24,7 @@ export interface RenderOptions {
   route?: RenderRoute;
   format?: RenderFormat;
   prettyJson?: boolean;
+  details?: boolean;
 }
 
 export interface RenderLsOptions extends RenderOptions {
@@ -71,6 +72,18 @@ function padVisible(str: string, width: number): string {
   const len = visibleLength(str);
   if (len >= width) return str;
   return str + " ".repeat(width - len);
+}
+
+function renderPlainTable(headers: string[], rows: string[][]): string[] {
+  const widths = headers.map((header, index) =>
+    Math.max(header.length, ...rows.map((row) => visibleLength(row[index] ?? ""))),
+  );
+  return [
+    `${DIM}${headers.map((header, index) => pad(header, widths[index]!)).join(COL_GAP)}${RESET}`,
+    ...rows.map((row) =>
+      headers.map((_, index) => padVisible(row[index] ?? "", widths[index]!)).join(COL_GAP),
+    ),
+  ];
 }
 
 function trendArrow(delta?: number | null): string {
@@ -157,9 +170,7 @@ function renderSummaryNarrative(result: QueryResult): string {
     return result.results[0]?.summary?.trim() || "No matching concepts.";
   }
   if (summary.kind === "uncertain") {
-    return summary.uncertainty_reason
-      ? `Uncertain: ${summary.uncertainty_reason}`
-      : "Uncertain";
+    return summary.uncertainty_reason ? `Uncertain: ${summary.uncertainty_reason}` : "Uncertain";
   }
   if (summary.narrative.trim().length === 0) {
     return "No matching concepts.";
@@ -311,7 +322,9 @@ function renderSources(result: QueryResult): string[] {
   for (const item of result.results) {
     const files = item.meta.files.length > 0 ? item.meta.files.join(", ") : "no file refs";
     lines.push(`- ${item.concept} (score ${(item.meta.score * 100).toFixed(1)}%)`);
-    lines.push(`  updated: ${item.meta.last_updated ? timeAgo(item.meta.last_updated) : "unknown"}`);
+    lines.push(
+      `  updated: ${item.meta.last_updated ? timeAgo(item.meta.last_updated) : "unknown"}`,
+    );
     if (item.meta.last_narrative) {
       const narrativeAge = item.meta.last_narrative.closed_at
         ? timeAgo(item.meta.last_narrative.closed_at)
@@ -340,8 +353,7 @@ function renderSources(result: QueryResult): string[] {
     }
     if (item.meta.neighbors_2hop && item.meta.neighbors_2hop.length > 0) {
       const hop2Parts = item.meta.neighbors_2hop.map((neighbor) => {
-        const weight =
-          neighbor.weight != null ? `, ${(neighbor.weight * 100).toFixed(0)}%` : "";
+        const weight = neighbor.weight != null ? `, ${(neighbor.weight * 100).toFixed(0)}%` : "";
         return `${neighbor.concept} (${neighbor.path}${weight})`;
       });
       lines.push(`  2-hop neighbors: ${hop2Parts.join(", ")}`);
@@ -410,7 +422,10 @@ export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string 
   return lines.join("\n").trimEnd();
 }
 
-export function renderAskBrief(result: QueryResult, opts?: Omit<RenderAskOptions, "includeSources">): string {
+export function renderAskBrief(
+  result: QueryResult,
+  opts?: Omit<RenderAskOptions, "includeSources">,
+): string {
   return renderAsk(result, { ...opts, includeSources: false });
 }
 
@@ -436,14 +451,136 @@ export function renderRecall(recalled: RecallResult, section: RecallSection = "f
     lines.push("", "## Symbols");
     for (const sym of result.symbol_results) {
       const boundTag = sym.bound_concepts?.length ? ` → [${sym.bound_concepts.join(", ")}]` : "";
-      lines.push(`- ${sym.kind} ${sym.qualified_name} (${sym.file_path}:${sym.line_start})${boundTag}`);
+      lines.push(
+        `- ${sym.kind} ${sym.qualified_name} (${sym.file_path}:${sym.line_start})${boundTag}`,
+      );
     }
   }
 
   return lines.join("\n").trimEnd();
 }
 
-function renderStatusPlain(result: StatusResult): string {
+function compactStatusBand(result: StatusResult): { label: string; color: string } {
+  const band =
+    result.debt_band ??
+    (result.health === "good" ? "healthy" : result.health === "degrading" ? "caution" : "critical");
+  if (band === "healthy") return { label: "healthy", color: GREEN };
+  if (band === "caution") return { label: "caution", color: YELLOW };
+  if (band === "high") return { label: "high", color: RED };
+  return { label: "critical", color: RED };
+}
+
+function compactPriorityConcept(concept: string): string {
+  return concept === "(embeddings)" ? "embeddings" : concept;
+}
+
+function compactPriorityAction(action: string): string {
+  if (action.startsWith("refresh")) return "refresh";
+  if (action.startsWith("update")) return "update";
+  if (action.startsWith("review")) return "review";
+  return action.split(/\s+/)[0] ?? action;
+}
+
+function compactPriorityReason(priority: StatusResult["priorities"][number]): string {
+  if (priority.concept === "(embeddings)") {
+    const staleMatch = priority.reason.match(/(\d+) embeddings?/);
+    return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
+  }
+  if (priority.reason.startsWith("Referenced files changed:")) return "source changed";
+  if (priority.reason.startsWith("Not updated in a long time")) return "stale";
+  if (priority.reason.startsWith("High pressure:")) return "high pressure";
+  return priority.reason.length > 28 ? `${priority.reason.slice(0, 25)}...` : priority.reason;
+}
+
+function compactIndexStatus(result: StatusResult): string | null {
+  if (!result.lake) return null;
+  const codeSev = staleSeverity(
+    result.lake.stale_source_files,
+    Math.max(1, result.lake.source_files),
+  );
+  const docSev = staleSeverity(result.lake.stale_doc_files, Math.max(1, result.lake.doc_chunks));
+  if (codeSev.level === "none" && docSev.level === "none") return `${GREEN}fresh${RESET}`;
+  if (codeSev.level === "low" && docSev.level === "low") return `${DIM}drift${RESET}`;
+  return `${YELLOW}stale${RESET}`;
+}
+
+function compactNarrativeStatus(result: StatusResult): string {
+  if (result.dangling_narratives.length > 0) {
+    return `${YELLOW}dangling (${compactCount(result.dangling_narratives.length)})${RESET}`;
+  }
+  if (result.active_narratives.length > 0) {
+    return `${YELLOW}active (${compactCount(result.active_narratives.length)})${RESET}`;
+  }
+  return `${GREEN}clean${RESET}`;
+}
+
+function compactTrustStatus(result: StatusResult): string {
+  const band = result.debt_band ?? (result.health === "good" ? "healthy" : "caution");
+  if (band === "healthy") return `${GREEN}high${RESET}`;
+  if (band === "caution") return `${YELLOW}moderate${RESET}`;
+  return `${RED}low${RESET}`;
+}
+
+function compactNextCommand(result: StatusResult): string | null {
+  const dangling = result.dangling_narratives[0];
+  if (dangling) return `lore close ${dangling.name}`;
+  const active = result.active_narratives[0];
+  if (active) return `lore trail ${active.name}`;
+  const priority = result.priorities[0];
+  if (priority) {
+    if (priority.concept === "(embeddings)") return "lore sys embeddings refresh";
+    return `lore show ${priority.concept}`;
+  }
+  if (result.suggestions.length > 0) return "lore suggest";
+  return null;
+}
+
+function renderStatusCompactPlain(result: StatusResult): string {
+  const lines: string[] = [];
+  const band = compactStatusBand(result);
+  lines.push(`${BOLD}${result.lore_name}${RESET}  ·  status ${band.color}${band.label}${RESET}`);
+
+  const focusRows =
+    result.priorities.slice(0, 3).map((priority) => ({
+      item: compactPriorityConcept(priority.concept),
+      action: compactPriorityAction(priority.action),
+      reason: compactPriorityReason(priority),
+    })) ?? [];
+  const resolvedFocusRows =
+    focusRows.length > 0 ? focusRows : [{ item: "none", action: "—", reason: "no urgent items" }];
+
+  lines.push("");
+  lines.push(
+    ...renderPlainTable(
+      ["FOCUS", "ACTION", "REASON"],
+      resolvedFocusRows.map((row) => [row.item, row.action, row.reason]),
+    ),
+  );
+
+  const stateRows: Array<{ item: string; status: string }> = [];
+  const indexStatus = compactIndexStatus(result);
+  if (indexStatus) stateRows.push({ item: "index", status: indexStatus });
+  stateRows.push({ item: "narratives", status: compactNarrativeStatus(result) });
+  stateRows.push({ item: "trust", status: compactTrustStatus(result) });
+
+  lines.push("");
+  lines.push(
+    ...renderPlainTable(
+      ["STATE", "STATUS"],
+      stateRows.map((row) => [row.item, row.status]),
+    ),
+  );
+
+  const nextCommand = compactNextCommand(result);
+  if (nextCommand) {
+    lines.push("");
+    lines.push(...renderPlainTable(["NEXT", "COMMAND"], [["run", nextCommand]]));
+  }
+
+  return lines.join("\n");
+}
+
+function renderStatusVerbosePlain(result: StatusResult): string {
   const lines: string[] = [];
 
   const healthColor =
@@ -452,7 +589,9 @@ function renderStatusPlain(result: StatusResult): string {
   const debtTrend = trendBadge(result.debt_delta);
   lines.push(debtTrend ? `${result.summary} ${debtTrend}` : result.summary);
   if (result.state_distance != null) {
-    lines.push(`${DIM}S_dist: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap)${RESET}`);
+    lines.push(
+      `${DIM}S_dist: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap)${RESET}`,
+    );
   }
 
   if (result.coverage) {
@@ -474,7 +613,9 @@ function renderStatusPlain(result: StatusResult): string {
         `${DIM}concepts bound: ${compactCount(result.coverage.concepts_with_bindings)}/${compactCount(result.coverage.concepts_total)}${RESET}`,
       );
       if (result.coverage.drifted > 0) {
-        lines.push(`${YELLOW}⚠ ${compactCount(result.coverage.drifted)} drifted binding(s)${RESET}`);
+        lines.push(
+          `${YELLOW}⚠ ${compactCount(result.coverage.drifted)} drifted binding(s)${RESET}`,
+        );
       }
     }
   }
@@ -495,7 +636,12 @@ function renderStatusPlain(result: StatusResult): string {
       `  ${DIM}docs   ${RESET} ${compactCount(l.doc_chunks)} files · ${docAge}${docStaleStr}`,
     );
     lines.push(`  ${DIM}journal${RESET} ${compactCount(l.journal_entries)} entries`);
-    if (codeSev.level === "high" || codeSev.level === "medium" || docSev.level === "high" || docSev.level === "medium") {
+    if (
+      codeSev.level === "high" ||
+      codeSev.level === "medium" ||
+      docSev.level === "high" ||
+      docSev.level === "medium"
+    ) {
       lines.push(`  ${YELLOW}run lore ingest to refresh${RESET}`);
     } else if (codeSev.level === "low" || docSev.level === "low") {
       lines.push(`  ${DIM}minor index drift — ingest when convenient${RESET}`);
@@ -507,8 +653,12 @@ function renderStatusPlain(result: StatusResult): string {
     for (const p of result.priorities) {
       lines.push(`  ${YELLOW}${p.concept}${RESET}: ${p.action} — ${p.reason}`);
       if (p.last_narrative) {
-        const narrativeAge = p.last_narrative.closed_at ? timeAgo(p.last_narrative.closed_at) : "unknown";
-        lines.push(`    ${DIM}last narrative: ${p.last_narrative.name} (${narrativeAge}) — "${p.last_narrative.intent}"${RESET}`);
+        const narrativeAge = p.last_narrative.closed_at
+          ? timeAgo(p.last_narrative.closed_at)
+          : "unknown";
+        lines.push(
+          `    ${DIM}last narrative: ${p.last_narrative.name} (${narrativeAge}) — "${p.last_narrative.intent}"${RESET}`,
+        );
       }
       if (p.changed_at) {
         lines.push(`    ${DIM}last changed: ${timeAgo(p.changed_at)}${RESET}`);
@@ -530,14 +680,18 @@ function renderStatusPlain(result: StatusResult): string {
     lines.push(`\n${BOLD}ACTIVE NARRATIVES${RESET}`);
     for (const d of result.active_narratives) {
       const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
-      lines.push(`  ${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`);
+      lines.push(
+        `  ${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
+      );
     }
   }
 
   if (result.dangling_narratives.length > 0) {
     lines.push(`\n${BOLD}DANGLING NARRATIVES${RESET}`);
     for (const d of result.dangling_narratives) {
-      lines.push(`  ${YELLOW}${d.name}${RESET}  ·  ${compactCount(d.age_days)} days old  ·  ${d.action}`);
+      lines.push(
+        `  ${YELLOW}${d.name}${RESET}  ·  ${compactCount(d.age_days)} days old  ·  ${d.action}`,
+      );
     }
   }
 
@@ -685,7 +839,9 @@ function renderLsPlain(
     lines.push(`${BOLD}ACTIVE NARRATIVES${RESET}`);
     for (const d of openNarratives) {
       const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
-      lines.push(`${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`);
+      lines.push(
+        `${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
+      );
     }
   }
 
@@ -696,7 +852,8 @@ export function renderStatus(result: StatusResult, opts?: RenderOptions): string
   const format = resolveFormat(opts);
   if (format === "json") return toJson(result, opts);
   if (format === "markdown") return formatStatusMarkdown(result);
-  return renderStatusPlain(result);
+  if (opts?.route === "cli" && !opts?.details) return renderStatusCompactPlain(result);
+  return renderStatusVerbosePlain(result);
 }
 
 export function renderLs(result: LsResult, opts?: RenderLsOptions): string {
