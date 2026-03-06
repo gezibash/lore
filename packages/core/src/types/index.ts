@@ -551,6 +551,19 @@ export interface QueryResultMeta {
   };
 }
 
+export type RecallSection = "sources" | "journal" | "symbols" | "full";
+
+export type QueryNextActionKind = "show" | "recall" | "trail" | "ingest";
+
+export interface QueryNextAction {
+  kind: QueryNextActionKind;
+  primary: boolean;
+  reason: string;
+  concept?: string;
+  narrative?: string;
+  section?: RecallSection;
+}
+
 export interface JournalTrailEntry {
   content: string;
   topics: string[];
@@ -630,6 +643,7 @@ export interface QueryResult {
   result_id?: string;
   meta: QueryRunMeta;
   executive_summary?: ExecutiveSummary;
+  next_actions?: QueryNextAction[];
   results: Array<{
     concept: string;
     content: string;
@@ -692,6 +706,42 @@ export interface CloseResult {
   concept_overlaps?: Array<{ concept: string; overlaps_with: string; similarity: number }>;
   /** Semantic distance warnings: detected when incoming delta entries differ strongly from existing concept. */
   phase_transitions?: PhaseTransitionWarning[];
+}
+
+export interface NorthStarRateMetric {
+  value: number | null;
+  numerator: number;
+  denominator: number;
+  target?: number;
+}
+
+export interface NorthStarTimeMetric {
+  median_seconds: number | null;
+  sample_size: number;
+  target_seconds?: number;
+  proxy: string;
+}
+
+export interface NorthStarTrustMetric {
+  average_score: number | null;
+  sample_size: number;
+  target?: number;
+}
+
+export interface NorthStarScorecard {
+  window_days: number;
+  asks_observed: number;
+  scored_answers: number;
+  narratives_opened: number;
+  narratives_closed: number;
+  first_answer_actionability: NorthStarRateMetric;
+  time_to_first_guided_action: NorthStarTimeMetric;
+  investigation_reuse: NorthStarRateMetric;
+  next_action_clarity: NorthStarRateMetric;
+  stale_answer_follow_through: NorthStarRateMetric;
+  provenance_trust: NorthStarTrustMetric;
+  maintenance_loop_completion: NorthStarRateMetric;
+  note?: string;
 }
 
 export interface StatusResult {

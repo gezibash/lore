@@ -149,6 +149,26 @@ function sampleQueryResult(): QueryResult {
       ],
       unbound_source_symbols: ["authenticateUser"],
     },
+    next_actions: [
+      {
+        kind: "show",
+        primary: true,
+        concept: "auth-model",
+        reason: "Inspect the canonical concept before making a change.",
+      },
+      {
+        kind: "recall",
+        primary: false,
+        section: "sources",
+        reason: "Expand the sources, file refs, and bindings behind this answer.",
+      },
+      {
+        kind: "trail",
+        primary: false,
+        narrative: "auth-debug",
+        reason: "Replay the strongest investigation trail behind this answer.",
+      },
+    ],
     results: [
       {
         concept: "auth-model",
@@ -207,6 +227,10 @@ test("renderAskBrief includes provenance, attribution, result_id, and CLI guidan
   expect(rendered).toContain("Direct answer.");
   expect(rendered).toContain("Based on 1 concept, 1 source file.");
   expect(rendered).toContain("## Attribution");
+  expect(rendered).toContain("## Next");
+  expect(rendered).toContain("lore show auth-model --from-result 01ASK123");
+  expect(rendered).toContain("lore recall 01ASK123 --section sources");
+  expect(rendered).toContain("lore trail auth-debug --from-result 01ASK123");
   expect(rendered).toContain("[92%] Auth validates tokens before issuing sessions [auth-model]");
   expect(rendered).toContain("lore recall 01ASK123");
   expect(rendered).toContain("lore score 01ASK123 <1-5>");
@@ -218,9 +242,10 @@ test("renderAsk includes sources and MCP guidance", () => {
   const rendered = renderAsk(sampleQueryResult(), { route: "mcp", includeSources: true });
   expect(rendered).toContain("## Sources");
   expect(rendered).toContain("- auth-model (score 92.0%)");
+  expect(rendered).toContain('show(concept="auth-model", result_id="01ASK123")');
   expect(rendered).toContain("bindings: authenticateUser (function, src/auth.ts:12)");
   expect(rendered).toContain("## Investigation Trail");
-  expect(rendered).toContain("trail(auth-debug)");
+  expect(rendered).toContain('trail(narrative="auth-debug", result_id="01ASK123")');
 });
 
 test("renderRecall renders requested sections", () => {

@@ -78,6 +78,7 @@ const RECONCILABLE_MIGRATIONS = new Set([
   "021_facts",
   "022_bound_body_snapshot",
   "023_delta_to_narrative",
+  "024_interaction_events",
 ]);
 
 function quoteSqliteIdentifier(name: string): string {

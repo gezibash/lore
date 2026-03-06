@@ -4,6 +4,7 @@ import type {
   NarrativeRow,
   LsResult,
   QueryResult,
+  RecallSection,
   RecallResult,
   RegistryEntry,
   StatusResult,
@@ -34,7 +35,7 @@ export interface RenderAskOptions {
   route?: Extract<RenderRoute, "cli" | "mcp">;
 }
 
-export type RecallSection = "sources" | "journal" | "symbols" | "full";
+export type { RecallSection };
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -196,6 +197,47 @@ function trailCommand(
   return route === "cli" ? `\`lore trail ${narrative}\`` : `\`trail(${narrative})\``;
 }
 
+function showFollowUpCommand(
+  route: Extract<RenderRoute, "cli" | "mcp">,
+  concept: string,
+  resultId?: string,
+): string {
+  if (route === "cli") {
+    const suffix = resultId ? ` --from-result ${resultId}` : "";
+    return `\`lore show ${concept}${suffix}\``;
+  }
+  const resultArg = resultId ? `, result_id=\"${resultId}\"` : "";
+  return `\`show(concept=\"${concept}\"${resultArg})\``;
+}
+
+function recallFollowUpCommand(
+  route: Extract<RenderRoute, "cli" | "mcp">,
+  resultId: string,
+  section: RecallSection,
+): string {
+  if (route === "cli") {
+    return `\`lore recall ${resultId} --section ${section}\``;
+  }
+  return `\`recall(result_id=\"${resultId}\", section=\"${section}\")\``;
+}
+
+function trailFollowUpCommand(
+  route: Extract<RenderRoute, "cli" | "mcp">,
+  narrative: string,
+  resultId?: string,
+): string {
+  if (route === "cli") {
+    const suffix = resultId ? ` --from-result ${resultId}` : "";
+    return `\`lore trail ${narrative}${suffix}\``;
+  }
+  const resultArg = resultId ? `, result_id=\"${resultId}\"` : "";
+  return `\`trail(narrative=\"${narrative}\"${resultArg})\``;
+}
+
+function ingestFollowUpCommand(route: Extract<RenderRoute, "cli" | "mcp">): string {
+  return route === "cli" ? "`lore ingest`" : "`ingest()`";
+}
+
 function renderBindingNudge(
   summary: ExecutiveSummary | null | undefined,
   route: Extract<RenderRoute, "cli" | "mcp">,
@@ -206,6 +248,30 @@ function renderBindingNudge(
     "",
     `⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. These symbols have no concept bindings — future retrieval will rely on embedding similarity. Bind them now: ${bindCommand(route)}`,
   ];
+}
+
+function renderNextActions(
+  result: QueryResult,
+  route: Extract<RenderRoute, "cli" | "mcp">,
+): string[] {
+  if (!result.next_actions || result.next_actions.length === 0) return [];
+  const lines: string[] = ["", "## Next"];
+  for (const action of result.next_actions) {
+    let command: string | null = null;
+    if (action.kind === "show" && action.concept) {
+      command = showFollowUpCommand(route, action.concept, result.result_id);
+    } else if (action.kind === "recall" && result.result_id && action.section) {
+      command = recallFollowUpCommand(route, result.result_id, action.section);
+    } else if (action.kind === "trail" && action.narrative) {
+      command = trailFollowUpCommand(route, action.narrative, result.result_id);
+    } else if (action.kind === "ingest") {
+      command = ingestFollowUpCommand(route);
+    }
+    if (!command) continue;
+    const prefix = action.primary ? "primary: " : "";
+    lines.push(`- ${prefix}${command} — ${action.reason}`);
+  }
+  return lines.length > 2 ? lines : [];
 }
 
 function renderJournalTrail(groups: NonNullable<QueryResult["journal_results"]>): string[] {
@@ -333,6 +399,7 @@ export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string 
   }
   lines.push(...renderClaimBlock(result.executive_summary));
   lines.push(...renderBindingNudge(result.executive_summary, route));
+  lines.push(...renderNextActions(result, route));
   if (opts?.includeSources) {
     lines.push(...renderSources(result));
   }

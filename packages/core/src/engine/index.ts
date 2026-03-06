@@ -11,7 +11,9 @@ import {
   type OpenResult,
   type LogResult,
   type QueryResult,
+  type QueryNextAction,
   type RecallResult,
+  type RecallSection,
   type ExecutiveSummary,
   type CloseResult,
   type StatusResult,
@@ -104,6 +106,7 @@ import {
   parseLifecycleMessage,
   getLastNarrativeForConcept,
   insertQueryCache,
+  insertInteractionEvent,
   getQueryCache,
   scoreQueryCache,
 } from "@/db/index.ts";
@@ -235,6 +238,66 @@ interface PromptPreviewResult {
   system: string;
 }
 
+function hasStaleSignals(result: QueryResult): boolean {
+  if (
+    result.results.some((item) => {
+      return (
+        item.warning != null ||
+        (item.meta.staleness ?? 0) > 0.4 ||
+        item.meta.symbol_drift === "drifted"
+      );
+    })
+  ) {
+    return true;
+  }
+  return (
+    result.executive_summary?.claims?.some((claim) => (claim.max_staleness ?? 0) > 0.4) ?? false
+  );
+}
+
+function buildNextActions(result: QueryResult): QueryNextAction[] {
+  const actions: QueryNextAction[] = [];
+  const topResult = result.results[0];
+  if (topResult) {
+    actions.push({
+      kind: "show",
+      primary: true,
+      concept: topResult.concept,
+      reason: hasStaleSignals(result)
+        ? "Inspect the canonical concept before acting because this answer carries drift or staleness signals."
+        : "Inspect the canonical concept before making a change.",
+    });
+  } else {
+    actions.push({
+      kind: "ingest",
+      primary: true,
+      reason: "No concept matched cleanly. Refresh the lake before trusting an empty answer.",
+    });
+  }
+
+  actions.push({
+    kind: "recall",
+    primary: false,
+    section: "sources",
+    reason: "Expand the sources, file refs, and bindings behind this answer.",
+  });
+
+  const trailNarrative =
+    result.journal_results && result.journal_results.length === 1
+      ? result.journal_results[0]?.narrative_name
+      : null;
+  if (trailNarrative) {
+    actions.push({
+      kind: "trail",
+      primary: false,
+      narrative: trailNarrative,
+      reason: "Replay the strongest investigation trail behind this answer.",
+    });
+  }
+
+  return actions.slice(0, 3);
+}
+
 export class LoreEngine {
   private readonly globalConfig: LoreConfig;
   private registry: Registry;
@@ -345,6 +408,29 @@ export class LoreEngine {
     }
 
     return effective;
+  }
+
+  private recordInteraction(
+    db: Database,
+    eventType: "ask" | "recall" | "show" | "trail" | "open_narrative" | "close_narrative" | "score",
+    opts?: {
+      resultId?: string | null;
+      subject?: string | null;
+      meta?: Record<string, unknown> | null;
+      createdAt?: string;
+    },
+  ): void {
+    try {
+      insertInteractionEvent(db, {
+        eventType,
+        resultId: opts?.resultId,
+        subject: opts?.subject,
+        meta: opts?.meta,
+        createdAt: opts?.createdAt,
+      });
+    } catch {
+      // interaction_events may not exist yet on pre-migration lore DBs — non-fatal
+    }
   }
 
   private loreNameFor(entry?: RegistryEntry): string {
@@ -468,11 +554,16 @@ export class LoreEngine {
   async open(
     narrativeName: string,
     intent: string,
-    opts?: { codePath?: string; resolveDangling?: ResolveDangling; targets?: NarrativeTarget[] },
+    opts?: {
+      codePath?: string;
+      resolveDangling?: ResolveDangling;
+      targets?: NarrativeTarget[];
+      fromResultId?: string;
+    },
   ): Promise<OpenResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
-    return openNarrative(
+    const result = await openNarrative(
       db,
       entry.lore_path,
       narrativeName,
@@ -482,6 +573,12 @@ export class LoreEngine {
       opts?.resolveDangling,
       opts?.targets,
     );
+    this.recordInteraction(db, "open_narrative", {
+      resultId: opts?.fromResultId,
+      subject: narrativeName,
+      meta: { intent },
+    });
+    return result;
   }
 
   async log(
@@ -506,6 +603,7 @@ export class LoreEngine {
     internal?: {
       disablePerLoreMindSummary?: boolean;
       disableWeb?: boolean;
+      skipTelemetry?: boolean;
     },
   ): Promise<QueryResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
@@ -619,15 +717,26 @@ export class LoreEngine {
 
     // Cache the result with a ULID for recall (shared with ask trace filename when tracing is on)
     result.result_id = askId;
-    try {
-      insertQueryCache(db, {
-        id: askId,
-        queryText: text,
-        resultJson: JSON.stringify(result),
-        createdAt: new Date().toISOString(),
+    result.next_actions = buildNextActions(result);
+    if (!internal?.skipTelemetry) {
+      try {
+        insertQueryCache(db, {
+          id: askId,
+          queryText: text,
+          resultJson: JSON.stringify(result),
+          createdAt: new Date().toISOString(),
+        });
+      } catch {
+        // query_cache table may not exist yet — non-fatal
+      }
+      this.recordInteraction(db, "ask", {
+        resultId: askId,
+        subject: text,
+        meta: {
+          primary_action: result.next_actions[0]?.kind,
+          stale_warning: hasStaleSignals(result),
+        },
       });
-    } catch {
-      // query_cache table may not exist yet — non-fatal
     }
 
     try { askTracer?.flush(); } catch {}
@@ -646,14 +755,23 @@ export class LoreEngine {
     return this.runQuery(text, opts, {
       disablePerLoreMindSummary: opts?.disable_per_lore_mind_summary,
       disableWeb: opts?.disable_web,
+      skipTelemetry: true,
     });
   }
 
-  recallResult(resultId: string, opts?: { codePath?: string }): RecallResult | null {
+  recallResult(
+    resultId: string,
+    opts?: { codePath?: string; section?: RecallSection },
+  ): RecallResult | null {
     const { db } = this.resolveLoreMind(opts?.codePath);
     try {
       const row = getQueryCache(db, resultId);
       if (!row) return null;
+      this.recordInteraction(db, "recall", {
+        resultId,
+        subject: opts?.section ?? "full",
+        meta: { section: opts?.section ?? "full" },
+      });
       return {
         result_id: row.id,
         query_text: row.query_text,
@@ -667,12 +785,21 @@ export class LoreEngine {
     }
   }
 
-  scoreResult(resultId: string, score: number, opts?: { codePath?: string; scoredBy?: string }): void {
+  scoreResult(
+    resultId: string,
+    score: number,
+    opts?: { codePath?: string; scoredBy?: string },
+  ): void {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const ok = scoreQueryCache(db, resultId, score, opts?.scoredBy);
     if (!ok) {
       throw new LoreError("QUERY_CACHE_NOT_FOUND", `No cached result with id ${resultId}`);
     }
+    this.recordInteraction(db, "score", {
+      resultId,
+      subject: String(score),
+      meta: { score },
+    });
   }
 
   async searchWeb(query: string, opts?: { codePath?: string }): Promise<WebSearchResult[]> {
@@ -756,13 +883,24 @@ export class LoreEngine {
 
   async close(
     narrativeName: string,
-    opts?: { codePath?: string; mode?: "merge" | "discard"; mergeStrategy?: MergeStrategy },
+    opts?: {
+      codePath?: string;
+      mode?: "merge" | "discard";
+      mergeStrategy?: MergeStrategy;
+      fromResultId?: string;
+    },
   ): Promise<CloseResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const mode = opts?.mode ?? "merge";
 
     if (mode === "discard") {
-      return discardNarrative(db, narrativeName);
+      const result = await discardNarrative(db, narrativeName);
+      this.recordInteraction(db, "close_narrative", {
+        resultId: opts?.fromResultId,
+        subject: narrativeName,
+        meta: { mode },
+      });
+      return result;
     }
 
     const config = this.configFor(entry);
@@ -946,7 +1084,7 @@ export class LoreEngine {
     };
 
     const codeEmbedder = await this.codeEmbedderFor(config, this.loreNameFor(entry));
-    return closeNarrativeOp(
+    const result = await closeNarrativeOp(
       db,
       entry.lore_path,
       narrativeName,
@@ -956,6 +1094,12 @@ export class LoreEngine {
       entry.code_path,
       { lifecycleTargetHandler, mergeStrategy: opts?.mergeStrategy, codeEmbedder },
     );
+    this.recordInteraction(db, "close_narrative", {
+      resultId: opts?.fromResultId,
+      subject: narrativeName,
+      meta: { mode, commit_id: result.commit_id },
+    });
+    return result;
   }
 
   async status(opts?: { codePath?: string }): Promise<StatusResult> {
@@ -1217,7 +1361,6 @@ export class LoreEngine {
 
     const health: StatusResult["health"] =
       askDebtSnapshot.debt <= 25 ? "good" : askDebtSnapshot.debt <= 50 ? "degrading" : "critical";
-
     return {
       health,
       summary: `${concepts.length} concepts, debt ${askDebtSnapshot.debt.toFixed(1)}%`,
@@ -2408,12 +2551,21 @@ export class LoreEngine {
     };
   }
 
-  async show(conceptName: string, opts?: { codePath?: string; ref?: string }) {
+  async show(
+    conceptName: string,
+    opts?: { codePath?: string; ref?: string; fromResultId?: string },
+  ) {
     const { db } = this.resolveLoreMind(opts?.codePath);
 
     // Historical ref: resolve commit and look up concept in that tree
     if (opts?.ref) {
-      return this.showAtCommit(db, opts.ref, conceptName);
+      const result = await this.showAtCommit(db, opts.ref, conceptName);
+      this.recordInteraction(db, "show", {
+        resultId: opts.fromResultId,
+        subject: conceptName,
+        meta: { ref: opts.ref },
+      });
+      return result;
     }
 
     const concept = getActiveConceptByName(db, conceptName);
@@ -2431,16 +2583,35 @@ export class LoreEngine {
         .get(concept.id);
       chunkId = latestChunk?.id ?? null;
     }
-    if (!chunkId) return { concept, content: null };
+    if (!chunkId) {
+      this.recordInteraction(db, "show", {
+        resultId: opts?.fromResultId,
+        subject: conceptName,
+        meta: { ref: null },
+      });
+      return { concept, content: null };
+    }
     const chunkRow = getChunk(db, chunkId);
-    if (!chunkRow) return { concept, content: null };
+    if (!chunkRow) {
+      this.recordInteraction(db, "show", {
+        resultId: opts?.fromResultId,
+        subject: conceptName,
+        meta: { ref: null },
+      });
+      return { concept, content: null };
+    }
     const parsed = await readChunk(chunkRow.file_path);
+    this.recordInteraction(db, "show", {
+      resultId: opts?.fromResultId,
+      subject: conceptName,
+      meta: { ref: null },
+    });
     return { concept, content: parsed.content };
   }
 
   async showNarrativeTrail(
     narrativeName: string,
-    opts?: { codePath?: string },
+    opts?: { codePath?: string; fromResultId?: string },
   ): Promise<NarrativeTrailResult> {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const narrative = getNarrativeByName(db, narrativeName);
@@ -2461,7 +2632,7 @@ export class LoreEngine {
       });
     }
     const topicSet = new Set(entries.flatMap((e) => e.topics));
-    return {
+    const result = {
       narrative: {
         name: narrative.name,
         intent: narrative.intent,
@@ -2473,6 +2644,12 @@ export class LoreEngine {
       entries,
       topics_covered: [...topicSet],
     };
+    this.recordInteraction(db, "trail", {
+      resultId: opts?.fromResultId,
+      subject: narrativeName,
+      meta: { entry_count: entries.length },
+    });
+    return result;
   }
 
   async history(conceptName: string, opts?: { codePath?: string }) {

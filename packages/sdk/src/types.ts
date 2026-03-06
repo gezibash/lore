@@ -521,6 +521,19 @@ export interface QueryResultMeta {
   };
 }
 
+export type RecallSection = "sources" | "journal" | "symbols" | "full";
+
+export type QueryNextActionKind = "show" | "recall" | "trail" | "ingest";
+
+export interface QueryNextAction {
+  kind: QueryNextActionKind;
+  primary: boolean;
+  reason: string;
+  concept?: string;
+  narrative?: string;
+  section?: RecallSection;
+}
+
 export interface JournalTrailEntry {
   content: string;
   topics: string[];
@@ -598,6 +611,7 @@ export interface QueryResult {
   result_id?: string;
   meta: QueryRunMeta;
   executive_summary?: ExecutiveSummary;
+  next_actions?: QueryNextAction[];
   results: Array<{
     concept: string;
     content: string;

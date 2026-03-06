@@ -113,6 +113,10 @@ const cli = defineCli({
       },
       options: {
         resolve: { type: "string", description: "Resolve dangling delta (name:resume|abandon)" },
+        "from-result": {
+          type: "string",
+          description: "Associate this follow-up with a prior lore ask result ID",
+        },
         target: {
           type: "string",
           description:
@@ -133,6 +137,7 @@ const cli = defineCli({
           args.intent,
           options.resolve as string | undefined,
           targetSpecs,
+          options["from-result"] as string | undefined,
         );
       },
     }),
@@ -226,8 +231,14 @@ const cli = defineCli({
       arguments: {
         narrative: { type: "string", required: true, description: "Narrative name" },
       },
-      async action({ args }) {
-        await trailCommand(getWorker(), args.narrative);
+      options: {
+        "from-result": {
+          type: "string",
+          description: "Associate this follow-up with a prior lore ask result ID",
+        },
+      },
+      async action({ args, options }) {
+        await trailCommand(getWorker(), args.narrative, options["from-result"] as string | undefined);
       },
     }),
     init: defineCommand({
@@ -321,6 +332,10 @@ const cli = defineCli({
           type: "string",
           description: "replace (default), extend, or patch",
         },
+        "from-result": {
+          type: "string",
+          description: "Associate this close with a prior lore ask result ID",
+        },
       },
       async action({ args, options }) {
         const mode = (options.mode === "discard" ? "discard" : "merge") as "merge" | "discard";
@@ -331,7 +346,13 @@ const cli = defineCli({
             : rawStrategy === "replace"
               ? ("replace" as const)
               : undefined;
-        await closeCommand(getWorker(), args.delta, mode, mergeStrategy);
+        await closeCommand(
+          getWorker(),
+          args.delta,
+          mode,
+          mergeStrategy,
+          options["from-result"] as string | undefined,
+        );
       },
     }),
     ingest: defineCommand({
@@ -870,8 +891,14 @@ const cli = defineCli({
       arguments: {
         target: { type: "string", required: true, description: "Concept name or concept@ref" },
       },
-      async action({ args }) {
-        await showCommand(getWorker(), args.target);
+      options: {
+        "from-result": {
+          type: "string",
+          description: "Associate this follow-up with a prior lore ask result ID",
+        },
+      },
+      async action({ args, options }) {
+        await showCommand(getWorker(), args.target, options["from-result"] as string | undefined);
       },
     }),
     diff: defineCommand({

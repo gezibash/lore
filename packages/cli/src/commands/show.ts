@@ -11,8 +11,15 @@ export function parseShowTarget(target: string): { concept: string; ref?: string
   };
 }
 
-export async function showCommand(client: WorkerClient, target: string): Promise<void> {
+export async function showCommand(
+  client: WorkerClient,
+  target: string,
+  fromResultId?: string,
+): Promise<void> {
   const { concept, ref } = parseShowTarget(target);
-  const result = await client.show(concept, ref ? { ref } : undefined);
+  const result = await client.show(concept, {
+    ...(ref ? { ref } : {}),
+    ...(fromResultId ? { fromResultId } : {}),
+  });
   console.log(formatShow(concept, result));
 }

@@ -64,6 +64,7 @@ import type {
   QueryOptions,
   QueryResult,
   RecallResult,
+  RecallSection,
   RegisterResult,
   RegistryEntry,
   LoreMindConfigCloneResult,
@@ -192,7 +193,12 @@ interface LoreClientEngine {
   open(
     narrative: string,
     intent: string,
-    opts?: { codePath?: string; resolveDangling?: ResolveDangling; targets?: NarrativeTarget[] },
+    opts?: {
+      codePath?: string;
+      resolveDangling?: ResolveDangling;
+      targets?: NarrativeTarget[];
+      fromResultId?: string;
+    },
   ): Promise<OpenResult>;
   log(
     narrative: string,
@@ -213,14 +219,25 @@ interface LoreClientEngine {
   ): Promise<ExecutiveSummary | undefined>;
   close(
     narrative: string,
-    opts?: { codePath?: string; mode?: CloseMode; mergeStrategy?: MergeStrategy },
+    opts?: {
+      codePath?: string;
+      mode?: CloseMode;
+      mergeStrategy?: MergeStrategy;
+      fromResultId?: string;
+    },
   ): Promise<CloseResult>;
   status(opts?: { codePath?: string }): Promise<StatusResult>;
   healthSnapshot(opts?: { codePath?: string }): LoreHealthSnapshot;
   ls(opts?: { codePath?: string }): Promise<LsResult>;
-  show(concept: string, opts?: { codePath?: string; ref?: string }): Promise<ShowResult>;
+  show(
+    concept: string,
+    opts?: { codePath?: string; ref?: string; fromResultId?: string },
+  ): Promise<ShowResult>;
   history(concept: string, opts?: { codePath?: string }): Promise<HistoryResult>;
-  showNarrativeTrail(narrativeName: string, opts?: { codePath?: string }): Promise<NarrativeTrailResult>;
+  showNarrativeTrail(
+    narrativeName: string,
+    opts?: { codePath?: string; fromResultId?: string },
+  ): Promise<NarrativeTrailResult>;
   diffCommits(
     fromRef: string,
     toRef: string,
@@ -352,7 +369,7 @@ interface LoreClientEngine {
   scanStats(opts?: { codePath?: string }): ScanStats;
   coverageReport(opts?: { codePath?: string; limit?: number; filePath?: string }): CoverageReport;
   bootstrapPlan(opts?: { codePath?: string }): BootstrapPlan;
-  recallResult(resultId: string, opts?: { codePath?: string }): RecallResult | null;
+  recallResult(resultId: string, opts?: { codePath?: string; section?: RecallSection }): RecallResult | null;
   scoreResult(resultId: string, score: number, opts?: { codePath?: string; scoredBy?: string }): void;
 }
 
@@ -379,7 +396,12 @@ export class LoreClient {
   open(
     narrative: string,
     intent: string,
-    opts?: { codePath?: string; resolveDangling?: ResolveDangling; targets?: NarrativeTarget[] },
+    opts?: {
+      codePath?: string;
+      resolveDangling?: ResolveDangling;
+      targets?: NarrativeTarget[];
+      fromResultId?: string;
+    },
   ): Promise<OpenResult> {
     return this.engine.open(narrative, intent, opts);
   }
@@ -433,7 +455,12 @@ export class LoreClient {
 
   close(
     narrative: string,
-    opts?: { codePath?: string; mode?: CloseMode; mergeStrategy?: MergeStrategy },
+    opts?: {
+      codePath?: string;
+      mode?: CloseMode;
+      mergeStrategy?: MergeStrategy;
+      fromResultId?: string;
+    },
   ): Promise<CloseResult> {
     return this.engine.close(narrative, opts);
   }
@@ -450,7 +477,10 @@ export class LoreClient {
     return this.engine.ls(opts);
   }
 
-  show(concept: string, opts?: { codePath?: string; ref?: string }): Promise<ShowResult> {
+  show(
+    concept: string,
+    opts?: { codePath?: string; ref?: string; fromResultId?: string },
+  ): Promise<ShowResult> {
     return this.engine.show(concept, opts);
   }
 
@@ -458,7 +488,10 @@ export class LoreClient {
     return this.engine.history(concept, opts);
   }
 
-  showNarrativeTrail(narrativeName: string, opts?: { codePath?: string }): Promise<NarrativeTrailResult> {
+  showNarrativeTrail(
+    narrativeName: string,
+    opts?: { codePath?: string; fromResultId?: string },
+  ): Promise<NarrativeTrailResult> {
     return this.engine.showNarrativeTrail(narrativeName, opts);
   }
 
@@ -766,7 +799,10 @@ export class LoreClient {
     return this.engine.bootstrapPlan(opts);
   }
 
-  recall(resultId: string, opts?: { codePath?: string }): RecallResult | null {
+  recall(
+    resultId: string,
+    opts?: { codePath?: string; section?: RecallSection },
+  ): RecallResult | null {
     return this.engine.recallResult(resultId, opts);
   }
 

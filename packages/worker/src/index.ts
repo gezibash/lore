@@ -156,7 +156,12 @@ export class WorkerClient {
   open(
     narrative: string,
     intent: string,
-    opts?: { codePath?: string; resolveDangling?: ResolveDangling; targets?: NarrativeTarget[] },
+    opts?: {
+      codePath?: string;
+      resolveDangling?: ResolveDangling;
+      targets?: NarrativeTarget[];
+      fromResultId?: string;
+    },
   ): ReturnType<WorkerClientDeps["open"]> {
     return this.client.open(narrative, intent, opts);
   }

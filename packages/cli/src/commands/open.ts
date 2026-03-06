@@ -59,6 +59,7 @@ export async function openCommand(
   intent: string,
   resolve?: string,
   targetSpecs?: string[],
+  fromResultId?: string,
 ): Promise<void> {
   let resolveDangling: ResolveDangling | undefined;
   if (resolve) {
@@ -77,6 +78,6 @@ export async function openCommand(
   const targets: NarrativeTarget[] | undefined =
     targetSpecs && targetSpecs.length > 0 ? targetSpecs.map(parseTargetSpec) : undefined;
 
-  const result = await client.open(delta, intent, { resolveDangling, targets });
+  const result = await client.open(delta, intent, { resolveDangling, targets, fromResultId });
   console.log(formatOpen(result));
 }

@@ -53,6 +53,10 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
         })
         .optional()
         .describe("Resolve a dangling narrative before opening"),
+      result_id: z
+        .string()
+        .optional()
+        .describe("Optional ask result ID this follow-up comes from"),
       targets: z
         .array(narrativeTargetSchema)
         .optional()
@@ -60,9 +64,10 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
           "Declare which concepts this narrative will affect. create/update: on close, integration only routes journal entries to these concepts. lifecycle (archive, rename, merge, split, restore): these operations execute automatically when the narrative closes.",
         ),
     },
-    async ({ narrative, intent, resolve_dangling, targets }) => {
+    async ({ narrative, intent, resolve_dangling, result_id, targets }) => {
       const result = await client.open(narrative, intent, {
         resolveDangling: resolve_dangling,
+        fromResultId: result_id,
         targets: targets as NarrativeTarget[] | undefined,
       });
       return { content: [{ type: "text" as const, text: formatOpen(result) }] };
@@ -152,7 +157,7 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
         .describe("Which section to return (default: full)"),
     },
     async ({ result_id, section }) => {
-      const recalled = client.recall(result_id);
+      const recalled = client.recall(result_id, { section: (section ?? "full") as RecallSection });
       if (!recalled) {
         return {
           content: [{ type: "text" as const, text: `No cached result found for ID: ${result_id}` }],
@@ -210,14 +215,19 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
         .boolean()
         .optional()
         .describe("Preview what close would do without actually closing the narrative"),
+      result_id: z
+        .string()
+        .optional()
+        .describe("Optional ask result ID this close comes from"),
     },
-    async ({ narrative, mode, mergeStrategy, dry_run }) => {
+    async ({ narrative, mode, mergeStrategy, dry_run, result_id }) => {
       if (dry_run) {
         const result = await client.dryRunClose(narrative);
         return { content: [{ type: "text" as const, text: formatDryRunClose(result) }] };
       }
       const result = await client.close(narrative, {
         mode,
+        fromResultId: result_id,
         mergeStrategy: mergeStrategy as MergeStrategy | undefined,
       });
       return { content: [{ type: "text" as const, text: formatClose(result) }] };
@@ -321,9 +331,13 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
     {
       concept: z.string().describe("Concept name"),
       ref: z.string().optional().describe("Historical commit ref (e.g., main~3)"),
+      result_id: z
+        .string()
+        .optional()
+        .describe("Optional ask result ID this follow-up comes from"),
     },
-    async ({ concept, ref }) => {
-      const result = await client.show(concept, { ref });
+    async ({ concept, ref, result_id }) => {
+      const result = await client.show(concept, { ref, fromResultId: result_id });
       const relations = client.listConceptRelations({ concept });
       const bindings = client.conceptBindings(concept);
       const relText = formatRelationsMcp(relations, concept);
@@ -341,13 +355,17 @@ export function registerTools(server: McpServer, client: WorkerClient): void {
     {
       narrative: z.string().optional().describe("Narrative name"),
       delta: z.string().optional().describe("Legacy alias for narrative name"),
+      result_id: z
+        .string()
+        .optional()
+        .describe("Optional ask result ID this follow-up comes from"),
     },
-    async ({ narrative, delta }) => {
+    async ({ narrative, delta, result_id }) => {
       const trailName = narrative ?? delta;
       if (!trailName) {
         throw new Error("Narrative name is required.");
       }
-      const result = await client.showNarrativeTrail(trailName);
+      const result = await client.showNarrativeTrail(trailName, { fromResultId: result_id });
       return { content: [{ type: "text" as const, text: formatNarrativeTrail(result) }] };
     },
   );

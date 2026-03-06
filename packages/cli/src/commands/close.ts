@@ -6,7 +6,8 @@ export async function closeCommand(
   delta: string,
   mode: CloseMode = "merge",
   mergeStrategy?: MergeStrategy,
+  fromResultId?: string,
 ): Promise<void> {
-  const result = await client.close(delta, { mode, mergeStrategy });
+  const result = await client.close(delta, { mode, mergeStrategy, fromResultId });
   console.log(formatClose(result));
 }

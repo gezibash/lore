@@ -159,6 +159,13 @@ export {
 } from "./query-cache.ts";
 export type { QueryCacheRow } from "./query-cache.ts";
 export {
+  insertInteractionEvent,
+  listInteractionEventsSince,
+  computeNorthStarScorecard,
+  getLatestScoreEvent,
+} from "./interaction-events.ts";
+export type { InteractionEventRow, InteractionEventType } from "./interaction-events.ts";
+export {
   insertCallSiteBatch,
   deleteCallSitesForSourceFile,
   getCallSitesForCallee,
