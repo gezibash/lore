@@ -1,5 +1,6 @@
 import type { WorkerClient, ResolveDangling, DanglingAction, NarrativeTarget } from "@lore/worker";
 import { formatOpen } from "@lore/worker";
+import { emit } from "../output.ts";
 
 /**
  * Parse a --target spec string into a NarrativeTarget.
@@ -79,5 +80,5 @@ export async function openCommand(
     targetSpecs && targetSpecs.length > 0 ? targetSpecs.map(parseTargetSpec) : undefined;
 
   const result = await client.open(narrative, intent, { resolveDangling, targets, fromResultId });
-  console.log(formatOpen(result));
+  emit(result, formatOpen);
 }

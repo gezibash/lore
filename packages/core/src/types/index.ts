@@ -8,7 +8,7 @@ export type ChunkType = "chunk" | "journal" | "source" | "doc";
 
 export type JournalStatus = "finding" | "dead-end" | "confirmed" | "question";
 
-export type NarrativeStatus = "open" | "closed" | "abandoned";
+export type NarrativeStatus = "open" | "closing" | "closed" | "abandoned" | "close_failed";
 
 export type DebtTrend = "improving" | "stable" | "degrading";
 
@@ -194,6 +194,8 @@ export interface ChunkRow {
 
 export type CloseMaintenanceJobStatus = "queued" | "leased" | "done" | "failed";
 
+export type CloseJobStatus = "queued" | "leased" | "done" | "failed";
+
 export interface CloseMaintenanceJobRow {
   id: string;
   lore_path: string;
@@ -206,6 +208,23 @@ export interface CloseMaintenanceJobRow {
   lease_expires_at: string | null;
   last_error: string | null;
   payload_json: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface CloseJobRow {
+  id: string;
+  lore_path: string;
+  narrative_id: string;
+  narrative_name: string;
+  status: CloseJobStatus;
+  owner: string | null;
+  attempt: number;
+  lease_expires_at: string | null;
+  last_error: string | null;
+  payload_json: string;
+  close_result_json: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -716,6 +735,7 @@ export interface CloseResult {
   mode: CloseMode;
   integrated: boolean;
   commit_id: string | null;
+  narrative_status?: NarrativeStatus;
   concepts_updated: string[];
   concepts_created: string[];
   conflicts: MergeConflict[];
@@ -731,12 +751,13 @@ export interface CloseResult {
     }>;
   };
   maintenance?: {
-    status: "queued" | "completed";
+    status: "queued" | "completed" | "failed";
     job_id?: string;
     pending_jobs: number;
     failed_jobs: number;
     note?: string;
   };
+  close_job?: CloseJob;
   follow_up?: string;
   coverage_change?: {
     before: { exported_covered: number; exported_total: number; ratio: number };
@@ -745,6 +766,35 @@ export interface CloseResult {
   concept_overlaps?: Array<{ concept: string; overlaps_with: string; similarity: number }>;
   /** Semantic distance warnings: detected when incoming narrative entries differ strongly from existing concept. */
   phase_transitions?: PhaseTransitionWarning[];
+}
+
+export interface CloseJob {
+  id: string;
+  narrative_id: string;
+  narrative_name: string;
+  status: CloseJobStatus;
+  owner: string | null;
+  attempt: number;
+  lease_expires_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface CloseJobDetail {
+  job: CloseJob;
+  result?: CloseResult | null;
+}
+
+export interface CloseWorkerRunResult {
+  mode: "once" | "watch";
+  close_jobs_processed: number;
+  close_jobs_failed: number;
+  maintenance_jobs_processed: number;
+  maintenance_jobs_failed: number;
+  idle_polls: number;
+  last_job_id: string | null;
 }
 
 export interface NorthStarRateMetric {
@@ -836,6 +886,7 @@ export interface StatusResult {
   }>;
   active_narratives: Array<{
     name: string;
+    status: NarrativeStatus;
     entry_count: number;
     theta: number | null;
     note: string;
@@ -1324,6 +1375,9 @@ export type LoreErrorCode =
   | "CONCEPT_NOT_FOUND"
   | "CONCEPT_NAME_CONFLICT"
   | "CONCEPT_INVALID_STATE"
+  | "NARRATIVE_CLOSING"
+  | "CLOSE_JOB_NOT_FOUND"
+  | "CLOSE_JOB_FAILED"
   | "QUERY_CACHE_NOT_FOUND"
   // ask() pipeline stage failures
   | "ASK_EMBEDDING_FAILED"

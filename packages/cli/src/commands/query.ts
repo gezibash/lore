@@ -1,6 +1,7 @@
 import type { WorkerClient } from "@lore/worker";
 import { createDraft } from "boune";
 import { formatAskCli } from "../formatters.ts";
+import { emit, isJsonOutput } from "../output.ts";
 
 export async function queryCommand(
   client: WorkerClient,
@@ -19,7 +20,7 @@ export async function queryCommand(
   let phaseStartedAtMs = Date.now();
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameIndex = 0;
-  const interactive = process.stdout.isTTY && process.env.CI !== "true";
+  const interactive = !isJsonOutput() && process.stdout.isTTY && process.env.CI !== "true";
 
   const formatElapsed = (elapsedMs: number): string => `${(elapsedMs / 1000).toFixed(1)}s`;
   const renderProgress = (): void => {
@@ -65,7 +66,7 @@ export async function queryCommand(
       onProgress: updateSpinner,
     });
     stopSpinner();
-    console.log(formatAskCli(result, { includeSources: opts?.sources }));
+    emit(result, (value) => formatAskCli(value, { includeSources: opts?.sources }));
   } catch (error) {
     stopSpinner();
     throw error;

@@ -515,6 +515,16 @@ function compactIndexStatus(result: StatusResult): string | null {
 }
 
 function compactNarrativeStatus(result: StatusResult): string {
+  const hasClosing = result.active_narratives.some((narrative) => narrative.status === "closing");
+  const hasFailed = result.active_narratives.some(
+    (narrative) => narrative.status === "close_failed",
+  );
+  if (hasFailed) {
+    return `${RED}close failed (${compactCount(result.active_narratives.filter((narrative) => narrative.status === "close_failed").length)})${RESET}`;
+  }
+  if (hasClosing) {
+    return `${YELLOW}closing (${compactCount(result.active_narratives.filter((narrative) => narrative.status === "closing").length)})${RESET}`;
+  }
   if (result.dangling_narratives.length > 0) {
     return `${YELLOW}dangling (${compactCount(result.dangling_narratives.length)})${RESET}`;
   }
@@ -535,7 +545,11 @@ function compactNextCommand(result: StatusResult): string | null {
   const dangling = result.dangling_narratives[0];
   if (dangling) return `lore close ${dangling.name}`;
   const active = result.active_narratives[0];
-  if (active) return `lore trail ${active.name}`;
+  if (active) {
+    if (active.status === "closing") return "lore jobs";
+    if (active.status === "close_failed") return `lore close ${active.name}`;
+    return `lore trail ${active.name}`;
+  }
   const priority = result.priorities[0];
   if (priority) {
     if (priority.concept === "(maintenance)") return "lore ingest";
@@ -692,8 +706,9 @@ function renderStatusVerbosePlain(result: StatusResult): string {
     for (const d of result.active_narratives) {
       const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
       lines.push(
-        `  ${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
+        `  ${CYAN}${d.name}${RESET}  ·  ${d.status}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
       );
+      lines.push(`    ${DIM}${d.note}${RESET}`);
     }
   }
 

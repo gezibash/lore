@@ -1,4 +1,5 @@
 import { formatNarrativeTrail, type WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 
 export async function trailCommand(
   client: WorkerClient,
@@ -6,5 +7,5 @@ export async function trailCommand(
   fromResultId?: string,
 ): Promise<void> {
   const result = await client.showNarrativeTrail(narrative, fromResultId ? { fromResultId } : undefined);
-  console.log(formatNarrativeTrail(result));
+  emit(result, formatNarrativeTrail);
 }

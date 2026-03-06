@@ -26,9 +26,11 @@ import {
 } from "@/types/index.ts";
 import {
   insertNarrative,
-  getOpenNarrativeByName,
-  getOpenNarratives,
+  getNarrativeByName,
+  getNarrativeByNameWithStatuses,
+  getActiveNarratives,
   getDanglingNarratives,
+  reopenNarrative,
   closeNarrative as closeDbNarrative,
   abandonNarrative as abandonDbNarrative,
   updateNarrativeMetrics,
@@ -118,6 +120,14 @@ import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
 import { buildCallGraphAdjacency, personalizedPageRank } from "./graph-expansion.ts";
+
+function isNarrativeWritable(status: NarrativeRow["status"]): boolean {
+  return status === "open" || status === "close_failed";
+}
+
+function isNarrativeClosable(status: NarrativeRow["status"]): boolean {
+  return status === "open" || status === "closing" || status === "close_failed";
+}
 import {
   askDebtBandWarning,
   askDebtRetrievalMultiplier,
@@ -393,10 +403,17 @@ export async function openNarrative(
   resolveDangling?: ResolveDangling,
   targets?: NarrativeTarget[],
 ): Promise<OpenResult> {
-  // Check for existing open narrative with same name
-  const existing = getOpenNarrativeByName(db, narrativeName);
-  if (existing) {
-    throw new LoreError("NARRATIVE_ALREADY_OPEN", `Narrative '${narrativeName}' is already open`);
+  const existing = getNarrativeByName(db, narrativeName);
+  if (
+    existing &&
+    (existing.status === "open" ||
+      existing.status === "closing" ||
+      existing.status === "close_failed")
+  ) {
+    throw new LoreError(
+      "NARRATIVE_ALREADY_OPEN",
+      `Narrative '${narrativeName}' is already ${existing.status}`,
+    );
   }
 
   // Check for dangling narratives
@@ -414,13 +431,19 @@ export async function openNarrative(
 
   // Handle dangling resolution
   if (resolveDangling) {
-    const danglingNarrative = getOpenNarrativeByName(db, resolveDangling.narrative);
+    const danglingNarrative = getNarrativeByNameWithStatuses(db, resolveDangling.narrative, [
+      "open",
+      "close_failed",
+    ]);
     if (danglingNarrative) {
       switch (resolveDangling.action) {
         case "abandon":
           abandonDbNarrative(db, danglingNarrative.id);
           break;
         case "resume":
+          if (danglingNarrative.status === "close_failed") {
+            reopenNarrative(db, danglingNarrative.id);
+          }
           // Return context for the existing narrative instead
           return buildOpenResult(db, config, embedder, intent);
         default:
@@ -518,10 +541,10 @@ async function buildOpenResult(
 
   // Check for overlapping narratives
   const headsUp: string[] = [];
-  const openNarratives = getOpenNarratives(db);
-  for (const narrative of openNarratives) {
+  const activeNarratives = getActiveNarratives(db);
+  for (const narrative of activeNarratives) {
     headsUp.push(
-      `Narrative '${narrative.name}' is currently open (opened ${timeAgo(narrative.opened_at)})`,
+      `Narrative '${narrative.name}' is currently ${narrative.status} (opened ${timeAgo(narrative.opened_at)})`,
     );
   }
 
@@ -579,7 +602,23 @@ export async function logEntry(
   opts: LogEntryOpts = {},
 ): Promise<LogResult> {
   const { topics = [], refs, concepts, symbols } = opts;
-  const narrative = getOpenNarrativeByName(db, narrativeName);
+  const current = getNarrativeByName(db, narrativeName);
+  if (!current) {
+    throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+  }
+  if (current.status === "closing") {
+    throw new LoreError(
+      "NARRATIVE_CLOSING",
+      `Narrative '${narrativeName}' is currently closing and cannot accept new entries`,
+    );
+  }
+  if (!isNarrativeWritable(current.status)) {
+    throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+  }
+  if (current.status === "close_failed") {
+    reopenNarrative(db, current.id);
+  }
+  const narrative = getNarrative(db, current.id);
   if (!narrative) {
     throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
   }
@@ -2643,8 +2682,8 @@ export async function closeNarrativeOp(
     codeEmbedder?: Embedder | null;
   },
 ): Promise<CloseResult> {
-  const narrative = getOpenNarrativeByName(db, narrativeName);
-  if (!narrative) {
+  const narrative = getNarrativeByName(db, narrativeName);
+  if (!narrative || !isNarrativeClosable(narrative.status)) {
     throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
   }
 
@@ -3231,6 +3270,7 @@ export async function closeNarrativeOp(
     mode: "merge",
     integrated: true,
     commit_id: commit.id,
+    narrative_status: "closed",
     concepts_updated: conceptsUpdated,
     concepts_created: conceptsCreated,
     conflicts,
@@ -3659,8 +3699,17 @@ export async function runCloseMaintenanceJob(
 }
 
 export function discardNarrative(db: Database, narrativeName: string): CloseResult {
-  const narrative = getOpenNarrativeByName(db, narrativeName);
+  const narrative = getNarrativeByName(db, narrativeName);
   if (!narrative) {
+    throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+  }
+  if (narrative.status === "closing") {
+    throw new LoreError(
+      "NARRATIVE_CLOSING",
+      `Narrative '${narrativeName}' is currently closing and cannot be discarded`,
+    );
+  }
+  if (!isNarrativeWritable(narrative.status)) {
     throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
   }
   abandonDbNarrative(db, narrative.id);
@@ -3668,6 +3717,7 @@ export function discardNarrative(db: Database, narrativeName: string): CloseResu
     mode: "discard",
     integrated: false,
     commit_id: null,
+    narrative_status: "abandoned",
     concepts_updated: [],
     concepts_created: [],
     conflicts: [],

@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { ulid } from "ulid";
-import type { NarrativeRow, NarrativeTarget } from "@/types/index.ts";
+import type { NarrativeRow, NarrativeStatus, NarrativeTarget } from "@/types/index.ts";
+
+const ACTIVE_NARRATIVE_STATUSES: NarrativeStatus[] = ["open", "closing", "close_failed"];
+const WRITABLE_NARRATIVE_STATUSES: NarrativeStatus[] = ["open", "close_failed"];
 
 /** Insert a narrative with caller-supplied id and fields (used by rebuild). */
 export function insertNarrativeRaw(
@@ -134,28 +137,71 @@ export function getNarrativeByName(db: Database, name: string): NarrativeRow | n
   );
 }
 
+export function getNarrativeByNameWithStatuses(
+  db: Database,
+  name: string,
+  statuses: NarrativeStatus[],
+): NarrativeRow | null {
+  if (statuses.length === 0) return null;
+  const statusList = statuses.map((status) => `'${status}'`).join(", ");
+  return (
+    db
+      .query<NarrativeRow, [string]>(
+        `SELECT * FROM current_narratives WHERE name = ? AND status IN (${statusList})`,
+      )
+      .get(name) ?? null
+  );
+}
+
 export function getOpenNarratives(db: Database): NarrativeRow[] {
   return db
     .query<NarrativeRow, []>("SELECT * FROM current_narratives WHERE status = 'open' ORDER BY opened_at")
     .all();
 }
 
-export function closeNarrative(db: Database, id: string): void {
+export function getActiveNarratives(db: Database): NarrativeRow[] {
+  const statusList = ACTIVE_NARRATIVE_STATUSES.map((status) => `'${status}'`).join(", ");
+  return db
+    .query<NarrativeRow, []>(
+      `SELECT * FROM current_narratives
+       WHERE status IN (${statusList})
+       ORDER BY opened_at`,
+    )
+    .all();
+}
+
+export function getWritableNarrativeByName(db: Database, name: string): NarrativeRow | null {
+  return getNarrativeByNameWithStatuses(db, name, WRITABLE_NARRATIVE_STATUSES);
+}
+
+export function setNarrativeStatus(db: Database, id: string, status: NarrativeStatus): void {
   const current = getNarrative(db, id);
   if (!current) return;
   insertNarrativeVersion(db, current, {
-    status: "closed",
-    closed_at: new Date().toISOString(),
+    status,
+    closed_at:
+      status === "closed" || status === "abandoned" ? new Date().toISOString() : null,
   });
 }
 
+export function markNarrativeClosing(db: Database, id: string): void {
+  setNarrativeStatus(db, id, "closing");
+}
+
+export function failNarrativeClose(db: Database, id: string): void {
+  setNarrativeStatus(db, id, "close_failed");
+}
+
+export function reopenNarrative(db: Database, id: string): void {
+  setNarrativeStatus(db, id, "open");
+}
+
+export function closeNarrative(db: Database, id: string): void {
+  setNarrativeStatus(db, id, "closed");
+}
+
 export function abandonNarrative(db: Database, id: string): void {
-  const current = getNarrative(db, id);
-  if (!current) return;
-  insertNarrativeVersion(db, current, {
-    status: "abandoned",
-    closed_at: new Date().toISOString(),
-  });
+  setNarrativeStatus(db, id, "abandoned");
 }
 
 export function updateNarrativeMetrics(
@@ -173,7 +219,7 @@ export function getDanglingNarratives(db: Database, danglingDays: number): Narra
   return db
     .query<NarrativeRow, [string]>(
       `SELECT * FROM current_narratives
-       WHERE status = 'open' AND opened_at < ?
+       WHERE status IN ('open', 'close_failed') AND opened_at < ?
        ORDER BY opened_at`,
     )
     .all(cutoff);

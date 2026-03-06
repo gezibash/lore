@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { getActiveConcepts, getConceptRelations } from "@/db/index.ts";
 import { getEdges } from "@/db/edges.ts";
 import { getAllEmbeddings } from "@/db/embeddings.ts";
-import { getOpenNarratives } from "@/db/index.ts";
+import { getActiveNarratives } from "@/db/index.ts";
 import { getManifest } from "@/db/manifest.ts";
 import { getLaplacianCache } from "@/db/laplacian.ts";
 import { getConcept } from "@/db/concepts.ts";
@@ -125,8 +125,46 @@ export async function computeSuggestions(
   };
 
   // ── 1. Dangling narratives ──────────────────────────────────
-  const openNarratives = getOpenNarratives(db);
-  for (const narrative of openNarratives) {
+  const activeNarratives = getActiveNarratives(db);
+  for (const narrative of activeNarratives) {
+    if (narrative.status === "closing") {
+      suggestions.push({
+        kind: "close-narrative",
+        priority: 1,
+        confidence: 1.0,
+        title: `"${narrative.name}" is closing in the background`,
+        rationale: "Background close is in flight; wait for the job to finish before opening new work on the same narrative.",
+        steps: [{ tool: "close", args: { narrative: narrative.name } }],
+        concepts: [],
+        evidence: {
+          opened_at: narrative.opened_at,
+          entry_count: narrative.entry_count,
+          status: narrative.status,
+        },
+        impact: ZERO_IMPACT,
+      });
+      continue;
+    }
+
+    if (narrative.status === "close_failed") {
+      suggestions.push({
+        kind: "close-narrative",
+        priority: 1,
+        confidence: 1.0,
+        title: `"${narrative.name}" close failed`,
+        rationale: "The last background close failed. Add more notes if needed, then retry the close.",
+        steps: [{ tool: "close", args: { narrative: narrative.name } }],
+        concepts: [],
+        evidence: {
+          opened_at: narrative.opened_at,
+          entry_count: narrative.entry_count,
+          status: narrative.status,
+        },
+        impact: ZERO_IMPACT,
+      });
+      continue;
+    }
+
     const age = daysSince(narrative.opened_at);
     if (age <= DANGLING_DAYS) continue;
 

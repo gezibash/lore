@@ -76,6 +76,10 @@ type WorkerClientDeps = Pick<
   | "ask"
   | "query"
   | "close"
+  | "listCloseJobs"
+  | "getCloseJobDetail"
+  | "waitForCloseJob"
+  | "runCloseWorker"
   | "status"
   | "ls"
   | "show"
@@ -191,6 +195,30 @@ export class WorkerClient {
 
   close(...args: Parameters<WorkerClientDeps["close"]>): ReturnType<WorkerClientDeps["close"]> {
     return this.client.close(...args);
+  }
+
+  listCloseJobs(
+    ...args: Parameters<WorkerClientDeps["listCloseJobs"]>
+  ): ReturnType<WorkerClientDeps["listCloseJobs"]> {
+    return this.client.listCloseJobs(...args);
+  }
+
+  getCloseJobDetail(
+    ...args: Parameters<WorkerClientDeps["getCloseJobDetail"]>
+  ): ReturnType<WorkerClientDeps["getCloseJobDetail"]> {
+    return this.client.getCloseJobDetail(...args);
+  }
+
+  waitForCloseJob(
+    ...args: Parameters<WorkerClientDeps["waitForCloseJob"]>
+  ): ReturnType<WorkerClientDeps["waitForCloseJob"]> {
+    return this.client.waitForCloseJob(...args);
+  }
+
+  runCloseWorker(
+    ...args: Parameters<WorkerClientDeps["runCloseWorker"]>
+  ): ReturnType<WorkerClientDeps["runCloseWorker"]> {
+    return this.client.runCloseWorker(...args);
   }
 
   status(...args: Parameters<WorkerClientDeps["status"]>): ReturnType<WorkerClientDeps["status"]> {

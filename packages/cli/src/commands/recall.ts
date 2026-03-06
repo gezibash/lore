@@ -1,5 +1,6 @@
 import { renderRecall, type RecallSection } from "@lore/rendering";
 import type { WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 
 export async function recallCommand(
   client: WorkerClient,
@@ -10,5 +11,5 @@ export async function recallCommand(
   if (!recalled) {
     throw new Error(`No cached result found for ID: ${resultId}`);
   }
-  console.log(renderRecall(recalled, section ?? "full"));
+  emit(recalled, (value) => renderRecall(value, section ?? "full"));
 }

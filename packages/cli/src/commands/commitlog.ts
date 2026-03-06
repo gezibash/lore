@@ -1,5 +1,6 @@
 import type { WorkerClient } from "@lore/worker";
 import { timeAgo } from "@lore/worker";
+import { emit } from "../output.ts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -13,7 +14,7 @@ export async function commitlogCommand(client: WorkerClient, limit: number = 20,
   const entries = client.commitLog({ limit, since });
 
   if (entries.length === 0) {
-    console.log(`${DIM}No commits yet${RESET}`);
+    emit(entries, () => `${DIM}No commits yet${RESET}`);
     return;
   }
 
@@ -53,5 +54,5 @@ export async function commitlogCommand(client: WorkerClient, limit: number = 20,
     lines.push("");
   }
 
-  console.log(lines.join("\n"));
+  emit(entries, () => lines.join("\n"));
 }

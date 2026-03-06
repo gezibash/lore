@@ -16,6 +16,9 @@ import {
   type RecallResult,
   type RecallSection,
   type ExecutiveSummary,
+  type CloseJob,
+  type CloseJobDetail,
+  type CloseWorkerRunResult,
   type CloseResult,
   type StatusResult,
   type ConceptRow,
@@ -56,8 +59,7 @@ import {
   getManifest,
   upsertManifest,
   markGraphStale,
-  getOpenNarrativeByName,
-  getOpenNarratives,
+  getActiveNarratives,
   getDanglingNarratives,
   getNarrativeByName,
   getActiveConcepts,
@@ -105,11 +107,24 @@ import {
   skipConceptHealLease,
   failConceptHealLease,
   getConceptHealLeaseStatusCounts,
+  queueCloseJob,
+  getCloseJob,
+  getLatestPendingCloseJobForNarrative,
+  listCloseJobs,
+  claimCloseJob,
+  completeCloseJob,
+  failCloseJob,
+  getCloseJobCounts,
+  hasPendingCloseJobs,
   claimCloseMaintenanceJob,
+  getCloseMaintenanceJob,
   completeCloseMaintenanceJob,
   failCloseMaintenanceJob,
   getCloseMaintenanceJobCounts,
   hasPendingCloseMaintenanceJobs,
+  markNarrativeClosing,
+  failNarrativeClose,
+  reopenNarrative,
   getConcept,
   parseLifecycleMessage,
   getLastNarrativeForConcept,
@@ -245,6 +260,15 @@ interface LifecycleResult {
     merged_content?: string;
     splits?: Array<{ name: string; content: string }>;
   };
+}
+
+interface CloseJobPayload {
+  mergeStrategy?: MergeStrategy;
+  fromResultId?: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 interface PromptPreviewResult {
@@ -457,11 +481,12 @@ export class LoreEngine {
     entry: RegistryEntry,
     db: Database,
     maxJobs: number = 1,
-  ): Promise<number> {
-    if (maxJobs <= 0) return 0;
+  ): Promise<{ completed: number; failed: number }> {
+    if (maxJobs <= 0) return { completed: 0, failed: 0 };
 
     const ownerBase = `${process.pid}:${ulid()}`;
-    let drained = 0;
+    let completed = 0;
+    let failed = 0;
     let config: LoreConfig | null = null;
     let embedder: Embedder | null = null;
     let generator: Generator | null = null;
@@ -494,9 +519,9 @@ export class LoreEngine {
           id: job.id,
           owner,
         });
-        drained += 1;
+        completed += 1;
       } catch (error) {
-        failCloseMaintenanceJob(db, {
+        const failure = failCloseMaintenanceJob(db, {
           lorePath: entry.lore_path,
           id: job.id,
           owner,
@@ -504,10 +529,130 @@ export class LoreEngine {
           retry: true,
           maxRetries: 1,
         });
+        if (failure.status === "failed") {
+          failed += 1;
+        }
       }
     }
 
-    return drained;
+    return { completed, failed };
+  }
+
+  private serializeCloseJob(row: {
+    id: string;
+    narrative_id: string;
+    narrative_name: string;
+    status: CloseJob["status"];
+    owner: string | null;
+    attempt: number;
+    lease_expires_at: string | null;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+    completed_at: string | null;
+  }): CloseJob {
+    return {
+      id: row.id,
+      narrative_id: row.narrative_id,
+      narrative_name: row.narrative_name,
+      status: row.status,
+      owner: row.owner,
+      attempt: row.attempt,
+      lease_expires_at: row.lease_expires_at,
+      last_error: row.last_error,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      completed_at: row.completed_at,
+    };
+  }
+
+  private readCloseJobDetail(entry: RegistryEntry, jobId: string): CloseJobDetail {
+    const { db } = this.resolveLoreMind(entry.code_path);
+    const row = getCloseJob(db, { lorePath: entry.lore_path, id: jobId });
+    if (!row) {
+      throw new LoreError("CLOSE_JOB_NOT_FOUND", `No close job '${jobId}' exists`);
+    }
+    return {
+      job: this.serializeCloseJob(row),
+      result: row.close_result_json ? (JSON.parse(row.close_result_json) as CloseResult) : undefined,
+    };
+  }
+
+  private buildQueuedCloseResult(row: {
+    id: string;
+    narrative_id: string;
+    narrative_name: string;
+    status: CloseJob["status"];
+    owner: string | null;
+    attempt: number;
+    lease_expires_at: string | null;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+    completed_at: string | null;
+  }): CloseResult {
+    return {
+      mode: "merge",
+      integrated: false,
+      commit_id: null,
+      narrative_status: "closing",
+      concepts_updated: [],
+      concepts_created: [],
+      conflicts: [],
+      impact: {
+        summary: `Narrative '${row.narrative_name}' was queued for background close.`,
+        debt_before: null,
+        debt_after: null,
+      },
+      close_job: this.serializeCloseJob(row),
+      follow_up: `Use 'lore wait ${row.id}' to block on completion or 'lore job ${row.id}' to inspect progress.`,
+    };
+  }
+
+  private buildFinalCloseSummary(debtBefore: number | null, debtAfter: number | null): string {
+    if (debtBefore == null || debtAfter == null) {
+      return "Close completed.";
+    }
+    return `Debt ${debtAfter < debtBefore ? "reduced" : "increased"} ${Math.abs(((debtBefore - debtAfter) / (debtBefore || 1)) * 100).toFixed(0)}%.`;
+  }
+
+  private finalizeCloseResult(
+    db: Database,
+    lorePath: string,
+    result: CloseResult,
+    opts?: { maintenanceStatus?: "completed" | "failed"; maintenanceError?: string | null },
+  ): CloseResult {
+    const closeJob = result.close_job;
+    const maintenanceCounts = getCloseMaintenanceJobCounts(db, { lorePath });
+    const maintenance =
+      result.maintenance == null
+        ? undefined
+        : {
+            ...result.maintenance,
+            status: opts?.maintenanceStatus ?? "completed",
+            pending_jobs: maintenanceCounts.queued + maintenanceCounts.leased,
+            failed_jobs: maintenanceCounts.failed,
+            note:
+              opts?.maintenanceStatus === "failed" && opts.maintenanceError
+                ? `Maintenance failed: ${opts.maintenanceError}`
+                : undefined,
+          };
+    const debtAfter = getManifest(db)?.debt ?? result.impact.debt_after ?? result.impact.debt_before;
+    return {
+      ...result,
+      narrative_status: "closed",
+      close_job: closeJob,
+      impact: {
+        ...result.impact,
+        summary: this.buildFinalCloseSummary(result.impact.debt_before, debtAfter),
+        debt_after: debtAfter,
+      },
+      maintenance,
+      follow_up:
+        opts?.maintenanceStatus === "failed" && opts.maintenanceError
+          ? opts.maintenanceError
+          : result.follow_up,
+    };
   }
 
   private loreNameFor(entry?: RegistryEntry): string {
@@ -639,7 +784,6 @@ export class LoreEngine {
     },
   ): Promise<OpenResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
     const config = this.configFor(entry);
     const result = await openNarrative(
       db,
@@ -977,38 +1121,14 @@ export class LoreEngine {
     );
   }
 
-  async close(
-    narrativeName: string,
-    opts?: {
-      codePath?: string;
-      mode?: "merge" | "discard";
-      mergeStrategy?: MergeStrategy;
-      fromResultId?: string;
-    },
-  ): Promise<CloseResult> {
-    const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
-    const mode = opts?.mode ?? "merge";
-
-    if (mode === "discard") {
-      const result = await discardNarrative(db, narrativeName);
-      this.recordInteraction(db, "close_narrative", {
-        resultId: opts?.fromResultId,
-        subject: narrativeName,
-        meta: { mode },
-      });
-      return result;
-    }
-
-    const config = this.configFor(entry);
-    const loreName = this.loreNameFor(entry);
-    const [embedder, generator, codeEmbedder] = await Promise.all([
-      this.embedderFor(config, loreName),
-      this.generatorFor(config, loreName),
-      this.codeEmbedderFor(config, loreName),
-    ]);
-
-    const lifecycleTargetHandler = async (target: NarrativeTarget): Promise<void> => {
+  private buildLifecycleTargetHandler(
+    entry: RegistryEntry,
+    db: Database,
+    config: LoreConfig,
+    embedder: Embedder,
+    generator: Generator,
+  ): (target: NarrativeTarget) => Promise<void> {
+    return async (target: NarrativeTarget): Promise<void> => {
       const debtBefore = getManifest(db)?.debt ?? 0;
       switch (target.op) {
         case "rename": {
@@ -1183,23 +1303,335 @@ export class LoreEngine {
         }
       }
     };
+  }
 
-    const result = await closeNarrativeOp(
-      db,
-      entry.lore_path,
-      narrativeName,
-      config,
-      embedder,
-      generator,
-      entry.code_path,
-      { lifecycleTargetHandler, mergeStrategy: opts?.mergeStrategy, codeEmbedder },
-    );
-    this.recordInteraction(db, "close_narrative", {
-      resultId: opts?.fromResultId,
-      subject: narrativeName,
-      meta: { mode, commit_id: result.commit_id },
+  private async executeCloseJob(
+    entry: RegistryEntry,
+    db: Database,
+    job: NonNullable<ReturnType<typeof getCloseJob>>,
+  ): Promise<{
+    status: "done" | "failed";
+    result?: CloseResult;
+    maintenance_jobs_processed: number;
+    maintenance_jobs_failed: number;
+  }> {
+    const payload = JSON.parse(job.payload_json) as CloseJobPayload;
+    const config = this.configFor(entry);
+    const loreName = this.loreNameFor(entry);
+    const [embedder, generator, codeEmbedder] = await Promise.all([
+      this.embedderFor(config, loreName),
+      this.generatorFor(config, loreName),
+      this.codeEmbedderFor(config, loreName),
+    ]);
+
+    try {
+      const result = await closeNarrativeOp(
+        db,
+        entry.lore_path,
+        job.narrative_name,
+        config,
+        embedder,
+        generator,
+        entry.code_path,
+        {
+          lifecycleTargetHandler: this.buildLifecycleTargetHandler(
+            entry,
+            db,
+            config,
+            embedder,
+            generator,
+          ),
+          mergeStrategy: payload.mergeStrategy,
+          codeEmbedder,
+        },
+      );
+      this.recordInteraction(db, "close_narrative", {
+        resultId: payload.fromResultId,
+        subject: job.narrative_name,
+        meta: { mode: "merge", commit_id: result.commit_id },
+      });
+
+      let maintenanceJobsProcessed = 0;
+      let maintenanceJobsFailed = 0;
+      let finalResult = result;
+
+      if (result.maintenance?.job_id) {
+        while (true) {
+          const maintenanceJob = getCloseMaintenanceJob(db, {
+            lorePath: entry.lore_path,
+            id: result.maintenance.job_id,
+          });
+          if (!maintenanceJob || maintenanceJob.status === "done") {
+            finalResult = this.finalizeCloseResult(db, entry.lore_path, result, {
+              maintenanceStatus: "completed",
+            });
+            break;
+          }
+          if (maintenanceJob.status === "failed") {
+            maintenanceJobsFailed += 1;
+            finalResult = this.finalizeCloseResult(db, entry.lore_path, result, {
+              maintenanceStatus: "failed",
+              maintenanceError: maintenanceJob.last_error,
+            });
+            break;
+          }
+          const drained = await this.drainPendingCloseMaintenance(entry, db, 1);
+          maintenanceJobsProcessed += drained.completed;
+          maintenanceJobsFailed += drained.failed;
+          if (drained.completed === 0 && drained.failed === 0) {
+            await sleep(50);
+          }
+        }
+      } else {
+        finalResult = this.finalizeCloseResult(db, entry.lore_path, result);
+      }
+
+      if (maintenanceJobsFailed > 0) {
+        failCloseJob(db, {
+          lorePath: entry.lore_path,
+          id: job.id,
+          owner: job.owner ?? undefined,
+          error: finalResult.maintenance?.note ?? "Close maintenance failed",
+          retry: false,
+          result: finalResult,
+        });
+        return {
+          status: "failed",
+          result: finalResult,
+          maintenance_jobs_processed: maintenanceJobsProcessed,
+          maintenance_jobs_failed: maintenanceJobsFailed,
+        };
+      }
+
+      completeCloseJob(db, {
+        lorePath: entry.lore_path,
+        id: job.id,
+        owner: job.owner ?? undefined,
+        result: finalResult,
+      });
+      return {
+        status: "done",
+        result: finalResult,
+        maintenance_jobs_processed: maintenanceJobsProcessed,
+        maintenance_jobs_failed: maintenanceJobsFailed,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const narrative = getNarrative(db, job.narrative_id);
+      if (narrative?.status === "closing") {
+        failNarrativeClose(db, narrative.id);
+      }
+      failCloseJob(db, {
+        lorePath: entry.lore_path,
+        id: job.id,
+        owner: job.owner ?? undefined,
+        error: message,
+        retry: false,
+      });
+      return {
+        status: "failed",
+        maintenance_jobs_processed: 0,
+        maintenance_jobs_failed: 0,
+      };
+    }
+  }
+
+  private async runCloseWorkerInternal(
+    entry: RegistryEntry,
+    db: Database,
+    opts?: { watch?: boolean; pollMs?: number; targetJobId?: string; maxJobs?: number },
+  ): Promise<CloseWorkerRunResult> {
+    const mode = opts?.watch ? "watch" : "once";
+    const ownerBase = `${process.pid}:${ulid()}`;
+    const maxJobs = Math.max(1, Math.floor(opts?.maxJobs ?? Number.MAX_SAFE_INTEGER));
+    let closeJobsProcessed = 0;
+    let closeJobsFailed = 0;
+    let maintenanceJobsProcessed = 0;
+    let maintenanceJobsFailed = 0;
+    let idlePolls = 0;
+    let lastJobId: string | null = null;
+
+    while (closeJobsProcessed + closeJobsFailed < maxJobs) {
+      const owner = `${ownerBase}:${closeJobsProcessed + closeJobsFailed + idlePolls}`;
+      const job = claimCloseJob(db, {
+        lorePath: entry.lore_path,
+        owner,
+        leaseTtlMs: 120_000,
+        maxRetries: 0,
+        id: opts?.targetJobId,
+      });
+      if (job) {
+        const leasedJob = { ...job, owner };
+        const outcome = await this.executeCloseJob(entry, db, leasedJob);
+        lastJobId = leasedJob.id;
+        closeJobsProcessed += outcome.status === "done" ? 1 : 0;
+        closeJobsFailed += outcome.status === "failed" ? 1 : 0;
+        maintenanceJobsProcessed += outcome.maintenance_jobs_processed;
+        maintenanceJobsFailed += outcome.maintenance_jobs_failed;
+        if (opts?.targetJobId) {
+          break;
+        }
+        continue;
+      }
+
+      const drained = await this.drainPendingCloseMaintenance(entry, db, Number.MAX_SAFE_INTEGER);
+      if (drained.completed > 0 || drained.failed > 0) {
+        maintenanceJobsProcessed += drained.completed;
+        maintenanceJobsFailed += drained.failed;
+        if (!opts?.watch && !opts?.targetJobId) {
+          continue;
+        }
+      }
+
+      if (!opts?.watch) {
+        break;
+      }
+
+      idlePolls += 1;
+      await sleep(Math.max(50, opts?.pollMs ?? 250));
+    }
+
+    return {
+      mode,
+      close_jobs_processed: closeJobsProcessed,
+      close_jobs_failed: closeJobsFailed,
+      maintenance_jobs_processed: maintenanceJobsProcessed,
+      maintenance_jobs_failed: maintenanceJobsFailed,
+      idle_polls: idlePolls,
+      last_job_id: lastJobId,
+    };
+  }
+
+  private async waitForCloseJobCompletion(
+    entry: RegistryEntry,
+    jobId: string,
+    opts?: { pollMs?: number; assist?: boolean },
+  ): Promise<CloseResult> {
+    while (true) {
+      const detail = this.readCloseJobDetail(entry, jobId);
+      if (detail.job.status === "done") {
+        if (!detail.result) {
+          throw new LoreError("CLOSE_JOB_FAILED", `Close job '${jobId}' completed without a result`);
+        }
+        return { ...detail.result, close_job: detail.job };
+      }
+      if (detail.job.status === "failed") {
+        throw new LoreError(
+          "CLOSE_JOB_FAILED",
+          detail.job.last_error ?? `Close job '${jobId}' failed`,
+          { job: detail.job, result: detail.result ?? null },
+        );
+      }
+      if (opts?.assist) {
+        const { db } = this.resolveLoreMind(entry.code_path);
+        await this.runCloseWorkerInternal(entry, db, { targetJobId: jobId, maxJobs: 1 });
+      }
+      await sleep(Math.max(50, opts?.pollMs ?? 250));
+    }
+  }
+
+  async close(
+    narrativeName: string,
+    opts?: {
+      codePath?: string;
+      mode?: "merge" | "discard";
+      mergeStrategy?: MergeStrategy;
+      fromResultId?: string;
+      wait?: boolean;
+      pollMs?: number;
+    },
+  ): Promise<CloseResult> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const mode = opts?.mode ?? "merge";
+
+    if (mode === "discard") {
+      const result = await discardNarrative(db, narrativeName);
+      this.recordInteraction(db, "close_narrative", {
+        resultId: opts?.fromResultId,
+        subject: narrativeName,
+        meta: { mode },
+      });
+      return result;
+    }
+    const narrative = getNarrativeByName(db, narrativeName);
+    if (!narrative || narrative.status === "closed" || narrative.status === "abandoned") {
+      throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+    }
+
+    const existingJob = getLatestPendingCloseJobForNarrative(db, {
+      lorePath: entry.lore_path,
+      narrativeId: narrative.id,
     });
-    return result;
+    if (existingJob) {
+      return opts?.wait
+        ? this.waitForCloseJobCompletion(entry, existingJob.id, {
+            pollMs: opts?.pollMs,
+            assist: true,
+          })
+        : this.buildQueuedCloseResult(existingJob);
+    }
+    if (narrative.status === "closing") {
+      throw new LoreError(
+        "NARRATIVE_CLOSING",
+        `Narrative '${narrativeName}' is already closing in the background`,
+      );
+    }
+
+    const queued = db.transaction(() => {
+      markNarrativeClosing(db, narrative.id);
+      return queueCloseJob(db, {
+        lorePath: entry.lore_path,
+        narrativeId: narrative.id,
+        narrativeName,
+        payload: {
+          mergeStrategy: opts?.mergeStrategy,
+          fromResultId: opts?.fromResultId,
+        } satisfies CloseJobPayload,
+      });
+    })();
+
+    if (opts?.wait) {
+      return this.waitForCloseJobCompletion(entry, queued.id, {
+        pollMs: opts?.pollMs,
+        assist: true,
+      });
+    }
+
+    const job = getCloseJob(db, { lorePath: entry.lore_path, id: queued.id });
+    if (!job) {
+      throw new LoreError("CLOSE_JOB_NOT_FOUND", `Queued close job '${queued.id}' was not found`);
+    }
+    return this.buildQueuedCloseResult(job);
+  }
+
+  async listCloseJobs(opts?: { codePath?: string; limit?: number }): Promise<CloseJob[]> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    return listCloseJobs(db, {
+      lorePath: entry.lore_path,
+      limit: opts?.limit,
+    }).map((job) => this.serializeCloseJob(job));
+  }
+
+  async getCloseJobDetail(jobId: string, opts?: { codePath?: string }): Promise<CloseJobDetail> {
+    const { entry } = this.resolveLoreMind(opts?.codePath);
+    return this.readCloseJobDetail(entry, jobId);
+  }
+
+  async waitForCloseJob(
+    jobId: string,
+    opts?: { codePath?: string; pollMs?: number },
+  ): Promise<CloseResult> {
+    const { entry } = this.resolveLoreMind(opts?.codePath);
+    return this.waitForCloseJobCompletion(entry, jobId, { pollMs: opts?.pollMs });
+  }
+
+  async runCloseWorker(opts?: {
+    codePath?: string;
+    watch?: boolean;
+    pollMs?: number;
+  }): Promise<CloseWorkerRunResult> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    return this.runCloseWorkerInternal(entry, db, opts);
   }
 
   async status(opts?: { codePath?: string }): Promise<StatusResult> {
@@ -1208,9 +1640,10 @@ export class LoreEngine {
     const config = this.configFor(entry);
     const manifest = getManifest(db);
     const concepts = getActiveConcepts(db);
-    const openNarrativesList = getOpenNarratives(db);
+    const activeNarrativesList = getActiveNarratives(db);
     const danglingNarratives = getDanglingNarratives(db, config.thresholds.dangling_days);
     const closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath: entry.lore_path });
+    const closeJobs = getCloseJobCounts(db, { lorePath: entry.lore_path });
     const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
     const { debt: rawDebt, refWarnings, refDriftScoreByConcept } = debtSnapshot;
     const debtPrevious = null;
@@ -1511,12 +1944,17 @@ export class LoreEngine {
       debt_previous: debtPrevious,
       debt_delta: debtChange,
       priorities,
-      active_narratives: openNarrativesList.map((d) => ({
+      active_narratives: activeNarrativesList.map((d) => ({
         name: d.name,
+        status: d.status,
         entry_count: d.entry_count,
         theta: d.theta,
         note:
-          d.entry_count < 3
+          d.status === "closing"
+            ? "Closing in background"
+            : d.status === "close_failed"
+              ? "Close failed; write or retry close"
+              : d.entry_count < 3
             ? "Early stage"
             : d.convergence != null && d.convergence > config.thresholds.convergence
               ? "Converging"
@@ -1530,7 +1968,13 @@ export class LoreEngine {
         action: "close or abandon",
       })),
       embedding_status: embeddingStatus,
-      maintenance: this.computeMaintenance(db, entry.lore_path, concepts.length),
+      maintenance: this.computeMaintenance(
+        db,
+        entry.lore_path,
+        concepts.length,
+        closeJobs,
+        closeMaintenance,
+      ),
       suggestions,
       concept_health: {
         run_id: conceptHealth.run_id,
@@ -1629,21 +2073,28 @@ export class LoreEngine {
     db: Database,
     lorePath: string,
     conceptCount: number,
+    closeJobs = getCloseJobCounts(db, { lorePath }),
+    closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath }),
   ): StatusResult["maintenance"] {
-    const closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath });
+    const pendingWork =
+      closeJobs.queued + closeJobs.leased + closeMaintenance.queued + closeMaintenance.leased;
+    const failedWork = closeJobs.failed + closeMaintenance.failed;
+    const oldestPendingAt = [closeJobs.oldest_pending_at, closeMaintenance.oldest_pending_at]
+      .filter((value): value is string => value != null)
+      .sort()[0] ?? null;
     if (conceptCount === 0) {
       return {
         status:
-          closeMaintenance.failed > 0
+          failedWork > 0
             ? "close-maintenance-failed"
-            : closeMaintenance.queued + closeMaintenance.leased > 0
+            : pendingWork > 0
               ? "close-maintenance-pending"
               : "n/a",
         min_delta_rate: 0,
         current_rate: 0,
-        pending_close_jobs: closeMaintenance.queued + closeMaintenance.leased,
-        failed_close_jobs: closeMaintenance.failed,
-        oldest_close_job_at: closeMaintenance.oldest_pending_at,
+        pending_close_jobs: pendingWork,
+        failed_close_jobs: failedWork,
+        oldest_close_job_at: oldestPendingAt,
       };
     }
 
@@ -1661,18 +2112,18 @@ export class LoreEngine {
     const minNarrativeRate = Math.max(1, Math.ceil(conceptCount / 10));
 
     let status = currentRate >= minNarrativeRate ? "above-floor" : "below-floor";
-    if (closeMaintenance.failed > 0) {
+    if (failedWork > 0) {
       status = "close-maintenance-failed";
-    } else if (closeMaintenance.queued + closeMaintenance.leased > 0) {
+    } else if (pendingWork > 0) {
       status = "close-maintenance-pending";
     }
     return {
       status,
       min_delta_rate: Math.round(minNarrativeRate * 10) / 10,
       current_rate: Math.round(currentRate * 10) / 10,
-      pending_close_jobs: closeMaintenance.queued + closeMaintenance.leased,
-      failed_close_jobs: closeMaintenance.failed,
-      oldest_close_job_at: closeMaintenance.oldest_pending_at,
+      pending_close_jobs: pendingWork,
+      failed_close_jobs: failedWork,
+      oldest_close_job_at: oldestPendingAt,
     };
   }
 
@@ -1683,7 +2134,11 @@ export class LoreEngine {
 
   private ensureGraphFresh(db: Database, lorePath: string): void {
     const manifest = getManifest(db);
-    if (manifest?.graph_stale && !hasPendingCloseMaintenanceJobs(db, { lorePath })) {
+    if (
+      manifest?.graph_stale &&
+      !hasPendingCloseMaintenanceJobs(db, { lorePath }) &&
+      !hasPendingCloseJobs(db, { lorePath })
+    ) {
       recomputeGraph(db);
     }
   }
@@ -2633,7 +3088,7 @@ export class LoreEngine {
     const config = this.configFor(entry);
     const concepts = getActiveConcepts(db);
     const manifest = getManifest(db);
-    const openNarratives = getOpenNarratives(db);
+    const openNarratives = getActiveNarratives(db);
     const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
     const conceptsWithLiveStaleness = concepts.map((concept) => ({
       ...concept,
@@ -3098,7 +3553,7 @@ export class LoreEngine {
     const loreMindReports = lore_minds.map((loreMind) => {
       const db = this.dbFor(loreMind.lore_path);
       const manifest = getManifest(db);
-      const openNarrativesList = getOpenNarratives(db);
+      const openNarrativesList = getActiveNarratives(db);
       return {
         name: loreMind.name,
         loreExists: existsSync(loreMind.lore_path),
@@ -3324,9 +3779,8 @@ export class LoreEngine {
   async dryRunClose(narrativeName: string, opts?: { codePath?: string }) {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
-    const { getOpenNarrativeByName } = await import("@/db/index.ts");
-    const narrative = getOpenNarrativeByName(db, narrativeName);
-    if (!narrative) {
+    const narrative = getNarrativeByName(db, narrativeName);
+    if (!narrative || (narrative.status !== "open" && narrative.status !== "close_failed")) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
     const plan = await buildExplicitClosePlan(
@@ -3351,7 +3805,11 @@ export class LoreEngine {
     opts: { concepts?: string[]; codePath?: string },
   ): Promise<JournalDesignationResult> {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const narrative = getOpenNarrativeByName(db, narrativeName);
+    const current = getNarrativeByName(db, narrativeName);
+    if (!current || (current.status !== "open" && current.status !== "close_failed")) {
+      throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
+    }
+    const narrative = current.status === "close_failed" ? (reopenNarrative(db, current.id), getNarrative(db, current.id)) : current;
     if (!narrative) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
@@ -3608,13 +4066,11 @@ export class LoreEngine {
 
   async rescan(opts?: { codePath?: string }): Promise<ScanResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
     return rescanProject(db, entry.code_path, entry.lore_path);
   }
 
   async ingestDoc(filePath: string, opts?: { codePath?: string }): Promise<IngestResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
     const { resolve } = await import("path");
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
@@ -3631,7 +4087,6 @@ export class LoreEngine {
     codePath?: string;
   }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
     const scan = await rescanProject(db, entry.code_path, entry.lore_path);
     const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path);
     return { scan, ingest };
@@ -3718,7 +4173,6 @@ export class LoreEngine {
     codePath?: string;
   }): Promise<{ bound: number; byType: { ref: number; mention: number } }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    await this.drainPendingCloseMaintenance(entry, db, 1);
     const config = this.configFor(entry);
     const activeConcepts = getActiveConcepts(db);
     const conceptIds = activeConcepts.map((c) => c.id);

@@ -1,5 +1,6 @@
 import type { WorkerClient, FileRef } from "@lore/worker";
 import { formatLogCli } from "../formatters.ts";
+import { emit } from "../output.ts";
 
 /**
  * Parse a --ref value into a FileRef.
@@ -36,5 +37,5 @@ export async function logCommand(
     symbols: opts.symbols,
     refs,
   });
-  console.log(formatLogCli(result.note));
+  emit(result, (value) => formatLogCli(value.note));
 }

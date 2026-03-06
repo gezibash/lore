@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { defineCli, defineCommand } from "boune";
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { createWorkerClient, LoreError, type WorkerClient } from "@lore/worker";
 import { formatError, formatMcpInstallCli } from "./formatters.ts";
 import { registerCommand } from "./commands/register.ts";
@@ -59,6 +59,9 @@ import {
 import { suggestCommand } from "./commands/suggest.ts";
 import { coverageCommand } from "./commands/scan.ts";
 import { ingestFileCommand, ingestAllCommand } from "./commands/ingest.ts";
+import { closeJobCommand, closeJobsCommand, waitCommand } from "./commands/jobs.ts";
+import { workerCommand } from "./commands/worker.ts";
+import { isJsonOutput, setJsonOutput } from "./output.ts";
 import pkg from "../package.json";
 
 function getVersionString(): string {
@@ -88,14 +91,35 @@ async function startMcpServer(): Promise<void> {
   await startServer({ client: getWorker() });
 }
 
+function startDetachedWorker(): void {
+  if (process.env.LORE_DISABLE_AUTOSPAWN === "1") return;
+  try {
+    const child = spawn(process.execPath, [process.argv[1]!, "sys", "worker", "--once"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch {
+    // Best effort only.
+  }
+}
+
 const versionString = getVersionString();
 const rawArgv = process.argv.slice(2);
+setJsonOutput(rawArgv.includes("--json") || rawArgv.includes("-j"));
 const isMcpServerMode = rawArgv.length === 1 && rawArgv[0] === "mcp";
 
 const cli = defineCli({
   name: "lore",
   version: versionString,
   description: "Knowledge system for codebases",
+  globalOptions: {
+    json: {
+      type: "boolean",
+      short: "j",
+      description: "Emit JSON output",
+    },
+  },
   commands: {
     mcp: defineCommand({
       name: "mcp",
@@ -375,12 +399,14 @@ const cli = defineCli({
     }),
     close: defineCommand({
       name: "close",
-      description: "Close a narrative (merge or discard)",
+      description: "Queue a narrative close (merge) or discard it",
       arguments: {
         narrative: { type: "string", required: true, description: "Narrative name" },
       },
       options: {
         mode: { type: "string", description: "merge (default) or discard" },
+        wait: { type: "boolean", description: "Block until the close job finishes" },
+        "poll-ms": { type: "number", description: "Polling interval for --wait in milliseconds" },
         "merge-strategy": {
           type: "string",
           description: "replace (default), extend, or patch",
@@ -399,13 +425,55 @@ const cli = defineCli({
             : rawStrategy === "replace"
               ? ("replace" as const)
               : undefined;
-        await closeCommand(
+        const result = await closeCommand(
           getWorker(),
           args.narrative,
           mode,
           mergeStrategy,
           options["from-result"] as string | undefined,
+          {
+            wait: Boolean(options.wait),
+            pollMs: options["poll-ms"] as number | undefined,
+          },
         );
+        if (mode === "merge" && !options.wait && result.close_job) {
+          startDetachedWorker();
+        }
+      },
+    }),
+    jobs: defineCommand({
+      name: "jobs",
+      description: "List recent close jobs",
+      options: {
+        limit: { type: "number", description: "Maximum jobs to show" },
+      },
+      async action({ options }) {
+        await closeJobsCommand(getWorker(), { limit: options.limit as number | undefined });
+      },
+    }),
+    job: defineCommand({
+      name: "job",
+      description: "Inspect one close job",
+      arguments: {
+        id: { type: "string", required: true, description: "Job ID" },
+      },
+      async action({ args }) {
+        await closeJobCommand(getWorker(), args.id);
+      },
+    }),
+    wait: defineCommand({
+      name: "wait",
+      description: "Wait for a close job to finish",
+      arguments: {
+        id: { type: "string", required: true, description: "Job ID" },
+      },
+      options: {
+        "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
+      },
+      async action({ args, options }) {
+        await waitCommand(getWorker(), args.id, {
+          pollMs: options["poll-ms"] as number | undefined,
+        });
       },
     }),
     ingest: defineCommand({
@@ -428,6 +496,22 @@ const cli = defineCli({
       name: "sys",
       description: "System administration for the current lore",
       subcommands: {
+        worker: defineCommand({
+          name: "worker",
+          description: "Drain queued close jobs",
+          options: {
+            once: { type: "boolean", description: "Run until the queue is empty, then exit" },
+            watch: { type: "boolean", description: "Keep polling for new jobs" },
+            "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
+          },
+          async action({ options }) {
+            const watch = Boolean(options.watch) && !options.once;
+            await workerCommand(getWorker(), {
+              watch,
+              pollMs: options["poll-ms"] as number | undefined,
+            });
+          },
+        }),
         rebuild: defineCommand({
           name: "rebuild",
           description: "Rebuild DB from disk for the current lore",
@@ -1018,6 +1102,39 @@ const cli = defineCli({
     }),
   },
   onError(error) {
+    if (isJsonOutput()) {
+      if (error instanceof LoreError) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: false,
+              error: {
+                code: error.code,
+                message: error.message,
+                details: error.details ?? null,
+              },
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.log(
+          JSON.stringify(
+            {
+              ok: false,
+              error: {
+                code: "CLI_ERROR",
+                message: error instanceof Error ? error.message : String(error),
+              },
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      process.exit(1);
+    }
     if (error instanceof LoreError) {
       console.log(formatError(`[${error.code}] ${error.message}`));
       if (error.details) {

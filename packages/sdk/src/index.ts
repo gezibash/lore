@@ -33,7 +33,10 @@ import type {
   AutoBindResult,
   BootstrapPlan,
   CloseMode,
+  CloseJob,
+  CloseJobDetail,
   CloseResult,
+  CloseWorkerRunResult,
   CommitLogEntry,
   CoverageReport,
   IngestResult,
@@ -230,8 +233,21 @@ interface LoreClientEngine {
       mode?: CloseMode;
       mergeStrategy?: MergeStrategy;
       fromResultId?: string;
+      wait?: boolean;
+      pollMs?: number;
     },
   ): Promise<CloseResult>;
+  listCloseJobs(opts?: { codePath?: string; limit?: number }): Promise<CloseJob[]>;
+  getCloseJobDetail(jobId: string, opts?: { codePath?: string }): Promise<CloseJobDetail>;
+  waitForCloseJob(
+    jobId: string,
+    opts?: { codePath?: string; pollMs?: number },
+  ): Promise<CloseResult>;
+  runCloseWorker(opts?: {
+    codePath?: string;
+    watch?: boolean;
+    pollMs?: number;
+  }): Promise<CloseWorkerRunResult>;
   status(opts?: { codePath?: string }): Promise<StatusResult>;
   healthSnapshot(opts?: { codePath?: string }): LoreHealthSnapshot;
   ls(opts?: { codePath?: string }): Promise<LsResult>;
@@ -474,9 +490,34 @@ export class LoreClient {
       mode?: CloseMode;
       mergeStrategy?: MergeStrategy;
       fromResultId?: string;
+      wait?: boolean;
+      pollMs?: number;
     },
   ): Promise<CloseResult> {
     return this.engine.close(narrative, opts);
+  }
+
+  listCloseJobs(opts?: { codePath?: string; limit?: number }): Promise<CloseJob[]> {
+    return this.engine.listCloseJobs(opts);
+  }
+
+  getCloseJobDetail(jobId: string, opts?: { codePath?: string }): Promise<CloseJobDetail> {
+    return this.engine.getCloseJobDetail(jobId, opts);
+  }
+
+  waitForCloseJob(
+    jobId: string,
+    opts?: { codePath?: string; pollMs?: number },
+  ): Promise<CloseResult> {
+    return this.engine.waitForCloseJob(jobId, opts);
+  }
+
+  runCloseWorker(opts?: {
+    codePath?: string;
+    watch?: boolean;
+    pollMs?: number;
+  }): Promise<CloseWorkerRunResult> {
+    return this.engine.runCloseWorker(opts);
   }
 
   status(opts?: { codePath?: string }): Promise<StatusResult> {

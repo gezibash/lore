@@ -1,5 +1,6 @@
 import type { WorkerClient } from "@lore/worker";
 import { timeAgo, computeLineDiff, isDiffTooLarge } from "@lore/worker";
+import { emit } from "../output.ts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -106,7 +107,7 @@ export async function diffCommand(client: WorkerClient, target: string): Promise
       lines.push(`${DIM}No changes${RESET}`);
     }
 
-    console.log(lines.join("\n"));
+    emit({ kind: "commit-range", fromRef, toRef, diff }, () => lines.join("\n"));
     return;
   }
 
@@ -137,5 +138,5 @@ export async function diffCommand(client: WorkerClient, target: string): Promise
     lines.push(`${DIM}No changes to integrate${RESET}`);
   }
 
-  console.log(lines.join("\n"));
+  emit({ kind: "dry-run", target, narrative, plan }, () => lines.join("\n"));
 }

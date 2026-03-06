@@ -276,6 +276,15 @@ export function formatClose(result: CloseResult): string {
     return lines.join("\n");
   }
 
+  if (!result.integrated && result.close_job) {
+    lines.push(`Close queued. Job: ${result.close_job.id}`);
+    lines.push(`Narrative: ${result.close_job.narrative_name}`);
+    lines.push(`Status: ${result.close_job.status}`);
+    lines.push(result.impact.summary);
+    if (result.follow_up) lines.push(`Follow-up: ${result.follow_up}`);
+    return lines.join("\n");
+  }
+
   lines.push(`Integration complete. Commit: ${result.commit_id}`);
   if (result.concepts_updated.length > 0) {
     lines.push(`Updated: ${result.concepts_updated.join(", ")}`);

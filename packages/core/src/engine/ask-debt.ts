@@ -284,7 +284,9 @@ function computeNarrativeHygiene(
   try {
     rows = db
       .query<{ entry_count: number; opened_at: string }, []>(
-        `SELECT entry_count, opened_at FROM current_narratives WHERE status = 'open'`,
+        `SELECT entry_count, opened_at
+         FROM current_narratives
+         WHERE status IN ('open', 'close_failed')`,
       )
       .all();
   } catch {

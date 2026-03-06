@@ -80,6 +80,7 @@ const RECONCILABLE_MIGRATIONS = new Set([
   "023_delta_to_narrative",
   "024_interaction_events",
   "025_close_maintenance_and_concept_designations",
+  "026_close_jobs",
 ]);
 
 function quoteSqliteIdentifier(name: string): string {

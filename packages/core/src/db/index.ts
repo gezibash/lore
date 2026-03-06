@@ -56,12 +56,31 @@ export {
 } from "./embeddings.ts";
 export { insertFtsContent, insertFtsContentBatch, bm25Search, deleteAllFts } from "./fts.ts";
 export {
+  queueCloseJob,
+  getCloseJob,
+  getLatestPendingCloseJobForNarrative,
+  listCloseJobs,
+  claimCloseJob,
+  completeCloseJob,
+  failCloseJob,
+  getCloseJobCounts,
+  hasPendingCloseJobs,
+} from "./close-jobs.ts";
+export type { CloseJobCounts } from "./close-jobs.ts";
+export {
   insertNarrative,
   insertNarrativeRaw,
   getNarrative,
   getNarrativeByName,
+  getNarrativeByNameWithStatuses,
   getOpenNarrativeByName,
+  getWritableNarrativeByName,
   getOpenNarratives,
+  getActiveNarratives,
+  setNarrativeStatus,
+  markNarrativeClosing,
+  failNarrativeClose,
+  reopenNarrative,
   closeNarrative,
   abandonNarrative,
   updateNarrativeMetrics,

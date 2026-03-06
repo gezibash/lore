@@ -1,4 +1,5 @@
 import type { WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 
 export async function scoreCommand(
   client: WorkerClient,
@@ -10,5 +11,5 @@ export async function scoreCommand(
   } catch {
     throw new Error(`No cached result found for ID: ${resultId}`);
   }
-  console.log(`Scored result ${resultId}: ${score}/5`);
+  emit({ ok: true, result_id: resultId, score }, () => `Scored result ${resultId}: ${score}/5`);
 }

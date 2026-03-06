@@ -1,6 +1,7 @@
 import { basename } from "path";
 import type { WorkerClient } from "@lore/worker";
 import { createSpinner } from "boune";
+import { emit, isJsonOutput } from "../output.ts";
 
 const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
@@ -8,8 +9,12 @@ const RESET = "\x1b[0m";
 
 export async function ingestFileCommand(client: WorkerClient, filePath: string): Promise<void> {
   const name = basename(filePath);
-  const spinner = createSpinner(`Ingesting ${name}...`).start();
   const result = await client.ingestDoc(filePath);
+  if (isJsonOutput()) {
+    emit({ kind: "file", file: filePath, result });
+    return;
+  }
+  const spinner = createSpinner(`Ingesting ${name}...`).start();
   if (result.files_ingested > 0) {
     spinner.succeed(`Ingested ${BOLD}${name}${RESET}`);
   } else {
@@ -18,8 +23,12 @@ export async function ingestFileCommand(client: WorkerClient, filePath: string):
 }
 
 export async function ingestAllCommand(client: WorkerClient): Promise<void> {
-  const spinner = createSpinner("Refreshing code and docs...").start();
   const { scan, ingest } = await client.ingestAll();
+  if (isJsonOutput()) {
+    emit({ kind: "all", scan, ingest });
+    return;
+  }
+  const spinner = createSpinner("Refreshing code and docs...").start();
   const parts: string[] = [];
   parts.push(`Complete in ${Math.max(scan.duration_ms, ingest.duration_ms)}ms`);
   parts.push(

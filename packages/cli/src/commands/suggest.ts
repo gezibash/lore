@@ -1,5 +1,6 @@
 import type { WorkerClient, SuggestionKind } from "@lore/worker";
 import { formatSuggest } from "@lore/worker";
+import { emit } from "../output.ts";
 
 export async function suggestCommand(
   client: WorkerClient,
@@ -7,5 +8,5 @@ export async function suggestCommand(
 ): Promise<void> {
   const kind = opts?.kind as SuggestionKind | undefined;
   const result = await client.suggest({ limit: opts?.limit, kind });
-  process.stdout.write(formatSuggest(result) + "\n");
+  emit(result, formatSuggest);
 }

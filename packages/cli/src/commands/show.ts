@@ -1,4 +1,5 @@
 import { formatShow, type WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 
 export function parseShowTarget(target: string): { concept: string; ref?: string } {
   const splitAt = target.lastIndexOf("@");
@@ -21,5 +22,5 @@ export async function showCommand(
     ...(ref ? { ref } : {}),
     ...(fromResultId ? { fromResultId } : {}),
   });
-  console.log(formatShow(concept, result));
+  emit(result, (value) => formatShow(concept, value));
 }

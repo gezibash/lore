@@ -378,48 +378,69 @@ export async function buildExplicitClosePlan(
     return { updates: [], creates: [], unresolvedEntries };
   }
 
+  const planned = await mapConcurrent(
+    [...groups.entries()],
+    4,
+    async ([conceptName, group]): Promise<
+      | { kind: "update"; value: PlannedConceptUpdate }
+      | { kind: "create"; value: PlannedConceptCreate }
+      | { kind: "unresolved"; value: ExplicitClosePlan["unresolvedEntries"][number] }
+    > => {
+      const activeConcept = getActiveConceptByName(db, conceptName);
+      if (activeConcept) {
+        const chunkRow = activeConcept.active_chunk_id ? getChunk(db, activeConcept.active_chunk_id) : null;
+        const existingContent = chunkRow ? (await readChunk(chunkRow.file_path)).content : "";
+        const update = await generatePatchUpdate(
+          generator,
+          group.entries,
+          conceptName,
+          existingContent,
+          mergeStrategy,
+        );
+        return {
+          kind: "update",
+          value: {
+            conceptId: activeConcept.id,
+            conceptName,
+            existingChunkId: activeConcept.active_chunk_id,
+            newContent: update.content,
+            sourceEntryIndices: group.indices,
+            strategy: update.strategy,
+          },
+        };
+      }
+
+      const declaredCreate = declaredTargets.find(
+        (target) => target.op === "create" && target.concept === conceptName,
+      );
+      if (!declaredCreate) {
+        return {
+          kind: "unresolved",
+          value: {
+            chunk_id: loadedEntries[group.indices[0]!]!.chunk.id,
+            created_at: loadedEntries[group.indices[0]!]!.chunk.created_at,
+            reason: `designation '${conceptName}' is not an active concept and is not declared as a create target`,
+          },
+        };
+      }
+
+      return {
+        kind: "create",
+        value: {
+          conceptName,
+          content: await generator.generateIntegration(group.entries, [], conceptName, mergeStrategy),
+          sourceEntryIndices: group.indices,
+        },
+      };
+    },
+  );
+
   const updates: PlannedConceptUpdate[] = [];
   const creates: PlannedConceptCreate[] = [];
-  for (const [conceptName, group] of groups.entries()) {
-    const activeConcept = getActiveConceptByName(db, conceptName);
-    if (activeConcept) {
-      const chunkRow = activeConcept.active_chunk_id ? getChunk(db, activeConcept.active_chunk_id) : null;
-      const existingContent = chunkRow ? (await readChunk(chunkRow.file_path)).content : "";
-      const update = await generatePatchUpdate(
-        generator,
-        group.entries,
-        conceptName,
-        existingContent,
-        mergeStrategy,
-      );
-      updates.push({
-        conceptId: activeConcept.id,
-        conceptName,
-        existingChunkId: activeConcept.active_chunk_id,
-        newContent: update.content,
-        sourceEntryIndices: group.indices,
-        strategy: update.strategy,
-      });
-      continue;
-    }
-
-    const declaredCreate = declaredTargets.find(
-      (target) => target.op === "create" && target.concept === conceptName,
-    );
-    if (!declaredCreate) {
-      unresolvedEntries.push({
-        chunk_id: loadedEntries[group.indices[0]!]!.chunk.id,
-        created_at: loadedEntries[group.indices[0]!]!.chunk.created_at,
-        reason: `designation '${conceptName}' is not an active concept and is not declared as a create target`,
-      });
-      continue;
-    }
-
-    creates.push({
-      conceptName,
-      content: await generator.generateIntegration(group.entries, [], conceptName, mergeStrategy),
-      sourceEntryIndices: group.indices,
-    });
+  for (const item of planned) {
+    if (item.kind === "update") updates.push(item.value);
+    else if (item.kind === "create") creates.push(item.value);
+    else unresolvedEntries.push(item.value);
   }
 
   return { updates, creates, unresolvedEntries };

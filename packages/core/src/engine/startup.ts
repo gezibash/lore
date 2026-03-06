@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "fs";
-import { getManifest, getOpenNarratives } from "@/db/index.ts";
+import { getActiveNarratives, getManifest } from "@/db/index.ts";
 import { mainDir, journalDir } from "@/storage/index.ts";
 
 interface EmbedderHealthLike {
@@ -25,7 +25,7 @@ export async function healthCheck(
   const aiOk = await embedder.healthCheck();
 
   const manifest = getManifest(db);
-  const openNarrativesList = getOpenNarratives(db);
+  const openNarrativesList = getActiveNarratives(db);
 
   return {
     dbOk: true,
@@ -53,7 +53,7 @@ export async function verifyIntegrity(
   }
 
   // Verify open narratives have journal dirs
-  const openNarratives = getOpenNarratives(db);
+  const openNarratives = getActiveNarratives(db);
   for (const narrative of openNarratives) {
     const jDir = journalDir(lorePath, narrative.name);
     if (!existsSync(jDir)) {
