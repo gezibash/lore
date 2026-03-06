@@ -2,6 +2,7 @@ export { openDb, ensureCustomSqlite } from "./connection.ts";
 export { runMigrations } from "./migrations.ts";
 export {
   insertChunk,
+  insertChunkBatch,
   getChunk,
   getActiveChunks,
   getChunksForConcept,
@@ -48,7 +49,7 @@ export {
   symbolVectorSearch,
   deleteAllSymbolEmbeddings,
 } from "./embeddings.ts";
-export { insertFtsContent, bm25Search, deleteAllFts } from "./fts.ts";
+export { insertFtsContent, insertFtsContentBatch, bm25Search, deleteAllFts } from "./fts.ts";
 export {
   insertNarrative,
   insertNarrativeRaw,

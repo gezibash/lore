@@ -1,8 +1,18 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "fs";
 import { createHash } from "crypto";
-import type { ScanResult, SymbolKind, ExtractedSymbol, BindingType, SupportedLanguage, ExtractedCallSite } from "@/types/index.ts";
+import type {
+  ScanResult,
+  SymbolKind,
+  ExtractedSymbol,
+  BindingType,
+  SupportedLanguage,
+  ExtractedCallSite,
+  DiscoveredFile,
+  SourceFileRow,
+} from "@/types/index.ts";
 import { discoverFiles, isTsxFile } from "./file-discovery.ts";
+import { mapConcurrent } from "./async.ts";
 import { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
 import {
@@ -14,9 +24,11 @@ import {
 import { insertSymbolBatch, deleteSymbolsForSourceFile, getSymbolsForSourceFile } from "@/db/symbols.ts";
 import { insertCallSiteBatch, deleteCallSitesForSourceFile } from "@/db/call-sites.ts";
 import { getBindingsForSymbol, upsertConceptSymbol } from "@/db/concept-symbols.ts";
-import { insertChunk, getSourceChunkPathsForFile, deleteSourceChunksForFile } from "@/db/chunks.ts";
-import { insertFtsContent } from "@/db/index.ts";
+import { insertChunkBatch, getSourceChunkPathsForFile, deleteSourceChunksForFile } from "@/db/chunks.ts";
+import { insertFtsContentBatch } from "@/db/fts.ts";
 import { writeSourceChunk, deleteSourceChunkFile } from "@/storage/chunk-writer.ts";
+
+const SCAN_PREPARE_CONCURRENCY = 4;
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -91,9 +103,7 @@ interface WrittenSourceChunk {
 }
 
 async function cleanupChunkFiles(filePaths: string[]): Promise<void> {
-  for (const filePath of filePaths) {
-    await deleteSourceChunkFile(filePath);
-  }
+  await Promise.all(filePaths.map((filePath) => deleteSourceChunkFile(filePath)));
 }
 
 /** Write one source chunk file per symbol. Returns the staged files for later DB insertion. */
@@ -135,17 +145,224 @@ function insertSourceChunks(
   sourceFile: string,
   chunks: WrittenSourceChunk[],
 ): number {
-  for (const chunk of chunks) {
-    insertChunk(db, {
+  if (chunks.length === 0) return 0;
+  const createdAt = new Date().toISOString();
+  insertChunkBatch(
+    db,
+    chunks.map((chunk) => ({
       id: chunk.id,
       filePath: chunk.filePath,
       flType: "source",
-      createdAt: new Date().toISOString(),
+      createdAt,
       sourceFilePath: sourceFile,
-    });
-    insertFtsContent(db, chunk.body, chunk.id);
-  }
+    })),
+  );
+  insertFtsContentBatch(
+    db,
+    chunks.map((chunk) => ({ content: chunk.body, chunkId: chunk.id })),
+  );
   return chunks.length;
+}
+
+type PreparedSourceScan =
+  | { kind: "unreadable"; file: DiscoveredFile }
+  | { kind: "failed"; file: DiscoveredFile }
+  | {
+      kind: "skipped";
+      file: DiscoveredFile;
+      existing: SourceFileRow;
+      writtenChunks: WrittenSourceChunk[];
+    }
+  | {
+      kind: "update";
+      file: DiscoveredFile;
+      existing: SourceFileRow | null;
+      content: string;
+      contentHash: string;
+      sizeBytes: number;
+      symbols: ExtractedSymbol[];
+      callSites: ExtractedCallSite[];
+      writtenChunks: WrittenSourceChunk[];
+      oldPaths: string[];
+    };
+
+async function prepareSourceScanFile(
+  db: Database,
+  pool: TreeSitterPool,
+  lorePath: string | undefined,
+  file: DiscoveredFile,
+  existingByPath: Map<string, SourceFileRow>,
+): Promise<PreparedSourceScan> {
+  let content: string;
+  try {
+    content = await Bun.file(file.absolutePath).text();
+  } catch {
+    return { kind: "unreadable", file };
+  }
+
+  const sizeBytes = Buffer.byteLength(content, "utf-8");
+  const contentHash = createHash("sha256").update(content).digest("hex");
+  const existing = existingByPath.get(file.relativePath) ?? null;
+
+  if (existing && existing.content_hash === contentHash) {
+    if (lorePath && existing.symbol_count > 0) {
+      const existingSourcePaths = getSourceChunkPathsForFile(db, file.relativePath);
+      if (existingSourcePaths.length === 0) {
+        const existingSymbols = getSymbolsForSourceFile(db, existing.id);
+        try {
+          const writtenChunks = await writeSourceChunkFilesForSymbols(
+            lorePath,
+            file.relativePath,
+            file.language,
+            existingSymbols,
+            content,
+          );
+          return { kind: "skipped", file, existing, writtenChunks };
+        } catch {
+          return { kind: "failed", file };
+        }
+      }
+    }
+    return { kind: "skipped", file, existing, writtenChunks: [] };
+  }
+
+  const isTsx = isTsxFile(file.relativePath);
+  let symbols: ExtractedSymbol[];
+  let callSites: ExtractedCallSite[] = [];
+  try {
+    const { tree, lang } = await pool.parse(content, file.language, isTsx);
+    symbols = extractSymbols(tree, lang, file.language, content, pool);
+    callSites = extractCallSites(tree, lang, file.language, content, pool);
+    tree.delete();
+  } catch {
+    return { kind: "failed", file };
+  }
+
+  let writtenChunks: WrittenSourceChunk[] = [];
+  if (lorePath && symbols.length > 0) {
+    try {
+      writtenChunks = await writeSourceChunkFilesForSymbols(
+        lorePath,
+        file.relativePath,
+        file.language,
+        symbols,
+        content,
+      );
+    } catch {
+      return { kind: "failed", file };
+    }
+  }
+
+  return {
+    kind: "update",
+    file,
+    existing,
+    content,
+    contentHash,
+    sizeBytes,
+    symbols,
+    callSites,
+    writtenChunks,
+    oldPaths: lorePath && existing ? getSourceChunkPathsForFile(db, file.relativePath) : [],
+  };
+}
+
+async function applyPreparedSkippedSourceFile(
+  db: Database,
+  prepared: Extract<PreparedSourceScan, { kind: "skipped" }>,
+): Promise<number> {
+  if (prepared.writtenChunks.length === 0) return 0;
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    const insertedCount = insertSourceChunks(db, prepared.file.relativePath, prepared.writtenChunks);
+    db.run("COMMIT");
+    return insertedCount;
+  } catch (error) {
+    db.run("ROLLBACK");
+    await cleanupChunkFiles(prepared.writtenChunks.map((chunk) => chunk.filePath));
+    throw error;
+  }
+}
+
+async function applyPreparedUpdatedSourceFile(
+  db: Database,
+  prepared: Extract<PreparedSourceScan, { kind: "update" }>,
+): Promise<number> {
+  let insertedSourceChunks = 0;
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    const savedBindings = prepared.existing
+      ? saveBindingsForSourceFile(db, prepared.existing.id)
+      : new Map();
+    if (prepared.existing) {
+      deleteSourceChunksForFile(db, prepared.file.relativePath);
+      deleteSymbolsForSourceFile(db, prepared.existing.id);
+      deleteCallSitesForSourceFile(db, prepared.existing.id);
+    }
+
+    const sourceFile = upsertSourceFile(db, {
+      filePath: prepared.file.relativePath,
+      language: prepared.file.language,
+      contentHash: prepared.contentHash,
+      sizeBytes: prepared.sizeBytes,
+      symbolCount: prepared.symbols.length,
+    });
+
+    if (prepared.symbols.length > 0) {
+      insertSymbolBatch(
+        db,
+        sourceFile.id,
+        prepared.file.relativePath,
+        prepared.symbols.map((symbol) => ({
+          sourceFileId: sourceFile.id,
+          name: symbol.name,
+          qualifiedName: symbol.qualified_name,
+          kind: symbol.kind as SymbolKind,
+          parentId: null as string | null,
+          lineStart: symbol.line_start,
+          lineEnd: symbol.line_end,
+          signature: symbol.signature,
+          bodyHash: symbol.body_hash,
+          exportStatus: symbol.export_status,
+        })),
+      );
+    }
+
+    rematchBindings(db, savedBindings, sourceFile.id, prepared.content);
+
+    if (prepared.writtenChunks.length > 0) {
+      insertedSourceChunks = insertSourceChunks(
+        db,
+        prepared.file.relativePath,
+        prepared.writtenChunks,
+      );
+    }
+
+    if (prepared.callSites.length > 0) {
+      insertCallSiteBatch(
+        db,
+        sourceFile.id,
+        prepared.callSites.map((callSite) => ({
+          callee_name: callSite.callee_name,
+          caller_name: callSite.caller_context === "<module>" ? null : callSite.caller_context,
+          line: callSite.line,
+          snippet: callSite.snippet,
+        })),
+      );
+    }
+
+    db.run("COMMIT");
+  } catch (error) {
+    db.run("ROLLBACK");
+    await cleanupChunkFiles(prepared.writtenChunks.map((chunk) => chunk.filePath));
+    throw error;
+  }
+
+  if (prepared.oldPaths.length > 0) {
+    await cleanupChunkFiles(prepared.oldPaths);
+  }
+
+  return insertedSourceChunks;
 }
 
 // ─── scanProject ─────────────────────────────────────────────────────────────
@@ -157,6 +374,8 @@ export async function scanProject(
 ): Promise<ScanResult> {
   const start = performance.now();
   const files = discoverFiles(codePath);
+  const currentPaths = new Set(files.map((file) => file.relativePath));
+  const existingByPath = new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
 
   const pool = new TreeSitterPool();
   await pool.init();
@@ -169,165 +388,49 @@ export async function scanProject(
   let filesFailed = 0;
   const languages: Record<string, number> = {};
 
-  const currentPaths = new Set<string>();
+  const preparedFiles = await mapConcurrent(
+    files,
+    Math.min(SCAN_PREPARE_CONCURRENCY, Math.max(1, files.length)),
+    (file) => prepareSourceScanFile(db, pool, lorePath, file, existingByPath),
+  );
 
-  for (const file of files) {
-    currentPaths.add(file.relativePath);
-
-    let content: string;
-    let stat: { size: number };
-    try {
-      content = readFileSync(file.absolutePath, "utf-8");
-      stat = { size: Buffer.byteLength(content, "utf-8") };
-    } catch {
+  for (const prepared of preparedFiles) {
+    if (prepared.kind === "unreadable") {
       continue;
     }
 
-    const contentHash = createHash("sha256").update(content).digest("hex");
-
-    // Check if already scanned with same hash
-    const existing = getSourceFileByPath(db, file.relativePath);
-    if (existing && existing.content_hash === contentHash) {
+    if (prepared.kind === "skipped") {
       filesSkipped++;
-      languages[file.language] = (languages[file.language] ?? 0) + existing.symbol_count;
-      symbolsFound += existing.symbol_count;
-
-      // Backfill source chunks for skipped files if lorePath provided and none exist yet
-      if (lorePath && existing.symbol_count > 0) {
-        const existingSourcePaths = getSourceChunkPathsForFile(db, file.relativePath);
-        if (existingSourcePaths.length === 0) {
-          const existingSymbols = getSymbolsForSourceFile(db, existing.id);
-          try {
-            const writtenChunks = await writeSourceChunkFilesForSymbols(
-              lorePath,
-              file.relativePath,
-              file.language,
-              existingSymbols,
-              content,
-            );
-            let insertedCount = 0;
-            db.run("BEGIN IMMEDIATE TRANSACTION");
-            try {
-              insertedCount = insertSourceChunks(db, file.relativePath, writtenChunks);
-              db.run("COMMIT");
-            } catch (error) {
-              db.run("ROLLBACK");
-              await cleanupChunkFiles(writtenChunks.map((chunk) => chunk.filePath));
-              throw error;
-            }
-            sourceChunksFound += insertedCount;
-          } catch {
-            filesFailed++;
-          }
+      languages[prepared.file.language] =
+        (languages[prepared.file.language] ?? 0) + prepared.existing.symbol_count;
+      symbolsFound += prepared.existing.symbol_count;
+      if (prepared.writtenChunks.length > 0) {
+        try {
+          sourceChunksFound += await applyPreparedSkippedSourceFile(db, prepared);
+        } catch {
+          filesFailed++;
         }
       }
-
       continue;
     }
 
-    // Parse with tree-sitter
-    const isTsx = isTsxFile(file.relativePath);
-    let symbols: ExtractedSymbol[];
-    let callSites: ExtractedCallSite[] = [];
+    if (prepared.kind === "failed") {
+      filesFailed++;
+      continue;
+    }
+
     try {
-      const { tree, lang } = await pool.parse(content, file.language, isTsx);
-      symbols = extractSymbols(tree, lang, file.language, content, pool);
-      callSites = extractCallSites(tree, lang, file.language, content, pool);
-      tree.delete();
+      sourceChunksFound += await applyPreparedUpdatedSourceFile(db, prepared);
     } catch {
       filesFailed++;
       continue;
-    }
-
-    const oldPaths = lorePath && existing ? getSourceChunkPathsForFile(db, file.relativePath) : [];
-    let writtenChunks: WrittenSourceChunk[] = [];
-    if (lorePath && symbols.length > 0) {
-      try {
-        writtenChunks = await writeSourceChunkFilesForSymbols(
-          lorePath,
-          file.relativePath,
-          file.language,
-          symbols,
-          content,
-        );
-      } catch {
-        filesFailed++;
-        continue;
-      }
-    }
-
-    let insertedSourceChunks = 0;
-    // Transactional update: insert replacement state before retiring the previous one.
-    db.run("BEGIN IMMEDIATE TRANSACTION");
-    try {
-      // Save bindings before deleting old symbols so they can be rematched after re-insert
-      const savedBindings = existing ? saveBindingsForSourceFile(db, existing.id) : new Map();
-      if (existing) {
-        deleteSourceChunksForFile(db, file.relativePath);
-        deleteSymbolsForSourceFile(db, existing.id);
-        deleteCallSitesForSourceFile(db, existing.id);
-      }
-
-      const sourceFile = upsertSourceFile(db, {
-        filePath: file.relativePath,
-        language: file.language,
-        contentHash,
-        sizeBytes: stat.size,
-        symbolCount: symbols.length,
-      });
-
-      if (symbols.length > 0) {
-        const symbolOpts = symbols.map((s) => ({
-          sourceFileId: sourceFile.id,
-          name: s.name,
-          qualifiedName: s.qualified_name,
-          kind: s.kind as SymbolKind,
-          parentId: null as string | null,
-          lineStart: s.line_start,
-          lineEnd: s.line_end,
-          signature: s.signature,
-          bodyHash: s.body_hash,
-          exportStatus: s.export_status,
-        }));
-        insertSymbolBatch(db, sourceFile.id, file.relativePath, symbolOpts);
-      }
-
-      rematchBindings(db, savedBindings, sourceFile.id, content);
-
-      if (writtenChunks.length > 0) {
-        insertedSourceChunks = insertSourceChunks(db, file.relativePath, writtenChunks);
-      }
-
-      if (callSites.length > 0) {
-        insertCallSiteBatch(
-          db,
-          sourceFile.id,
-          callSites.map((cs) => ({
-            callee_name: cs.callee_name,
-            caller_name: cs.caller_context === "<module>" ? null : cs.caller_context,
-            line: cs.line,
-            snippet: cs.snippet,
-          })),
-        );
-      }
-
-      db.run("COMMIT");
-    } catch (err) {
-      db.run("ROLLBACK");
-      await cleanupChunkFiles(writtenChunks.map((chunk) => chunk.filePath));
-      filesFailed++;
-      continue;
-    }
-
-    if (oldPaths.length > 0) {
-      await cleanupChunkFiles(oldPaths);
     }
 
     filesScanned++;
-    sourceChunksFound += insertedSourceChunks;
-    symbolsFound += symbols.length;
-    callSitesFound += callSites.length;
-    languages[file.language] = (languages[file.language] ?? 0) + symbols.length;
+    symbolsFound += prepared.symbols.length;
+    callSitesFound += prepared.callSites.length;
+    languages[prepared.file.language] =
+      (languages[prepared.file.language] ?? 0) + prepared.symbols.length;
   }
 
   // Remove source files for files no longer on disk

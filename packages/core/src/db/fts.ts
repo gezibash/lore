@@ -6,6 +6,17 @@ export function insertFtsContent(db: Database, content: string, chunkId: string)
   db.run("INSERT INTO content_fts (content, chunk_id) VALUES (?, ?)", [content, chunkId]);
 }
 
+export function insertFtsContentBatch(
+  db: Database,
+  items: Array<{ content: string; chunkId: string }>,
+): void {
+  if (items.length === 0) return;
+  const stmt = db.prepare("INSERT INTO content_fts (content, chunk_id) VALUES (?, ?)");
+  for (const item of items) {
+    stmt.run(item.content, item.chunkId);
+  }
+}
+
 /**
  * Sanitize a query string for FTS5 MATCH syntax.
  * Strips operators and wraps individual terms in quotes.

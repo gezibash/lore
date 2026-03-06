@@ -48,6 +48,36 @@ export function insertChunk(db: Database, opts: InsertChunkOpts): void {
   );
 }
 
+export function insertChunkBatch(db: Database, items: InsertChunkOpts[]): void {
+  if (items.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO chunks (id, file_path, fl_type, concept_id, narrative_id,
+       supersedes_id, status, topics, convergence, theta, magnitude, created_at, source_file_path,
+       concept_refs, symbol_refs, file_refs)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const opts of items) {
+    stmt.run(
+      opts.id,
+      opts.filePath,
+      opts.flType,
+      opts.conceptId ?? null,
+      opts.narrativeId ?? null,
+      opts.supersedesId ?? null,
+      opts.status ?? null,
+      opts.topics ? JSON.stringify(opts.topics) : null,
+      opts.convergence ?? null,
+      opts.theta ?? null,
+      opts.magnitude ?? null,
+      opts.createdAt,
+      opts.sourceFilePath ?? null,
+      opts.conceptRefs ? JSON.stringify(opts.conceptRefs) : null,
+      opts.symbolRefs ? JSON.stringify(opts.symbolRefs) : null,
+      opts.fileRefs ? JSON.stringify(opts.fileRefs) : null,
+    );
+  }
+}
+
 export function getChunk(db: Database, id: string): ChunkRow | null {
   return db.query<ChunkRow, [string]>("SELECT * FROM chunks WHERE id = ?").get(id) ?? null;
 }

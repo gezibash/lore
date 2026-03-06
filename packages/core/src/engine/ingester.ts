@@ -2,9 +2,121 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "crypto";
 import { relative, isAbsolute } from "path";
 import type { IngestResult } from "@/types/index.ts";
-import { discoverTextFiles } from "./file-discovery-text.ts";
+import { discoverTextFiles, type DiscoveredTextFile } from "./file-discovery-text.ts";
+import { mapConcurrent } from "./async.ts";
 import { writeDocChunk, deleteSourceChunkFile } from "@/storage/chunk-writer.ts";
-import { insertChunk, insertFtsContent, getDocChunkByPath, getDocChunkPaths, deleteDocChunksForFile } from "@/db/index.ts";
+import {
+  insertChunkBatch,
+  insertFtsContentBatch,
+  getDocChunkByPath,
+  getDocChunkPaths,
+  deleteDocChunksForFile,
+} from "@/db/index.ts";
+
+const DOC_PREPARE_CONCURRENCY = 4;
+
+type PreparedDocIngest =
+  | { kind: "skipped"; relPath: string }
+  | { kind: "failed"; relPath: string }
+  | {
+      kind: "ingest";
+      relPath: string;
+      content: string;
+      staged: { id: string; filePath: string };
+      existingFilePath: string | null;
+    };
+
+async function readStoredDocBodyHash(filePath: string): Promise<string | null> {
+  try {
+    const chunkFile = await Bun.file(filePath).text();
+    const match = chunkFile.match(/fl_body_hash:\s*['"]?([a-f0-9]+)['"]?/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function prepareDocIngest(
+  db: Database,
+  codePath: string,
+  lorePath: string,
+  absoluteFilePath: string,
+): Promise<PreparedDocIngest> {
+  const relPath = isAbsolute(absoluteFilePath)
+    ? relative(codePath, absoluteFilePath)
+    : absoluteFilePath;
+
+  let content: string;
+  try {
+    content = await Bun.file(absoluteFilePath).text();
+  } catch {
+    return { kind: "skipped", relPath };
+  }
+
+  const bodyHash = createHash("sha256").update(content).digest("hex");
+  const existing = getDocChunkByPath(db, relPath);
+  if (existing) {
+    const storedHash = await readStoredDocBodyHash(existing.file_path);
+    if (storedHash === bodyHash) {
+      return { kind: "skipped", relPath };
+    }
+  }
+
+  try {
+    const staged = await writeDocChunk({
+      lorePath,
+      docPath: relPath,
+      bodyHash,
+      content,
+    });
+    return {
+      kind: "ingest",
+      relPath,
+      content,
+      staged,
+      existingFilePath: existing?.file_path ?? null,
+    };
+  } catch {
+    return { kind: "failed", relPath };
+  }
+}
+
+async function applyPreparedDocIngest(
+  db: Database,
+  prepared: Extract<PreparedDocIngest, { kind: "ingest" }>,
+): Promise<"ingested" | "failed"> {
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    if (prepared.existingFilePath) {
+      deleteDocChunksForFile(db, prepared.relPath);
+    }
+    insertChunkBatch(db, [
+      {
+        id: prepared.staged.id,
+        filePath: prepared.staged.filePath,
+        flType: "doc",
+        createdAt: new Date().toISOString(),
+        sourceFilePath: prepared.relPath,
+      },
+    ]);
+    insertFtsContentBatch(db, [{ content: prepared.content, chunkId: prepared.staged.id }]);
+    db.run("COMMIT");
+  } catch {
+    db.run("ROLLBACK");
+    await deleteSourceChunkFile(prepared.staged.filePath);
+    return "failed";
+  }
+
+  if (prepared.existingFilePath) {
+    try {
+      await deleteSourceChunkFile(prepared.existingFilePath);
+    } catch {
+      // ignore cleanup failure after successful DB swap
+    }
+  }
+
+  return "ingested";
+}
 
 export async function ingestDocFile(
   db: Database,
@@ -12,77 +124,10 @@ export async function ingestDocFile(
   lorePath: string,
   absoluteFilePath: string,
 ): Promise<"ingested" | "skipped" | "failed"> {
-  let content: string;
-  try {
-    content = await Bun.file(absoluteFilePath).text();
-  } catch {
-    return "skipped";
-  }
-
-  const bodyHash = createHash("sha256").update(content).digest("hex");
-  const relPath = isAbsolute(absoluteFilePath)
-    ? relative(codePath, absoluteFilePath)
-    : absoluteFilePath;
-
-  const existing = getDocChunkByPath(db, relPath);
-  if (existing) {
-    // Check if the file content changed by reading the stored hash from frontmatter
-    // We store the hash in source_file_path-adjacent manner — use a query on the chunk row
-    // The hash is in the frontmatter file on disk. For simplicity, re-read the frontmatter.
-    // Actually: we need another approach. Let's add a body_hash column query or store hash in DB.
-    // Since the chunks table doesn't have a body_hash column for doc chunks, we store hash
-    // in the file frontmatter. But to avoid disk reads on every check, let's query the chunk
-    // file_path and read frontmatter.
-    // Simpler: use the FTS approach — if same file_path + same hash → skip.
-    // We'll read the chunk file to get the stored hash.
-    try {
-      const chunkFile = await Bun.file(existing.file_path).text();
-      // Look for fl_body_hash in frontmatter
-      const match = chunkFile.match(/fl_body_hash:\s*['"]?([a-f0-9]+)['"]?/);
-      const storedHash = match?.[1];
-      if (storedHash === bodyHash) return "skipped";
-    } catch {
-      // If we can't read the file, re-ingest
-    }
-  }
-
-  let staged: { id: string; filePath: string };
-  try {
-    staged = await writeDocChunk({
-      lorePath,
-      docPath: relPath,
-      bodyHash,
-      content,
-    });
-  } catch {
-    return "failed";
-  }
-
-  db.run("BEGIN IMMEDIATE TRANSACTION");
-  try {
-    if (existing) {
-      deleteDocChunksForFile(db, relPath);
-    }
-    insertChunk(db, {
-      id: staged.id,
-      filePath: staged.filePath,
-      flType: "doc",
-      createdAt: new Date().toISOString(),
-      sourceFilePath: relPath,
-    });
-    insertFtsContent(db, content, staged.id);
-    db.run("COMMIT");
-  } catch {
-    db.run("ROLLBACK");
-    await deleteSourceChunkFile(staged.filePath);
-    return "failed";
-  }
-
-  if (existing) {
-    try { await deleteSourceChunkFile(existing.file_path); } catch { /* ignore */ }
-  }
-
-  return "ingested";
+  const prepared = await prepareDocIngest(db, codePath, lorePath, absoluteFilePath);
+  if (prepared.kind === "skipped") return "skipped";
+  if (prepared.kind === "failed") return "failed";
+  return applyPreparedDocIngest(db, prepared);
 }
 
 export async function ingestTextFiles(
@@ -105,20 +150,31 @@ export async function ingestTextFiles(
         )
         .all(p);
       deleteDocChunksForFile(db, p);
-      for (const c of chunks) {
-        try { await deleteSourceChunkFile(c.file_path); } catch { /* ignore */ }
-      }
+      await Promise.all(chunks.map((chunk) => deleteSourceChunkFile(chunk.file_path)));
       filesRemoved++;
     }
   }
 
+  const prepared = await mapConcurrent(
+    discovered,
+    Math.min(DOC_PREPARE_CONCURRENCY, Math.max(1, discovered.length)),
+    (file: DiscoveredTextFile) => prepareDocIngest(db, codePath, lorePath, file.absolutePath),
+  );
+
   let filesIngested = 0;
   let filesSkipped = 0;
   let filesFailed = 0;
-  for (const file of discovered) {
-    const result = await ingestDocFile(db, codePath, lorePath, file.absolutePath);
+  for (const item of prepared) {
+    if (item.kind === "skipped") {
+      filesSkipped++;
+      continue;
+    }
+    if (item.kind === "failed") {
+      filesFailed++;
+      continue;
+    }
+    const result = await applyPreparedDocIngest(db, item);
     if (result === "ingested") filesIngested++;
-    else if (result === "skipped") filesSkipped++;
     else filesFailed++;
   }
 
