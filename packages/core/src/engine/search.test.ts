@@ -4,6 +4,9 @@ import { insertConcept } from "@/db/concepts.ts";
 import { insertChunk } from "@/db/chunks.ts";
 import { insertEmbedding } from "@/db/embeddings.ts";
 import { insertFtsContent } from "@/db/fts.ts";
+import { upsertConceptSymbol } from "@/db/concept-symbols.ts";
+import { insertSourceFile } from "@/db/source-files.ts";
+import { insertSymbol } from "@/db/symbols.ts";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
 import { writeTextFile } from "../../test/support/files.ts";
 import { serializeChunk } from "@/storage/frontmatter.ts";
@@ -164,6 +167,107 @@ test("hybridSearch skips missing chunks", async () => {
     );
 
     expect(results).toEqual([]);
+  } finally {
+    db.close();
+    removeDir(dir);
+  }
+});
+
+test("hybridSearch injects bound symbol bodies into concept results when codePath is available", async () => {
+  const db = createTestDb();
+  const dir = createTempDir();
+
+  try {
+    const concept = insertConcept(db, "bound-concept");
+    const chunkId = "chunk-c";
+    writeStateChunk(dir, chunkId, concept.name, concept.id);
+
+    insertChunk(db, {
+      id: chunkId,
+      filePath: `${dir}/${chunkId}.md`,
+      flType: "chunk",
+      conceptId: concept.id,
+      createdAt: new Date().toISOString(),
+    });
+    insertEmbedding(db, chunkId, new Float32Array([1, 0]), "test");
+    insertFtsContent(db, "state content", chunkId);
+
+    writeTextFile(
+      `${dir}/src/example.ts`,
+      [
+        "export function alpha() {",
+        "  return 'a'",
+        "}",
+        "",
+        "export function beta() {",
+        "  return 'b'",
+        "}",
+      ].join("\n"),
+    );
+
+    const sourceFile = insertSourceFile(db, {
+      filePath: "src/example.ts",
+      language: "typescript",
+      contentHash: "hash",
+      sizeBytes: 64,
+      symbolCount: 2,
+    });
+    const alpha = insertSymbol(db, {
+      sourceFileId: sourceFile.id,
+      name: "alpha",
+      qualifiedName: "alpha",
+      kind: "function",
+      parentId: null,
+      lineStart: 1,
+      lineEnd: 3,
+      signature: "alpha()",
+      bodyHash: "hash-alpha",
+      exportStatus: "exported",
+    });
+    const beta = insertSymbol(db, {
+      sourceFileId: sourceFile.id,
+      name: "beta",
+      qualifiedName: "beta",
+      kind: "function",
+      parentId: null,
+      lineStart: 5,
+      lineEnd: 7,
+      signature: "beta()",
+      bodyHash: "hash-beta",
+      exportStatus: "exported",
+    });
+
+    upsertConceptSymbol(db, {
+      conceptId: concept.id,
+      symbolId: alpha.id,
+      bindingType: "ref",
+      boundBodyHash: alpha.body_hash,
+      confidence: 0.95,
+    });
+    upsertConceptSymbol(db, {
+      conceptId: concept.id,
+      symbolId: beta.id,
+      bindingType: "ref",
+      boundBodyHash: beta.body_hash,
+      confidence: 0.9,
+    });
+
+    const { results } = await hybridSearch(
+      db,
+      { embed: async () => new Float32Array([1, 0]) },
+      "state content",
+      defaultConfig,
+      {
+        sourceType: "chunk",
+        limit: 5,
+        queryEmbedding: new Float32Array([1, 0]),
+        codePath: dir,
+      },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toContain("[Symbol: alpha (src/example.ts:1-3)]");
+    expect(results[0]!.content).toContain("export function beta()");
   } finally {
     db.close();
     removeDir(dir);

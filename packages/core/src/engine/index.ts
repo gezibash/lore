@@ -185,7 +185,11 @@ import { computeSuggestions } from "./suggest.ts";
 import type { SuggestResult, SuggestionKind } from "@/types/index.ts";
 import { scanProject, rescanProject } from "./scanner.ts";
 import { discoverFiles } from "./file-discovery.ts";
-import { extractBindingsForConcepts, pruneOrphanedBindings, autoBindSemantic } from "./binding-extraction.ts";
+import {
+  extractBindingsForConcepts,
+  pruneOrphanedBindings,
+  autoBindSemantic,
+} from "./binding-extraction.ts";
 import type { AutoBindResult } from "./binding-extraction.ts";
 import {
   searchSymbols,
@@ -325,8 +329,13 @@ export class LoreEngine {
 
   /** Resolve config with per-lore-mind overrides from local file */
   private configFor(entry?: RegistryEntry): LoreConfig {
-    const loreMindConfig = entry ? loadLocalConfig(entry.code_path) as Record<string, unknown> : undefined;
-    const resolved = resolveConfig(this.programmaticOverrides, loreMindConfig as Partial<LoreConfig> | undefined);
+    const loreMindConfig = entry
+      ? (loadLocalConfig(entry.code_path) as Record<string, unknown>)
+      : undefined;
+    const resolved = resolveConfig(
+      this.programmaticOverrides,
+      loreMindConfig as Partial<LoreConfig> | undefined,
+    );
     const providers = this.registry.providers ?? {};
 
     const effective: LoreConfig = {
@@ -584,7 +593,13 @@ export class LoreEngine {
   async log(
     narrativeName: string,
     text: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts?: string[]; symbols?: string[] },
+    opts: {
+      topics?: string[];
+      codePath?: string;
+      refs?: FileRef[];
+      concepts?: string[];
+      symbols?: string[];
+    },
   ): Promise<LogResult> {
     const { entry, db } = this.resolveLoreMind(opts.codePath);
     const config = this.configFor(entry);
@@ -623,40 +638,48 @@ export class LoreEngine {
       summaryCfg?.reasoning ?? config.ai.generation.reasoning_overrides?.executive_summary;
     const summaryMaxMatches = summaryCfg?.max_matches ?? 10;
     const summaryMaxChars = summaryCfg?.max_chars ?? 1600;
+    const loreName = this.loreNameFor(entry);
 
-    let summaryGenerator: Generator | undefined;
-    if (summaryEnabled) {
-      const summaryNeedsOverride =
-        summaryProvider !== config.ai.generation.provider ||
-        summaryModel !== config.ai.generation.model ||
-        summaryApiKey !== config.ai.generation.api_key ||
-        summaryBaseUrl !== config.ai.generation.base_url;
-      const summaryGenConfig = !summaryNeedsOverride
-        ? config
-        : {
-            ...config,
-            ai: {
-              ...config.ai,
-              generation: {
-                ...config.ai.generation,
-                provider: summaryProvider,
-                model: summaryModel,
-                api_key: summaryApiKey,
-                base_url: summaryBaseUrl,
-              },
-            },
-          };
-      summaryGenerator = await this.generatorFor(summaryGenConfig, this.loreNameFor(entry));
-    }
+    const summaryGeneratorPromise = summaryEnabled
+      ? (() => {
+          const summaryNeedsOverride =
+            summaryProvider !== config.ai.generation.provider ||
+            summaryModel !== config.ai.generation.model ||
+            summaryApiKey !== config.ai.generation.api_key ||
+            summaryBaseUrl !== config.ai.generation.base_url;
+          const summaryGenConfig = !summaryNeedsOverride
+            ? config
+            : {
+                ...config,
+                ai: {
+                  ...config.ai,
+                  generation: {
+                    ...config.ai.generation,
+                    provider: summaryProvider,
+                    model: summaryModel,
+                    api_key: summaryApiKey,
+                    base_url: summaryBaseUrl,
+                  },
+                },
+              };
+          return this.generatorFor(summaryGenConfig, loreName);
+        })()
+      : Promise.resolve(undefined);
 
     opts?.onProgress?.("preparing embedder");
-    const embedder = await this.embedderFor(config, this.loreNameFor(entry));
-    const codeEmbedder = await this.codeEmbedderFor(config, this.loreNameFor(entry));
+    const [summaryGenerator, embedder, codeEmbedder] = await Promise.all([
+      summaryGeneratorPromise,
+      this.embedderFor(config, loreName),
+      this.codeEmbedderFor(config, loreName),
+    ]);
 
     // If source chunks exist, a code model is required — no silent fallback
     const sourceChunkCount =
-      db.query<{ count: number }, []>(`SELECT COUNT(*) as count FROM chunks WHERE fl_type = 'source'`).get()
-        ?.count ?? 0;
+      db
+        .query<{ count: number }, []>(
+          `SELECT COUNT(*) as count FROM chunks WHERE fl_type = 'source'`,
+        )
+        .get()?.count ?? 0;
     if (sourceChunkCount > 0 && !codeEmbedder) {
       throw new LoreError(
         "CODE_MODEL_NOT_CONFIGURED",
@@ -670,11 +693,13 @@ export class LoreEngine {
     let effectiveCodeEmbedder = codeEmbedder;
     if (codeEmbedder && config.ai.embedding.code?.model) {
       const hasCodeEmbeddings =
-        db.query<{ c: number }, [string]>(
-          `SELECT COUNT(*) c FROM embeddings e
+        db
+          .query<{ c: number }, [string]>(
+            `SELECT COUNT(*) c FROM embeddings e
            JOIN chunks ch ON e.chunk_id = ch.id
            WHERE ch.fl_type = 'source' AND e.model = ? LIMIT 1`,
-        ).get(config.ai.embedding.code.model)?.c ?? 0;
+          )
+          .get(config.ai.embedding.code.model)?.c ?? 0;
       if (!hasCodeEmbeddings) {
         effectiveCodeEmbedder = null;
         askTracer?.log("lane.code", { skipped: true, reason: "no source embeddings" });
@@ -739,7 +764,9 @@ export class LoreEngine {
       });
     }
 
-    try { askTracer?.flush(); } catch {}
+    try {
+      askTracer?.flush();
+    } catch {}
 
     return result;
   }
@@ -904,8 +931,12 @@ export class LoreEngine {
     }
 
     const config = this.configFor(entry);
-    const embedder = await this.embedderFor(config, this.loreNameFor(entry));
-    const generator = await this.generatorFor(config, this.loreNameFor(entry));
+    const loreName = this.loreNameFor(entry);
+    const [embedder, generator, codeEmbedder] = await Promise.all([
+      this.embedderFor(config, loreName),
+      this.generatorFor(config, loreName),
+      this.codeEmbedderFor(config, loreName),
+    ]);
 
     const lifecycleTargetHandler = async (target: NarrativeTarget): Promise<void> => {
       const debtBefore = getManifest(db)?.debt ?? 0;
@@ -1083,7 +1114,6 @@ export class LoreEngine {
       }
     };
 
-    const codeEmbedder = await this.codeEmbedderFor(config, this.loreNameFor(entry));
     const result = await closeNarrativeOp(
       db,
       entry.lore_path,
@@ -1311,9 +1341,7 @@ export class LoreEngine {
         const bindingCounts = getBindingCounts(db);
         const driftedBindings = getDriftedBindings(db);
         const avgConf = db
-          .query<{ avg: number | null }, []>(
-            `SELECT AVG(confidence) as avg FROM concept_symbols`,
-          )
+          .query<{ avg: number | null }, []>(`SELECT AVG(confidence) as avg FROM concept_symbols`)
           .get();
         const conceptsWithBindings = db
           .query<{ cnt: number }, []>(
@@ -1390,7 +1418,8 @@ export class LoreEngine {
         },
         narrative_hygiene_72h: {
           open_narratives: askDebtSnapshot.components.narrative_hygiene_72h.open_narratives,
-          empty_open_narratives: askDebtSnapshot.components.narrative_hygiene_72h.empty_open_narratives,
+          empty_open_narratives:
+            askDebtSnapshot.components.narrative_hygiene_72h.empty_open_narratives,
           dangling_narratives: askDebtSnapshot.components.narrative_hygiene_72h.dangling_narratives,
         },
       },
@@ -2784,8 +2813,19 @@ export class LoreEngine {
 
   async reEmbed(opts?: {
     codePath?: string;
-    onProgress?: (phase: "text" | "code" | "graph", current: number, total: number, model?: string) => void;
-  }): Promise<{ reEmbedded: number; codeEmbedded: number; deleted: number; textModel: string; codeModel: string | null }> {
+    onProgress?: (
+      phase: "text" | "code" | "graph",
+      current: number,
+      total: number,
+      model?: string,
+    ) => void;
+  }): Promise<{
+    reEmbedded: number;
+    codeEmbedded: number;
+    deleted: number;
+    textModel: string;
+    codeModel: string | null;
+  }> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
     const embedder = await this.embedderFor(config, this.loreNameFor(entry));
@@ -2856,7 +2896,8 @@ export class LoreEngine {
     const codePass = async () => {
       if (!codeEmbedder || !resolvedCodeModel) return;
 
-      const { insertSymbolEmbedding, deleteAllSymbolEmbeddings } = await import("@/db/embeddings.ts");
+      const { insertSymbolEmbedding, deleteAllSymbolEmbeddings } =
+        await import("@/db/embeddings.ts");
       const { getSymbolLinesForConcept } = await import("@/db/concept-symbols.ts");
       const { readSymbolContent } = await import("./git.ts");
 
@@ -2869,7 +2910,12 @@ export class LoreEngine {
       for (const concept of concepts) {
         const symbolLines = getSymbolLinesForConcept(db, concept.id);
         for (const sym of symbolLines) {
-          const content = await readSymbolContent(entry.code_path, sym.file_path, sym.line_start, sym.line_end);
+          const content = await readSymbolContent(
+            entry.code_path,
+            sym.file_path,
+            sym.line_start,
+            sym.line_end,
+          );
           if (content) allSymbols.push({ symbolId: sym.symbol_id, content });
         }
       }
@@ -3040,11 +3086,13 @@ export class LoreEngine {
     const historicalContent = parsed.content;
 
     // Compute diff vs current content
-    let diff_from_current: {
-      hunks: DiffHunk[];
-      adds: number;
-      removes: number;
-    } | undefined;
+    let diff_from_current:
+      | {
+          hunks: DiffHunk[];
+          adds: number;
+          removes: number;
+        }
+      | undefined;
     if (historicalContent) {
       try {
         const currentChunkId = concept.active_chunk_id;
@@ -3052,7 +3100,10 @@ export class LoreEngine {
           const currentChunkRow = getChunk(db, currentChunkId);
           if (currentChunkRow) {
             const currentParsed = await readChunk(currentChunkRow.file_path);
-            if (currentParsed.content && !isDiffTooLarge(historicalContent, currentParsed.content)) {
+            if (
+              currentParsed.content &&
+              !isDiffTooLarge(historicalContent, currentParsed.content)
+            ) {
               const hunks = computeLineDiff(historicalContent, currentParsed.content);
               if (hunks.length > 0) {
                 let adds = 0;
@@ -3293,7 +3344,10 @@ export class LoreEngine {
   } {
     const { entry } = this.resolveLoreMind(opts?.codePath);
     const config = loadLocalConfig(entry.code_path) as Partial<LoreConfig>;
-    return { config: Object.keys(config).length > 0 ? config : undefined, resolved: this.configFor(entry) };
+    return {
+      config: Object.keys(config).length > 0 ? config : undefined,
+      resolved: this.configFor(entry),
+    };
   }
 
   getPromptPreview(
@@ -3406,7 +3460,9 @@ export class LoreEngine {
     };
   }
 
-  async ingestAll(opts?: { codePath?: string }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
+  async ingestAll(opts?: {
+    codePath?: string;
+  }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
     const scan = await rescanProject(db, entry.code_path, entry.lore_path);
     const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path);

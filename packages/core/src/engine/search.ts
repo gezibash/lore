@@ -1,10 +1,16 @@
 import type { Database } from "bun:sqlite";
-import type { LoreConfig, RRFResult, SourceChunkFrontmatter, DocChunkFrontmatter } from "@/types/index.ts";
+import type {
+  LoreConfig,
+  RRFResult,
+  SourceChunkFrontmatter,
+  DocChunkFrontmatter,
+} from "@/types/index.ts";
 import { vectorSearch, getChunk, getConcept } from "@/db/index.ts";
 import { bm25Search } from "@/db/fts.ts";
 import { readChunk } from "@/storage/index.ts";
 import { readSymbolContent } from "./git.ts";
 import type { AskTracer } from "./tracer.ts";
+import { mapConcurrent } from "./async.ts";
 
 interface EmbedderLike {
   embed: (text: string) => Promise<Float32Array>;
@@ -115,12 +121,51 @@ export async function hybridSearch(
   // Embed query with text model (skip if pre-computed)
   const queryEmbedding = opts?.queryEmbedding ?? (await embedder.embed(query));
 
+  const codeLanePromise =
+    opts?.codeEmbedder && opts?.codeModel && opts?.mode !== "arch"
+      ? opts.codeEmbedder
+          .embed(query)
+          .then((codeQueryEmbedding) => {
+            const results = vectorSearch(
+              db,
+              codeQueryEmbedding,
+              "source",
+              vectorLimit,
+              opts.codeModel,
+            );
+            opts?.tracer?.log("lane.code", {
+              source_type: "source",
+              candidates: results.length,
+              top10: results
+                .slice(0, 10)
+                .map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
+            });
+            return results;
+          })
+          .catch(() => {
+            opts?.tracer?.log("lane.code", {
+              source_type: "source",
+              skipped: true,
+              reason: "embedder error",
+            });
+            return [] as { chunkId: string; distance: number }[];
+          })
+      : null;
+
   // Lane 1: text vector search (qwen — prose space)
-  const vectorResultsText = vectorSearch(db, queryEmbedding, sourceType, vectorLimit, opts?.textModel);
+  const vectorResultsText = vectorSearch(
+    db,
+    queryEmbedding,
+    sourceType,
+    vectorLimit,
+    opts?.textModel,
+  );
   opts?.tracer?.log("lane.text", {
     source_type: sourceType,
     candidates: vectorResultsText.length,
-    top10: vectorResultsText.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
+    top10: vectorResultsText
+      .slice(0, 10)
+      .map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
   });
 
   // Lane 2: code vector search (voyage — source chunks space)
@@ -128,19 +173,8 @@ export async function hybridSearch(
   // Code lane errors are silently swallowed — if the code embedder is unavailable, degrade gracefully
   // to text + BM25 lanes rather than failing the entire search.
   let vectorResultsCode: { chunkId: string; distance: number }[] = [];
-  if (opts?.codeEmbedder && opts?.codeModel && opts?.mode !== "arch") {
-    try {
-      const codeQueryEmbedding = await opts.codeEmbedder.embed(query);
-      vectorResultsCode = vectorSearch(db, codeQueryEmbedding, "source", vectorLimit, opts.codeModel);
-      opts?.tracer?.log("lane.code", {
-        source_type: "source",
-        candidates: vectorResultsCode.length,
-        top10: vectorResultsCode.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
-      });
-    } catch {
-      // Degrade gracefully: continue with empty code lane
-      opts?.tracer?.log("lane.code", { source_type: "source", skipped: true, reason: "embedder error" });
-    }
+  if (codeLanePromise) {
+    vectorResultsCode = await codeLanePromise;
   } else {
     opts?.tracer?.log("lane.code", {
       source_type: "source",
@@ -162,10 +196,16 @@ export async function hybridSearch(
     opts?.tracer?.log("lane.bm25_source", {
       source_type: "source",
       candidates: bm25SourceResults.length,
-      top10: bm25SourceResults.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
+      top10: bm25SourceResults
+        .slice(0, 10)
+        .map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
     });
   } else {
-    opts?.tracer?.log("lane.bm25_source", { source_type: sourceType, skipped: true, reason: "journal mode" });
+    opts?.tracer?.log("lane.bm25_source", {
+      source_type: sourceType,
+      skipped: true,
+      reason: "journal mode",
+    });
   }
 
   // Lane 4: BM25 concept chunk search — exact keyword matches in concept prose.
@@ -181,10 +221,16 @@ export async function hybridSearch(
     opts?.tracer?.log("lane.bm25_chunk", {
       source_type: "chunk",
       candidates: bm25ChunkResults.length,
-      top10: bm25ChunkResults.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
+      top10: bm25ChunkResults
+        .slice(0, 10)
+        .map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
     });
   } else {
-    opts?.tracer?.log("lane.bm25_chunk", { source_type: sourceType, skipped: true, reason: "journal mode" });
+    opts?.tracer?.log("lane.bm25_chunk", {
+      source_type: sourceType,
+      skipped: true,
+      reason: "journal mode",
+    });
   }
 
   // Lane 5: Doc vector search — text files, configs, READMEs in the lake.
@@ -195,10 +241,16 @@ export async function hybridSearch(
     opts?.tracer?.log("lane.doc_vector", {
       source_type: "doc",
       candidates: vectorResultsDoc.length,
-      top10: vectorResultsDoc.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
+      top10: vectorResultsDoc
+        .slice(0, 10)
+        .map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
     });
   } else {
-    opts?.tracer?.log("lane.doc_vector", { source_type: sourceType, skipped: true, reason: "journal mode" });
+    opts?.tracer?.log("lane.doc_vector", {
+      source_type: sourceType,
+      skipped: true,
+      reason: "journal mode",
+    });
   }
 
   // Lane 6: BM25 doc search — exact keyword matches in doc content.
@@ -215,14 +267,25 @@ export async function hybridSearch(
       top10: bm25DocResults.slice(0, 10).map((r) => ({ chunkId: r.chunkId, distance: r.distance })),
     });
   } else {
-    opts?.tracer?.log("lane.bm25_doc", { source_type: sourceType, skipped: true, reason: "journal mode" });
+    opts?.tracer?.log("lane.bm25_doc", {
+      source_type: sourceType,
+      skipped: true,
+      reason: "journal mode",
+    });
   }
 
   // Merge lanes by raw distance — tight distances win naturally.
   // Vector distances (cosine) are in [0,1]. BM25 distances use rank-position normalization
   // index/(index+30): rank-0 → 0.0, rank-9 → 0.23, rank-29 → 0.49, keeping BM25 competitive
   // with vector distances for strong keyword matches.
-  const fused = mergeByDistance(vectorResultsText, vectorResultsCode, bm25SourceResults, bm25ChunkResults, vectorResultsDoc, bm25DocResults);
+  const fused = mergeByDistance(
+    vectorResultsText,
+    vectorResultsCode,
+    bm25SourceResults,
+    bm25ChunkResults,
+    vectorResultsDoc,
+    bm25DocResults,
+  );
   opts?.tracer?.log("fusion", {
     source_type: sourceType,
     candidates: fused.length,
@@ -230,10 +293,9 @@ export async function hybridSearch(
   });
 
   // Hydrate top results with content
-  const results: HybridSearchResult[] = [];
-  for (const item of fused.slice(0, limit)) {
+  const hydrated = await mapConcurrent(fused.slice(0, limit), 6, async (item) => {
     const chunkRow = getChunk(db, item.chunkId);
-    if (!chunkRow) continue;
+    if (!chunkRow) return null;
 
     const parsed = await readChunk(chunkRow.file_path);
     const fm = parsed.frontmatter;
@@ -243,7 +305,6 @@ export async function hybridSearch(
     let warning: string | undefined;
 
     if (fm.fl_type === "source") {
-      // Source chunk: wrap body with file/line header and code fence
       const sfm = fm as SourceChunkFrontmatter;
       content = `[Source: ${sfm.fl_source_file}:${sfm.fl_line_start}-${sfm.fl_line_end}]\n\`\`\`${sfm.fl_language}\n${parsed.content}\n\`\`\``;
       concept = sfm.fl_symbol as string;
@@ -266,11 +327,6 @@ export async function hybridSearch(
           ? (fm as { fl_concept: string }).fl_concept
           : undefined;
 
-      // Inject bound symbol bodies for concept chunks.
-      // Agent-driven bindings are high-accuracy, low-entropy relations —
-      // the LLM gets actual code bodies alongside prose for free.
-      // Always inject when codePath is available — arch mode has no code lane so bound symbols
-      // are the only code evidence; code mode gets both lanes plus bound symbols.
       if (fm.fl_type === "chunk" && chunkRow.concept_id && opts?.codePath) {
         const boundSyms = db
           .query<
@@ -293,28 +349,35 @@ export async function hybridSearch(
           )
           .all(chunkRow.concept_id);
 
-        for (const sym of boundSyms) {
-          const body = await readSymbolContent(
-            opts.codePath,
-            sym.file_path,
-            sym.line_start,
-            sym.line_end,
-          );
-          if (body) {
-            content += `\n\n[Symbol: ${sym.qualified_name} (${sym.file_path}:${sym.line_start}-${sym.line_end})]\n\`\`\`${sym.language}\n${body}\n\`\`\``;
-          }
+        const symbolBodies = await Promise.all(
+          boundSyms.map(async (sym) => ({
+            sym,
+            body: await readSymbolContent(
+              opts.codePath!,
+              sym.file_path,
+              sym.line_start,
+              sym.line_end,
+            ),
+          })),
+        );
+
+        for (const { sym, body } of symbolBodies) {
+          if (!body) continue;
+          content += `\n\n[Symbol: ${sym.qualified_name} (${sym.file_path}:${sym.line_start}-${sym.line_end})]\n\`\`\`${sym.language}\n${body}\n\`\`\``;
         }
       }
     }
 
-    results.push({
+    const result: HybridSearchResult = {
       chunkId: item.chunkId,
       score: item.score,
       content,
-      concept,
-      warning,
-    });
-  }
+    };
+    if (concept !== undefined) result.concept = concept;
+    if (warning !== undefined) result.warning = warning;
+    return result;
+  });
+  const results = hydrated.flatMap((result) => (result ? [result] : []));
 
   opts?.tracer?.log("hydration", {
     source_type: sourceType,
