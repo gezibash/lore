@@ -9,15 +9,14 @@
   "type": "module",
   "scripts": {
     "dev": "bun --cwd packages/cli run src/index.ts",
-    "mcp": "bun --cwd packages/mcp run src/index.ts",
     "link": "bun ./scripts/link-local.ts",
     "link:global": "bun ./scripts/link-global.ts",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
-    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/worker typecheck && bun run --cwd packages/rendering typecheck && bun run --cwd packages/mcp typecheck && bun run --cwd packages/cli typecheck",
-    "test": "bun run --cwd packages/core test && bun run --cwd packages/sdk test && bun run --cwd packages/worker test && bun run --cwd packages/rendering test && bun run --cwd packages/mcp test && bun run --cwd packages/cli test",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/worker typecheck && bun run --cwd packages/rendering typecheck && bun run --cwd packages/cli typecheck",
+    "test": "bun run --cwd packages/core test && bun run --cwd packages/sdk test && bun run --cwd packages/worker test && bun run --cwd packages/rendering test && bun run --cwd packages/cli test",
     "release": "bunx changelogen --release"
   },
   "devDependencies": {

@@ -14,9 +14,14 @@ function buildNameVariants(symbol: string): string[] {
   return [...variants];
 }
 
-function mergeUnique<T extends { file_path: string; line: number; caller_name?: string | null; callee_name?: string | null }>(
-  rows: T[],
-): T[] {
+function mergeUnique<
+  T extends {
+    file_path: string;
+    line: number;
+    caller_name?: string | null;
+    callee_name?: string | null;
+  },
+>(rows: T[]): T[] {
   const seen = new Set<string>();
   const merged: T[] = [];
   for (const row of rows) {
@@ -28,21 +33,17 @@ function mergeUnique<T extends { file_path: string; line: number; caller_name?: 
   return merged;
 }
 
-function getCallSitesByCallerVariants(
-  db: Database,
-  callerName: string,
-  limit: number,
-) {
-  const rows = buildNameVariants(callerName).flatMap((name) => getCallSitesByCaller(db, name, { limit }));
+function getCallSitesByCallerVariants(db: Database, callerName: string, limit: number) {
+  const rows = buildNameVariants(callerName).flatMap((name) =>
+    getCallSitesByCaller(db, name, { limit }),
+  );
   return mergeUnique(rows).slice(0, limit);
 }
 
-function getCallSitesForCalleeVariants(
-  db: Database,
-  calleeName: string,
-  limit: number,
-) {
-  const rows = buildNameVariants(calleeName).flatMap((name) => getCallSitesForCallee(db, name, { limit }));
+function getCallSitesForCalleeVariants(db: Database, calleeName: string, limit: number) {
+  const rows = buildNameVariants(calleeName).flatMap((name) =>
+    getCallSitesForCallee(db, name, { limit }),
+  );
   return mergeUnique(rows).slice(0, limit);
 }
 

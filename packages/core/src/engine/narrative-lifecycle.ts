@@ -656,8 +656,7 @@ export async function logEntry(
   }
 
   // Auto-derive topics from concept names if concepts provided but topics empty
-  const effectiveTopics =
-    topics.length === 0 ? [...conceptDesignations] : topics;
+  const effectiveTopics = topics.length === 0 ? [...conceptDesignations] : topics;
 
   // Embedding deferred to close time (batch embed) — log is pure I/O + DB
 
@@ -2005,7 +2004,6 @@ const SUMMARY_SHORT_TOKEN_WHITELIST = new Set([
   "llm",
   "api",
   "sdk",
-  "mcp",
   "cli",
   "ux",
   "ui",
@@ -3123,9 +3121,8 @@ export async function closeNarrativeOp(
             : null;
         })
         .filter(
-          (
-            item,
-          ): item is { chunkId: string; embedding: Float32Array; model: string } => item != null,
+          (item): item is { chunkId: string; embedding: Float32Array; model: string } =>
+            item != null,
         ),
     );
     insertConceptVersionBatch(
@@ -3241,7 +3238,7 @@ export async function closeNarrativeOp(
     last_integrated: new Date().toISOString(),
     debt: manifestBeforeUpdate?.debt ?? debtBefore,
     debt_trend: manifestBeforeUpdate?.debt_trend ?? "stable",
-    graph_stale: maintenance ? 1 : manifestBeforeUpdate?.graph_stale ?? 0,
+    graph_stale: maintenance ? 1 : (manifestBeforeUpdate?.graph_stale ?? 0),
   });
 
   let followUp: string | undefined;
@@ -3259,7 +3256,7 @@ export async function closeNarrativeOp(
     followUp = followUp ? `${followUp}. ${maintenance.note}` : maintenance.note;
   }
 
-  const debtAfter = maintenance ? null : getManifest(db)?.debt ?? debtBefore;
+  const debtAfter = maintenance ? null : (getManifest(db)?.debt ?? debtBefore);
 
   closeSpan.end();
   const traceSummary = tracer.summary();
@@ -3335,7 +3332,10 @@ export async function runCloseMaintenanceJob(
   const symbolLinesByConceptId = payload.codePath
     ? batchLoadSymbolLinesByConceptIds(db, residualConceptIds)
     : new Map<string, ConceptSymbolLineRange[]>();
-  const symbolReadTargets = new Map<string, { file_path: string; line_start: number; line_end: number }>();
+  const symbolReadTargets = new Map<
+    string,
+    { file_path: string; line_start: number; line_end: number }
+  >();
   if (payload.codePath) {
     for (const symbolLines of symbolLinesByConceptId.values()) {
       for (const sym of symbolLines) {
@@ -3399,10 +3399,17 @@ export async function runCloseMaintenanceJob(
           ...symbolContentEntries.map((entry) => entry.content),
         ]);
         for (let i = 0; i < conceptCodeTargets.length; i++) {
-          conceptCodeEmbeddingsByConceptId.set(conceptCodeTargets[i]!.conceptId, codeEmbeddings[i]!);
+          conceptCodeEmbeddingsByConceptId.set(
+            conceptCodeTargets[i]!.conceptId,
+            codeEmbeddings[i]!,
+          );
         }
         const symbolOffset = conceptCodeTargets.length;
-        const symbolEmbeddingWrites: Array<{ symbolId: string; embedding: Float32Array; model: string }> = [];
+        const symbolEmbeddingWrites: Array<{
+          symbolId: string;
+          embedding: Float32Array;
+          model: string;
+        }> = [];
         for (let i = 0; i < symbolContentEntries.length; i++) {
           const embedding = codeEmbeddings[symbolOffset + i]!;
           symbolCodeEmbeddingsById.set(symbolContentEntries[i]!.symbolId, embedding);
@@ -3443,7 +3450,9 @@ export async function runCloseMaintenanceJob(
     id: string;
     fields: { churn: number; ground_residual: number | null; residual: number };
   }> = [];
-  const conceptsBeforeResidualsById = new Map(getConcepts(db).map((concept) => [concept.id, concept]));
+  const conceptsBeforeResidualsById = new Map(
+    getConcepts(db).map((concept) => [concept.id, concept]),
+  );
   for (const pair of payload.residualPairs) {
     const newEmb = newEmbeddingsByChunkId.get(pair.newChunkId);
     let churn = 0;
@@ -3462,11 +3471,7 @@ export async function runCloseMaintenanceJob(
           const embedding = symbolCodeEmbeddingsById.get(sym.symbol_id);
           return embedding ? { embedding, confidence: sym.confidence } : null;
         })
-        .filter(
-          (
-            item,
-          ): item is { embedding: Float32Array; confidence: number } => item != null,
-        );
+        .filter((item): item is { embedding: Float32Array; confidence: number } => item != null);
       const conceptCodeEmbedding = conceptCodeEmbeddingsByConceptId.get(pair.conceptId);
       if (conceptCodeEmbedding && codeGrounding.length > 0) {
         groundResidual = cosineDistance(
@@ -3482,11 +3487,7 @@ export async function runCloseMaintenanceJob(
             const embedding = symbolTextEmbeddingsById.get(sym.symbol_id);
             return embedding ? { embedding, confidence: sym.confidence } : null;
           })
-          .filter(
-            (
-              item,
-            ): item is { embedding: Float32Array; confidence: number } => item != null,
-          );
+          .filter((item): item is { embedding: Float32Array; confidence: number } => item != null);
         if (textGrounding.length > 0) {
           groundResidual = cosineDistance(
             newEmb,

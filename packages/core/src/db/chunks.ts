@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { ulid } from "ulid";
-import type { ChunkRow, ChunkType, JournalStatus, ChunkConceptMapRow, FileRef } from "@/types/index.ts";
+import type {
+  ChunkRow,
+  ChunkType,
+  JournalStatus,
+  ChunkConceptMapRow,
+  FileRef,
+} from "@/types/index.ts";
 
 export interface InsertChunkOpts {
   id: string;

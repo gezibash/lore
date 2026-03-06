@@ -49,24 +49,9 @@
         "ollama-ai-provider-v2": "^3.3.1",
         "p-retry": "^7.1.1",
         "sqlite-vec": "^0.1.7-alpha.2",
-        "tree-sitter-wasms": "^0.1.13",
         "ulid": "^3.0.2",
         "voyage-ai-provider": "^3.0.0",
         "web-tree-sitter": "^0.26.6",
-        "zod": "^4.3.6",
-      },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "typescript": "^5.9.3",
-      },
-    },
-    "packages/mcp": {
-      "name": "@lore/mcp",
-      "version": "0.1.0",
-      "dependencies": {
-        "@lore/rendering": "workspace:*",
-        "@lore/worker": "workspace:*",
-        "@modelcontextprotocol/sdk": "^1.26.0",
         "zod": "^4.3.6",
       },
       "devDependencies": {
@@ -78,7 +63,7 @@
       "name": "@lore/rendering",
       "version": "0.1.0",
       "dependencies": {
-        "@lore/worker": "workspace:*",
+        "@lore/sdk": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -150,8 +135,6 @@
     "@lore/cli": ["@lore/cli@workspace:packages/cli"],
 
     "@lore/core": ["@lore/core@workspace:packages/core"],
-
-    "@lore/mcp": ["@lore/mcp@workspace:packages/mcp"],
 
     "@lore/rendering": ["@lore/rendering@workspace:packages/rendering"],
 
@@ -566,8 +549,6 @@
     "tree-sitter-cli": ["tree-sitter-cli@0.26.6", "", { "bin": { "tree-sitter": "cli.js" } }, "sha512-aMC+NcvjGGAE63UNiaZLpcLwMT53tc6ikVLas5Edm+HmiM4NJ9wY05Nrug487gonGKdPz6e48zHsTnVEHAH1HA=="],
 
     "tree-sitter-elixir": ["tree-sitter-elixir@0.3.5", "", { "dependencies": { "node-addon-api": "^7.1.0", "node-gyp-build": "^4.8.0" }, "peerDependencies": { "tree-sitter": "^0.21.0" } }, "sha512-xozQMvYK0aSolcQZAx2d84Xe/YMWFuRPYFlLVxO01bM2GITh5jyiIp0TqPCQa8754UzRAI7A83hZmfiYub5TZQ=="],
-
-    "tree-sitter-wasms": ["tree-sitter-wasms@0.1.13", "", { "dependencies": { "tree-sitter-wasms": "^0.1.11" } }, "sha512-wT+cR6DwaIz80/vho3AvSF0N4txuNx/5bcRKoXouOfClpxh/qqrF4URNLQXbbt8MaAxeksZcZd1j8gcGjc+QxQ=="],
 
     "type-is": ["type-is@2.0.1", "", { "dependencies": { "content-type": "^1.0.5", "media-typer": "^1.1.0", "mime-types": "^3.0.0" } }, "sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw=="],
 

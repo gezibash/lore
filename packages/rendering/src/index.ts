@@ -17,7 +17,7 @@ import {
   timeAgo,
 } from "@lore/sdk";
 
-export type RenderRoute = "cli" | "mcp" | "http";
+export type RenderRoute = "cli" | "http";
 export type RenderFormat = "plain" | "markdown" | "json";
 
 export interface RenderOptions {
@@ -33,7 +33,7 @@ export interface RenderLsOptions extends RenderOptions {
 
 export interface RenderAskOptions {
   includeSources?: boolean;
-  route?: Extract<RenderRoute, "cli" | "mcp">;
+  route?: "cli";
 }
 
 export type { RecallSection };
@@ -51,7 +51,6 @@ const COL_GAP = "  ";
 function resolveFormat(opts?: RenderOptions): RenderFormat {
   if (opts?.format) return opts.format;
   const route = opts?.route ?? "cli";
-  if (route === "mcp") return "markdown";
   if (route === "http") return "json";
   return "plain";
 }
@@ -188,95 +187,63 @@ function renderSummaryProvenance(summary: ExecutiveSummary | null | undefined): 
   return provenance.length > 0 ? provenance : null;
 }
 
-function bindCommand(route: Extract<RenderRoute, "cli" | "mcp">): string {
-  return route === "cli" ? "`lore sys concept bind <concept> <symbol>`" : "`bind(concept, symbol)`";
+function bindCommand(): string {
+  return "`lore sys concept bind <concept> <symbol>`";
 }
 
-function recallCommand(route: Extract<RenderRoute, "cli" | "mcp">, resultId: string): string {
-  return route === "cli" ? `\`lore recall ${resultId}\`` : "`recall(result_id)`";
+function recallCommand(resultId: string): string {
+  return `\`lore recall ${resultId}\``;
 }
 
-function scoreCommand(route: Extract<RenderRoute, "cli" | "mcp">, resultId: string): string {
-  return route === "cli" ? `\`lore score ${resultId} <1-5>\`` : "`score(result_id, 1-5)`";
+function scoreCommand(resultId: string): string {
+  return `\`lore score ${resultId} <1-5>\``;
 }
 
-function trailCommand(
-  route: Extract<RenderRoute, "cli" | "mcp">,
-  narrative: string | null,
-): string | null {
+function trailCommand(narrative: string | null): string | null {
   if (!narrative) return null;
-  return route === "cli" ? `\`lore trail ${narrative}\`` : `\`trail(${narrative})\``;
+  return `\`lore trail ${narrative}\``;
 }
 
-function showFollowUpCommand(
-  route: Extract<RenderRoute, "cli" | "mcp">,
-  concept: string,
-  resultId?: string,
-): string {
-  if (route === "cli") {
-    const suffix = resultId ? ` --from-result ${resultId}` : "";
-    return `\`lore show ${concept}${suffix}\``;
-  }
-  const resultArg = resultId ? `, result_id=\"${resultId}\"` : "";
-  return `\`show(concept=\"${concept}\"${resultArg})\``;
+function showFollowUpCommand(concept: string, resultId?: string): string {
+  const suffix = resultId ? ` --from-result ${resultId}` : "";
+  return `\`lore show ${concept}${suffix}\``;
 }
 
-function recallFollowUpCommand(
-  route: Extract<RenderRoute, "cli" | "mcp">,
-  resultId: string,
-  section: RecallSection,
-): string {
-  if (route === "cli") {
-    return `\`lore recall ${resultId} --section ${section}\``;
-  }
-  return `\`recall(result_id=\"${resultId}\", section=\"${section}\")\``;
+function recallFollowUpCommand(resultId: string, section: RecallSection): string {
+  return `\`lore recall ${resultId} --section ${section}\``;
 }
 
-function trailFollowUpCommand(
-  route: Extract<RenderRoute, "cli" | "mcp">,
-  narrative: string,
-  resultId?: string,
-): string {
-  if (route === "cli") {
-    const suffix = resultId ? ` --from-result ${resultId}` : "";
-    return `\`lore trail ${narrative}${suffix}\``;
-  }
-  const resultArg = resultId ? `, result_id=\"${resultId}\"` : "";
-  return `\`trail(narrative=\"${narrative}\"${resultArg})\``;
+function trailFollowUpCommand(narrative: string, resultId?: string): string {
+  const suffix = resultId ? ` --from-result ${resultId}` : "";
+  return `\`lore trail ${narrative}${suffix}\``;
 }
 
-function ingestFollowUpCommand(route: Extract<RenderRoute, "cli" | "mcp">): string {
-  return route === "cli" ? "`lore ingest`" : "`ingest()`";
+function ingestFollowUpCommand(): string {
+  return "`lore ingest`";
 }
 
-function renderBindingNudge(
-  summary: ExecutiveSummary | null | undefined,
-  route: Extract<RenderRoute, "cli" | "mcp">,
-): string[] {
+function renderBindingNudge(summary: ExecutiveSummary | null | undefined): string[] {
   const unboundSymbols = summary?.unbound_source_symbols;
   if (!unboundSymbols || unboundSymbols.length === 0) return [];
   return [
     "",
-    `⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. These symbols have no concept bindings — future retrieval will rely on embedding similarity. Bind them now: ${bindCommand(route)}`,
+    `⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. These symbols have no concept bindings — future retrieval will rely on embedding similarity. Bind them now: ${bindCommand()}`,
   ];
 }
 
-function renderNextActions(
-  result: QueryResult,
-  route: Extract<RenderRoute, "cli" | "mcp">,
-): string[] {
+function renderNextActions(result: QueryResult): string[] {
   if (!result.next_actions || result.next_actions.length === 0) return [];
   const lines: string[] = ["", "## Next"];
   for (const action of result.next_actions) {
     let command: string | null = null;
     if (action.kind === "show" && action.concept) {
-      command = showFollowUpCommand(route, action.concept, result.result_id);
+      command = showFollowUpCommand(action.concept, result.result_id);
     } else if (action.kind === "recall" && result.result_id && action.section) {
-      command = recallFollowUpCommand(route, result.result_id, action.section);
+      command = recallFollowUpCommand(result.result_id, action.section);
     } else if (action.kind === "trail" && action.narrative) {
-      command = trailFollowUpCommand(route, action.narrative, result.result_id);
+      command = trailFollowUpCommand(action.narrative, result.result_id);
     } else if (action.kind === "ingest") {
-      command = ingestFollowUpCommand(route);
+      command = ingestFollowUpCommand();
     }
     if (!command) continue;
     const prefix = action.primary ? "primary: " : "";
@@ -383,10 +350,7 @@ function renderSources(result: QueryResult): string[] {
   return lines;
 }
 
-function renderResultFooter(
-  result: QueryResult,
-  route: Extract<RenderRoute, "cli" | "mcp">,
-): string[] {
+function renderResultFooter(result: QueryResult): string[] {
   if (!result.result_id) return [];
 
   const timing = result.meta.generated_in ? ` · ${result.meta.generated_in}` : "";
@@ -394,31 +358,30 @@ function renderResultFooter(
     result.journal_results && result.journal_results.length === 1
       ? result.journal_results[0]!.narrative_name
       : null;
-  const trailHint = trailCommand(route, trailNarrative);
+  const trailHint = trailCommand(trailNarrative);
   const trailText = trailHint ? `, ${trailHint} for the full investigation trail` : "";
   return [
     "",
-    `Result ID: ${result.result_id}${timing} — use ${recallCommand(route, result.result_id)} for full sources, ${scoreCommand(route, result.result_id)} to rate this answer${trailText}.`,
+    `Result ID: ${result.result_id}${timing} — use ${recallCommand(result.result_id)} for full sources, ${scoreCommand(result.result_id)} to rate this answer${trailText}.`,
   ];
 }
 
 export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string {
-  const route = opts?.route ?? "cli";
   const lines: string[] = [renderSummaryNarrative(result)];
   const provenance = renderSummaryProvenance(result.executive_summary);
   if (provenance) {
     lines.push("", provenance);
   }
   lines.push(...renderClaimBlock(result.executive_summary));
-  lines.push(...renderBindingNudge(result.executive_summary, route));
-  lines.push(...renderNextActions(result, route));
+  lines.push(...renderBindingNudge(result.executive_summary));
+  lines.push(...renderNextActions(result));
   if (opts?.includeSources) {
     lines.push(...renderSources(result));
   }
   if (result.journal_results && result.journal_results.length > 0) {
     lines.push(...renderJournalTrail(result.journal_results));
   }
-  lines.push(...renderResultFooter(result, route));
+  lines.push(...renderResultFooter(result));
   return lines.join("\n").trimEnd();
 }
 
@@ -721,7 +684,10 @@ function renderStatusVerbosePlain(result: StatusResult): string {
     }
   }
 
-  if ((result.maintenance.pending_close_jobs ?? 0) > 0 || (result.maintenance.failed_close_jobs ?? 0) > 0) {
+  if (
+    (result.maintenance.pending_close_jobs ?? 0) > 0 ||
+    (result.maintenance.failed_close_jobs ?? 0) > 0
+  ) {
     lines.push(`\n${BOLD}MAINTENANCE QUEUE${RESET}`);
     lines.push(
       `  ${DIM}pending${RESET} ${compactCount(result.maintenance.pending_close_jobs ?? 0)}`,

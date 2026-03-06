@@ -21,10 +21,18 @@ import {
   getAllSourceFiles,
   deleteSourceFile,
 } from "@/db/source-files.ts";
-import { insertSymbolBatch, deleteSymbolsForSourceFile, getSymbolsForSourceFile } from "@/db/symbols.ts";
+import {
+  insertSymbolBatch,
+  deleteSymbolsForSourceFile,
+  getSymbolsForSourceFile,
+} from "@/db/symbols.ts";
 import { insertCallSiteBatch, deleteCallSitesForSourceFile } from "@/db/call-sites.ts";
 import { getBindingsForSymbol, upsertConceptSymbol } from "@/db/concept-symbols.ts";
-import { insertChunkBatch, getSourceChunkPathsForFile, deleteSourceChunksForFile } from "@/db/chunks.ts";
+import {
+  insertChunkBatch,
+  getSourceChunkPathsForFile,
+  deleteSourceChunksForFile,
+} from "@/db/chunks.ts";
 import { insertFtsContentBatch } from "@/db/fts.ts";
 import { writeSourceChunk, deleteSourceChunkFile } from "@/storage/chunk-writer.ts";
 
@@ -72,9 +80,10 @@ function rematchBindings(
   for (const sym of newSymbols) {
     const oldBindings = saved.get(sym.qualified_name);
     if (!oldBindings) continue;
-    const boundBody = contentLines && sym.line_start != null && sym.line_end != null
-      ? contentLines.slice(sym.line_start - 1, sym.line_end).join("\n")
-      : null;
+    const boundBody =
+      contentLines && sym.line_start != null && sym.line_end != null
+        ? contentLines.slice(sym.line_start - 1, sym.line_end).join("\n")
+        : null;
     for (const b of oldBindings) {
       upsertConceptSymbol(db, {
         conceptId: b.concept_id,
@@ -274,7 +283,11 @@ async function applyPreparedSkippedSourceFile(
   if (prepared.writtenChunks.length === 0) return 0;
   db.run("BEGIN IMMEDIATE TRANSACTION");
   try {
-    const insertedCount = insertSourceChunks(db, prepared.file.relativePath, prepared.writtenChunks);
+    const insertedCount = insertSourceChunks(
+      db,
+      prepared.file.relativePath,
+      prepared.writtenChunks,
+    );
     db.run("COMMIT");
     return insertedCount;
   } catch (error) {

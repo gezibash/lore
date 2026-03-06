@@ -95,7 +95,10 @@ export function renderProvenance(summary: ExecutiveSummary): string {
 
     const lines: string[] = [`Based on ${parts.join(", ")}.`];
 
-    const oldest = sources.map((s) => s.last_updated).filter(Boolean).sort()[0];
+    const oldest = sources
+      .map((s) => s.last_updated)
+      .filter(Boolean)
+      .sort()[0];
     if (oldest) {
       lines[0] += ` Oldest source: ${timeAgo(oldest)}.`;
     }

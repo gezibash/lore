@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { getConcept, getActiveConceptByName } from "@/db/index.ts";
-import { LoreError, type ChunkRow, type NarrativeRow, type NarrativeTarget } from "@/types/index.ts";
+import {
+  LoreError,
+  type ChunkRow,
+  type NarrativeRow,
+  type NarrativeTarget,
+} from "@/types/index.ts";
 
 function normalizeConceptNames(names: readonly string[] | undefined): string[] {
   const seen = new Set<string>();
@@ -15,7 +20,9 @@ function normalizeConceptNames(names: readonly string[] | undefined): string[] {
   return normalized;
 }
 
-export function getCreateUpdateTargets(narrative: NarrativeRow): Array<{ op: "create" | "update"; concept: string }> {
+export function getCreateUpdateTargets(
+  narrative: NarrativeRow,
+): Array<{ op: "create" | "update"; concept: string }> {
   if (!narrative.targets) return [];
   return (JSON.parse(narrative.targets) as NarrativeTarget[]).filter(
     (target): target is { op: "create" | "update"; concept: string } =>
@@ -35,8 +42,9 @@ export function resolveJournalConceptDesignations(
   requestedConcepts?: readonly string[],
 ): { designations: string[]; conceptRefs: string[]; autoInherited: boolean } {
   const explicit = normalizeConceptNames(requestedConcepts);
-  const inherited = explicit.length === 0 ? inferDefaultJournalConceptDesignations(narrative) : null;
-  const designations = explicit.length > 0 ? explicit : inherited ?? [];
+  const inherited =
+    explicit.length === 0 ? inferDefaultJournalConceptDesignations(narrative) : null;
+  const designations = explicit.length > 0 ? explicit : (inherited ?? []);
   if (designations.length === 0) {
     throw new LoreError(
       "JOURNAL_CONCEPTS_REQUIRED",

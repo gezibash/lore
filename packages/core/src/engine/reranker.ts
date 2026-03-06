@@ -22,7 +22,11 @@ export async function rerankResults<T>(
 ): Promise<RerankResult<T>> {
   const rr = config.ai.search?.rerank;
   if (!rr?.enabled || candidates.length < 2) {
-    return { ordered: candidates, scores: Array.from({ length: candidates.length }, () => 0), failed: false };
+    return {
+      ordered: candidates,
+      scores: Array.from({ length: candidates.length }, () => 0),
+      failed: false,
+    };
   }
 
   const modelName = rr.model ?? "rerank-v3.5";
@@ -77,7 +81,11 @@ export async function rerankResults<T>(
       }
     }
 
-    return { ordered: ordered.slice(0, candidates.length), scores: scores.slice(0, candidates.length), failed: false };
+    return {
+      ordered: ordered.slice(0, candidates.length),
+      scores: scores.slice(0, candidates.length),
+      failed: false,
+    };
   } catch (error) {
     const timedOut = Boolean(
       timeoutAbort &&

@@ -86,7 +86,6 @@ export function removeLoreMind(root: string, reg: Registry, name: string): Regis
   return updated;
 }
 
-
 export function listProviderConfigs(
   reg: Registry,
 ): Array<{ provider: SharedProvider; config: ProviderCredential }> {

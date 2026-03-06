@@ -75,10 +75,7 @@ export function insertInteractionEvent(
   return id;
 }
 
-export function listInteractionEventsSince(
-  db: Database,
-  sinceIso: string,
-): InteractionEventRow[] {
+export function listInteractionEventsSince(db: Database, sinceIso: string): InteractionEventRow[] {
   return db
     .query<InteractionEventRow, [string]>(
       `SELECT id, result_id, event_type, subject, meta_json, created_at
@@ -144,8 +141,7 @@ export function computeNorthStarScorecard(
     const reused = followUps.some((event) => {
       const deltaMs = new Date(event.created_at).getTime() - askTime;
       return (
-        deltaMs <= 30 * 60 * 1000 &&
-        (event.event_type === "recall" || event.event_type === "trail")
+        deltaMs <= 30 * 60 * 1000 && (event.event_type === "recall" || event.event_type === "trail")
       );
     });
     if (reused) reuseHits += 1;

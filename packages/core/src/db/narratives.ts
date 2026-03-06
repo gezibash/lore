@@ -120,20 +120,26 @@ function insertNarrativeVersion(
 }
 
 export function getNarrative(db: Database, id: string): NarrativeRow | null {
-  return db.query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE id = ?").get(id) ?? null;
+  return (
+    db.query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE id = ?").get(id) ??
+    null
+  );
 }
 
 export function getOpenNarrativeByName(db: Database, name: string): NarrativeRow | null {
   return (
     db
-      .query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE name = ? AND status = 'open'")
+      .query<NarrativeRow, [string]>(
+        "SELECT * FROM current_narratives WHERE name = ? AND status = 'open'",
+      )
       .get(name) ?? null
   );
 }
 
 export function getNarrativeByName(db: Database, name: string): NarrativeRow | null {
   return (
-    db.query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE name = ?").get(name) ?? null
+    db.query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE name = ?").get(name) ??
+    null
   );
 }
 
@@ -155,7 +161,9 @@ export function getNarrativeByNameWithStatuses(
 
 export function getOpenNarratives(db: Database): NarrativeRow[] {
   return db
-    .query<NarrativeRow, []>("SELECT * FROM current_narratives WHERE status = 'open' ORDER BY opened_at")
+    .query<NarrativeRow, []>(
+      "SELECT * FROM current_narratives WHERE status = 'open' ORDER BY opened_at",
+    )
     .all();
 }
 
@@ -179,8 +187,7 @@ export function setNarrativeStatus(db: Database, id: string, status: NarrativeSt
   if (!current) return;
   insertNarrativeVersion(db, current, {
     status,
-    closed_at:
-      status === "closed" || status === "abandoned" ? new Date().toISOString() : null,
+    closed_at: status === "closed" || status === "abandoned" ? new Date().toISOString() : null,
   });
 }
 
@@ -231,5 +238,7 @@ export function getMergeBaseCommitId(db: Database, narrativeId: string): string 
 }
 
 export function getAllNarratives(db: Database): NarrativeRow[] {
-  return db.query<NarrativeRow, []>("SELECT * FROM current_narratives ORDER BY opened_at DESC").all();
+  return db
+    .query<NarrativeRow, []>("SELECT * FROM current_narratives ORDER BY opened_at DESC")
+    .all();
 }

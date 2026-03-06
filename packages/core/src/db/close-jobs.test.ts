@@ -43,7 +43,7 @@ test("queue, claim, and complete close jobs", () => {
 
   const stored = getCloseJob(db, { lorePath: "/tmp/lore", id: queued.id });
   expect(stored?.status).toBe("done");
-  expect(stored?.close_result_json).toContain("\"commit_id\":\"c-1\"");
+  expect(stored?.close_result_json).toContain('"commit_id":"c-1"');
 
   const counts = getCloseJobCounts(db, { lorePath: "/tmp/lore" });
   expect(counts.done).toBe(1);

@@ -216,7 +216,8 @@ test("computeAskDebtSnapshot includes priority pressure when top concepts domina
       churn: 0.05,
       ground_residual: 0.05,
       lore_residual: 0.05,
-    }));
+    }),
+  );
 
   const snapshot = computeAskDebtSnapshot({
     db,

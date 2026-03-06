@@ -105,7 +105,10 @@ function discoverViaGit(codePath: string, shouldExclude: (p: string) => boolean)
   return files;
 }
 
-function discoverViaWalk(codePath: string, shouldExclude: (p: string) => boolean): DiscoveredFile[] {
+function discoverViaWalk(
+  codePath: string,
+  shouldExclude: (p: string) => boolean,
+): DiscoveredFile[] {
   const files: DiscoveredFile[] = [];
 
   function walk(dir: string): void {

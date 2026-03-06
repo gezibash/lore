@@ -5,7 +5,11 @@ import {
 } from "./narrative-lifecycle.ts";
 import type { ReasoningLevel, GenerationReasoningScope } from "@/types/index.ts";
 
-type GenerateOpts = { timeoutMs?: number; reasoning?: ReasoningLevel; scope?: GenerationReasoningScope };
+type GenerateOpts = {
+  timeoutMs?: number;
+  reasoning?: ReasoningLevel;
+  scope?: GenerationReasoningScope;
+};
 type GenerateFn = (system: string, user: string, opts?: GenerateOpts) => Promise<string>;
 
 function mockGenerator(genFn: GenerateFn) {
@@ -13,7 +17,11 @@ function mockGenerator(genFn: GenerateFn) {
     generate: genFn,
     async generateWithMeta(system: string, user: string, opts?: GenerateOpts) {
       const text = await genFn(system, user, opts);
-      return { text, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, modelId: "mock" };
+      return {
+        text,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        modelId: "mock",
+      };
     },
   };
 }
@@ -23,12 +31,14 @@ test("generateExecutiveSummary builds grounded evidence framing with expansion h
   let capturedUser = "";
   let capturedScope = "";
 
-  const generator = mockGenerator(async (system: string, user: string, opts?: { scope?: string }) => {
-    capturedSystem = system;
-    capturedUser = user;
-    capturedScope = opts?.scope ?? "";
-    return "Direct answer.\n- Point one.\n- Point two.";
-  });
+  const generator = mockGenerator(
+    async (system: string, user: string, opts?: { scope?: string }) => {
+      capturedSystem = system;
+      capturedUser = user;
+      capturedScope = opts?.scope ?? "";
+      return "Direct answer.\n- Point one.\n- Point two.";
+    },
+  );
 
   const summary = await generateExecutiveSummary(
     generator,
@@ -107,7 +117,9 @@ test("generateExecutiveSummary returns uncertain for exactness queries without g
 });
 
 test("generateExecutiveSummary returns citations for exactness queries with hits", async () => {
-  const generator = mockGenerator(async () => "Default local ask uses formatAskCli.\n- MCP ask uses formatAskMcp.");
+  const generator = mockGenerator(
+    async () => "CLI ask rendering uses renderAskBrief.\n- Full source rendering uses renderAsk.",
+  );
 
   const summary = await generateExecutiveSummary(
     generator,
@@ -135,15 +147,15 @@ test("generateExecutiveSummary returns citations for exactness queries with hits
         hits: [
           {
             file: "packages/cli/src/formatters.ts",
-            line: 84,
+            line: 29,
             snippet: "export function formatAskCli(",
             term: "formatAskCli",
           },
           {
-            file: "packages/mcp/src/formatters.ts",
-            line: 15,
-            snippet: "export function formatAskMcp(",
-            term: "formatAskMcp",
+            file: "packages/rendering/src/index.ts",
+            line: 366,
+            snippet: "export function renderAsk(",
+            term: "renderAsk",
           },
         ],
       },
@@ -153,11 +165,11 @@ test("generateExecutiveSummary returns citations for exactness queries with hits
   expect(summary.kind).toBe("generated");
   expect(summary.citations).toHaveLength(2);
   expect(summary.citations[0]?.file).toBe("packages/cli/src/formatters.ts");
-  expect(summary.citations[0]?.line).toBe(84);
-  expect(summary.citations[1]?.file).toBe("packages/mcp/src/formatters.ts");
-  expect(summary.citations[1]?.line).toBe(15);
+  expect(summary.citations[0]?.line).toBe(29);
+  expect(summary.citations[1]?.file).toBe("packages/rendering/src/index.ts");
+  expect(summary.citations[1]?.line).toBe(366);
   // Narrative should not have citations baked in (exactness query keeps LLM citations)
-  expect(summary.narrative).toContain("formatAskCli");
+  expect(summary.narrative).toContain("renderAskBrief");
 });
 
 test("generateExecutiveSummary populates sources from opts", async () => {
@@ -248,7 +260,10 @@ test("generateExecutiveSummary includes stale sources in structured data", async
 });
 
 test("generateExecutiveSummary returns per-term citations for non-exactness queries", async () => {
-  const generator = mockGenerator(async () => "The auth middleware validates tokens using verifyJWT.\n- The cache uses invalidateSession for cleanup.");
+  const generator = mockGenerator(
+    async () =>
+      "The auth middleware validates tokens using verifyJWT.\n- The cache uses invalidateSession for cleanup.",
+  );
 
   const summary = await generateExecutiveSummary(
     generator,

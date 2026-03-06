@@ -10,7 +10,11 @@ const RED = "\x1b[31m";
 const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
 
-export async function commitlogCommand(client: WorkerClient, limit: number = 20, since?: string): Promise<void> {
+export async function commitlogCommand(
+  client: WorkerClient,
+  limit: number = 20,
+  since?: string,
+): Promise<void> {
   const entries = client.commitLog({ limit, since });
 
   if (entries.length === 0) {

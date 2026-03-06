@@ -6,6 +6,9 @@ export async function trailCommand(
   narrative: string,
   fromResultId?: string,
 ): Promise<void> {
-  const result = await client.showNarrativeTrail(narrative, fromResultId ? { fromResultId } : undefined);
+  const result = await client.showNarrativeTrail(
+    narrative,
+    fromResultId ? { fromResultId } : undefined,
+  );
   emit(result, formatNarrativeTrail);
 }

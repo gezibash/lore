@@ -1,5 +1,10 @@
 import { createHash } from "crypto";
-import type { SupportedLanguage, SymbolKind, ExtractedSymbol, ExtractedCallSite } from "@/types/index.ts";
+import type {
+  SupportedLanguage,
+  SymbolKind,
+  ExtractedSymbol,
+  ExtractedCallSite,
+} from "@/types/index.ts";
 import type { TreeSitterLanguage, TreeSitterTree, TreeSitterNode } from "./tree-sitter.ts";
 import type { TreeSitterPool } from "./tree-sitter.ts";
 
@@ -312,7 +317,8 @@ export function extractSymbols(
 
     // For Elixir, qualify functions and nested modules with their parent defmodule
     const needsParent =
-      kind === "method" || (language === "elixir" && (kind === "function" || kind === "class" || kind === "interface"));
+      kind === "method" ||
+      (language === "elixir" && (kind === "function" || kind === "class" || kind === "interface"));
     const parentClass = needsParent ? findParentClass(definitionNode) : null;
     const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
 
@@ -362,7 +368,12 @@ function findEnclosingFunction(node: TreeSitterNode): string {
     // Elixir: def/defp call nodes are function boundaries
     if (current.type === "call") {
       const target = current.childForFieldName("target");
-      if (target?.text === "def" || target?.text === "defp" || target?.text === "defmacro" || target?.text === "defmacrop") {
+      if (
+        target?.text === "def" ||
+        target?.text === "defp" ||
+        target?.text === "defmacro" ||
+        target?.text === "defmacrop"
+      ) {
         const args = current.namedChildren.find((c) => c.type === "arguments");
         if (args) {
           const inner = args.namedChildren[0];
@@ -382,10 +393,7 @@ function findEnclosingFunction(node: TreeSitterNode): string {
     // Check if inside a variable declarator with arrow function / function expression
     if (current.type === "variable_declarator") {
       const valueNode = current.childForFieldName("value");
-      if (
-        valueNode &&
-        (valueNode.type === "arrow_function" || valueNode.type === "function")
-      ) {
+      if (valueNode && (valueNode.type === "arrow_function" || valueNode.type === "function")) {
         const nameNode = current.childForFieldName("name");
         if (nameNode?.text) return nameNode.text;
       }

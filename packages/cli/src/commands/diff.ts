@@ -21,7 +21,9 @@ export async function diffCommand(client: WorkerClient, target: string): Promise
     lines.push(`${BOLD}Tree diff: ${fromRef} → ${toRef}${RESET}\n`);
 
     if (diff.narrative) {
-      lines.push(`${BOLD}Narrative:${RESET} ${CYAN}${diff.narrative.name}${RESET} — ${diff.narrative.intent}`);
+      lines.push(
+        `${BOLD}Narrative:${RESET} ${CYAN}${diff.narrative.name}${RESET} — ${diff.narrative.intent}`,
+      );
       lines.push(`${DIM}${diff.narrative.entryCount} journal entries${RESET}\n`);
     }
 

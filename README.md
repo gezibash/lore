@@ -2,7 +2,7 @@
 
 A local-first codebase knowledge system for AI agents and developers.
 
-Lore turns a codebase into a queryable knowledge graph — named concepts, narrative exploration sessions, symbol-to-file bindings, and a running debt score. It works as a CLI and as an MCP server, so agents can ask "how does auth work?" and get a precise, grounded answer with file references instead of grepping blind.
+Lore turns a codebase into a queryable knowledge graph — named concepts, narrative exploration sessions, symbol-to-file bindings, and a running debt score. It is CLI-first, so agents can ask "how does auth work?" and get a precise, grounded answer with file references instead of grepping blind.
 
 ---
 
@@ -46,7 +46,7 @@ lore ask "how does the auth flow work?"
 # Open a narrative, journal findings, close
 lore open fix-auth-race "Investigate race condition in token refresh"
 lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --concept auth-model
-lore close fix-auth-race
+lore close fix-auth-race --wait
 
 # Check status and debt
 lore status
@@ -59,66 +59,54 @@ lore suggest
 
 ### Core workflow
 
-| Command | Description |
-|---------|-------------|
-| `lore init [path] [name]` | Register a codebase |
-| `lore ingest [file]` | Index source code and docs |
-| `lore open <narrative> <intent>` | Start an exploration session |
-| `lore write <narrative> <entry> --concept <name> [--concept <name> ...]` | Journal a finding against explicit concept designations |
-| `lore ask <query>` | Query the knowledge graph |
-| `lore close <narrative>` | Integrate and commit findings |
+| Command                                                                  | Description                                                |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `lore init [path] [name]`                                                | Register a codebase                                        |
+| `lore ingest [file]`                                                     | Index source code and docs                                 |
+| `lore open <narrative> <intent>`                                         | Start an exploration session                               |
+| `lore write <narrative> <entry> --concept <name> [--concept <name> ...]` | Journal a finding against explicit concept designations    |
+| `lore ask <query>`                                                       | Query the knowledge graph                                  |
+| `lore close <narrative> [--wait]`                                        | Queue a close job; add `--wait` to block until it finishes |
 
 ### Inspection
 
-| Command | Description |
-|---------|-------------|
-| `lore status` | Health snapshot — debt, priorities, dangling narratives |
-| `lore ls` | List all concepts with residuals and staleness |
-| `lore show <concept>` | Full concept: content, relations, symbol bindings |
-| `lore log` | Commit history with narrative context |
-| `lore diff <from..to>` | Conceptual diff between two commits |
-| `lore suggest` | Prioritized maintenance suggestions |
+| Command                | Description                                             |
+| ---------------------- | ------------------------------------------------------- |
+| `lore status`          | Health snapshot — debt, priorities, dangling narratives |
+| `lore ls`              | List all concepts with residuals and staleness          |
+| `lore show <concept>`  | Full concept: content, relations, symbol bindings       |
+| `lore log`             | Commit history with narrative context                   |
+| `lore diff <from..to>` | Conceptual diff between two commits                     |
+| `lore suggest`         | Prioritized maintenance suggestions                     |
+| `lore jobs`            | Inspect queued and completed close jobs                 |
+| `lore wait <job-id>`   | Block until a close job completes                       |
 
 ### System (`lore sys`)
 
-Config, embeddings, migrations, concept lifecycle, provider management, MCP install:
+Config, embeddings, migrations, worker control, concept lifecycle, and provider management:
 
 ```bash
 lore sys config show
 lore sys config set ai.generation.model qwen3:8b
 lore sys embeddings refresh
-lore sys mcp install --claude
+lore sys worker --watch
 lore sys coverage
 ```
 
 ---
 
-## MCP
+## Background Jobs
 
-Lore runs as an MCP server for direct agent integration. Install the server config for your agent:
-
-```bash
-lore sys mcp install --claude    # Claude Code / Claude Desktop
-lore sys mcp install --codex     # OpenAI Codex
-lore sys mcp install --opencode  # OpenCode
-```
-
-Or add manually — the server is:
+Merge closes are asynchronous by default:
 
 ```bash
-lore mcp
+lore close fix-auth-race
+lore jobs
+lore wait <job-id>
+lore sys worker --watch
 ```
 
-### Tools
-
-`open`, `write`, `append`, `ask`, `recall`, `score`, `close`, `patch`, `relate`, `status`, `suggest`, `ls`, `show`, `trail`, `bind`, `history`, `archive`, `rename`, `merge`, `diff`, `log`, `config`, `ingest`
-
-### Resources
-
-| URI | Description |
-|-----|-------------|
-| `lore://concepts/list` | JSON snapshot of all active concepts |
-| `lore://coverage/map` | Symbol coverage stats |
+Use `--wait` when you want the old blocking behavior.
 
 ---
 
@@ -170,19 +158,18 @@ Strict layered monorepo — dependency direction is one-way:
 
 ```
 @lore/cli  ─┐
-@lore/mcp  ─┤─→  @lore/worker  →  @lore/sdk  →  @lore/core
+            ├─→  @lore/worker  →  @lore/sdk  →  @lore/core
             ↓
        @lore/rendering
 ```
 
-| Package | Role |
-|---------|------|
-| `@lore/core` | Engine, storage, SQLite, embeddings, search, integration |
-| `@lore/sdk` | Canonical API contract over core |
-| `@lore/worker` | Single-lore domain client |
-| `@lore/rendering` | Shared output formatters (plain, markdown, JSON) |
-| `@lore/cli` | Terminal adapter |
-| `@lore/mcp` | MCP server adapter |
+| Package           | Role                                                     |
+| ----------------- | -------------------------------------------------------- |
+| `@lore/core`      | Engine, storage, SQLite, embeddings, search, integration |
+| `@lore/sdk`       | Canonical API contract over core                         |
+| `@lore/worker`    | Single-lore domain client                                |
+| `@lore/rendering` | Shared output formatters (plain, markdown, JSON)         |
+| `@lore/cli`       | Terminal adapter                                         |
 
 ---
 
@@ -191,7 +178,6 @@ Strict layered monorepo — dependency direction is one-way:
 ```bash
 bun install          # Install deps
 bun run dev          # Run CLI from source
-bun run mcp          # Run MCP server from source
 bun run typecheck    # Type-check all packages
 bun run test         # Run all tests
 bun run lint         # Lint

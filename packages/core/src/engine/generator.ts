@@ -6,7 +6,9 @@ import { type GenerationPromptKey } from "@/config/prompts.ts";
 import { createGenerationModel } from "./provider.ts";
 
 type GenerationProvider = LoreConfig["ai"]["generation"]["provider"];
-type ProviderOptionsValue = NonNullable<Parameters<typeof generateText>[0]["providerOptions"]>[string];
+type ProviderOptionsValue = NonNullable<
+  Parameters<typeof generateText>[0]["providerOptions"]
+>[string];
 type ReasoningLevel = NonNullable<LoreConfig["ai"]["generation"]["reasoning"]>;
 type ReasoningScope = keyof NonNullable<LoreConfig["ai"]["generation"]["reasoning_overrides"]>;
 type GenerationPromptsConfig = LoreConfig["ai"]["generation"]["prompts"];
@@ -264,7 +266,11 @@ export class Generator {
     system: string,
     user: string,
     opts?: { timeoutMs?: number; reasoning?: ReasoningLevel; scope?: ReasoningScope },
-  ): Promise<{ text: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number }; modelId: string }> {
+  ): Promise<{
+    text: string;
+    usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+    modelId: string;
+  }> {
     const reasoning = this.resolveReasoningLevel(opts?.scope, opts?.reasoning);
     const reasoningOpts = this.reasoningOptions(reasoning);
     const timeoutMs = opts?.timeoutMs;
@@ -276,7 +282,9 @@ export class Generator {
               model: this.model,
               system: system + reasoningOpts.systemSuffix,
               prompt: user,
-              ...(reasoningOpts.providerOptions && { providerOptions: reasoningOpts.providerOptions }),
+              ...(reasoningOpts.providerOptions && {
+                providerOptions: reasoningOpts.providerOptions,
+              }),
               ...(timeoutMs && timeoutMs > 0 ? { timeout: timeoutMs } : {}),
             });
           } catch (error) {
@@ -498,8 +506,7 @@ the agent should answer by journaling. Questions should be specific to the actua
 Output ONLY a JSON array of strings. No prose, no markdown, no explanation.
 Example: ["What invariant did X enforce that no longer holds?", "Why was Y removed?"]`;
 
-    const prompt =
-      `Concept: ${conceptName}\nSymbol: ${symbolName}\n\nOLD:\n${oldBody.slice(0, 1500)}\n\nNEW:\n${newBody.slice(0, 1500)}`;
+    const prompt = `Concept: ${conceptName}\nSymbol: ${symbolName}\n\nOLD:\n${oldBody.slice(0, 1500)}\n\nNEW:\n${newBody.slice(0, 1500)}`;
 
     try {
       const raw = await this.generate(system, prompt, { scope: "generate_integration" });

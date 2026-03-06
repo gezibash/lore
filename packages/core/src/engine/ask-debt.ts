@@ -18,7 +18,7 @@ const WEIGHTS = {
   symbol_drift: 0.23,
   code_freshness: 0.18,
   doc_freshness: 0.08,
-  coverage_gap: 0.10,
+  coverage_gap: 0.1,
   embedding_mismatch: 0.04,
   active_narrative_hygiene: 0.05,
   priority_pressure: 0.05,
@@ -118,7 +118,10 @@ function computeHotStaleness(
 ): number {
   if (concepts.length === 0) return 0;
   const top = [...concepts]
-    .sort((a, b) => conceptPressure(b, refDriftScoreByConcept) - conceptPressure(a, refDriftScoreByConcept))
+    .sort(
+      (a, b) =>
+        conceptPressure(b, refDriftScoreByConcept) - conceptPressure(a, refDriftScoreByConcept),
+    )
     .slice(0, HOT_CONCEPT_LIMIT);
   const weighted = top.map((concept) => ({
     value: concept.staleness ?? 0,
@@ -138,10 +141,7 @@ function computeSymbolDriftRatio(db: Database): number {
   }
 }
 
-function computeCoverageGap(
-  db: Database,
-  precomputed?: { ratio: number } | null,
-): number {
+function computeCoverageGap(db: Database, precomputed?: { ratio: number } | null): number {
   if (precomputed) return clamp01(1 - precomputed.ratio);
   try {
     const stats = getCoverageStats(db);
@@ -167,9 +167,10 @@ function computePriorityPressure(
   const topMean = pressures.slice(0, topCount).reduce((sum, value) => sum + value, 0) / topCount;
   const overallMean = pressures.reduce((sum, value) => sum + value, 0) / pressures.length;
   const hotRatio = pressures.filter((value) => value >= 0.4).length / pressures.length;
-  const skew = overallMean > 0
-    ? clamp01((topMean - overallMean) / Math.max(0.1, 1 - overallMean))
-    : clamp01(topMean);
+  const skew =
+    overallMean > 0
+      ? clamp01((topMean - overallMean) / Math.max(0.1, 1 - overallMean))
+      : clamp01(topMean);
 
   return clamp01(topMean * 0.65 + hotRatio * 0.2 + skew * 0.15);
 }
@@ -185,7 +186,9 @@ function computeEmbeddingMismatchRatio(
   }
 
   const rows = db
-    .query<{ model: string; cnt: number }, []>(`SELECT model, COUNT(*) as cnt FROM embeddings GROUP BY model`)
+    .query<{ model: string; cnt: number }, []>(
+      `SELECT model, COUNT(*) as cnt FROM embeddings GROUP BY model`,
+    )
     .all();
   const total = rows.reduce((sum, row) => sum + row.cnt, 0);
   if (total <= 0) return 0;
@@ -256,22 +259,27 @@ function computeFreshnessSnapshotFromFs(db: Database, entry: RegistryEntry): Fre
   };
 }
 
-function computeWriteActivity(db: Database, now: Date): { journalEntries: number; closedNarratives: number } {
+function computeWriteActivity(
+  db: Database,
+  now: Date,
+): { journalEntries: number; closedNarratives: number } {
   const cutoff = new Date(now.getTime() - WRITE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-  const journalEntries = db
-    .query<{ count: number }, [string]>(
-      `SELECT COUNT(*) as count
+  const journalEntries =
+    db
+      .query<{ count: number }, [string]>(
+        `SELECT COUNT(*) as count
        FROM chunks
        WHERE fl_type = 'journal' AND created_at >= ?`,
-    )
-    .get(cutoff)?.count ?? 0;
-  const closedNarratives = db
-    .query<{ count: number }, [string]>(
-      `SELECT COUNT(*) as count
+      )
+      .get(cutoff)?.count ?? 0;
+  const closedNarratives =
+    db
+      .query<{ count: number }, [string]>(
+        `SELECT COUNT(*) as count
        FROM narratives
        WHERE status = 'closed' AND closed_at IS NOT NULL AND closed_at >= ?`,
-    )
-    .get(cutoff)?.count ?? 0;
+      )
+      .get(cutoff)?.count ?? 0;
   return { journalEntries, closedNarratives };
 }
 
@@ -279,7 +287,12 @@ function computeNarrativeHygiene(
   db: Database,
   config: LoreConfig,
   now: Date,
-): { risk: number; openNarratives: number; emptyOpenNarratives: number; danglingNarratives: number } {
+): {
+  risk: number;
+  openNarratives: number;
+  emptyOpenNarratives: number;
+  danglingNarratives: number;
+} {
   let rows: Array<{ entry_count: number; opened_at: string }> = [];
   try {
     rows = db
@@ -309,7 +322,8 @@ function computeNarrativeHygiene(
   }
 
   const risk = clamp01(
-    (emptyOpenNarratives + danglingNarratives * 2) / Math.max(4, openNarratives + danglingNarratives * 2),
+    (emptyOpenNarratives + danglingNarratives * 2) /
+      Math.max(4, openNarratives + danglingNarratives * 2),
   );
   return { risk, openNarratives, emptyOpenNarratives, danglingNarratives };
 }
@@ -346,12 +360,12 @@ export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnap
   const freshness = input.lake
     ? computeFreshnessSnapshotFromLake(input.lake)
     : computeFreshnessSnapshotFromFs(input.db, input.entry);
-  const codeFreshness = freshness.source_files > 0
-    ? clamp01(freshness.stale_source_files / freshness.source_files)
-    : 0;
-  const docFreshness = freshness.doc_files_or_proxy > 0
-    ? clamp01(freshness.stale_doc_files / freshness.doc_files_or_proxy)
-    : 0;
+  const codeFreshness =
+    freshness.source_files > 0 ? clamp01(freshness.stale_source_files / freshness.source_files) : 0;
+  const docFreshness =
+    freshness.doc_files_or_proxy > 0
+      ? clamp01(freshness.stale_doc_files / freshness.doc_files_or_proxy)
+      : 0;
 
   const coverageGap = computeCoverageGap(input.db, input.coverage);
   const embeddingMismatch = computeEmbeddingMismatchRatio(
@@ -366,16 +380,16 @@ export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnap
   const narrativeHygiene = computeNarrativeHygiene(input.db, input.config, now);
   const writeActivity = computeWriteActivity(input.db, now);
 
-  const baseDebt = 100 * (
-    WEIGHTS.staleness * staleness +
-    WEIGHTS.symbol_drift * symbolDrift +
-    WEIGHTS.code_freshness * codeFreshness +
-    WEIGHTS.doc_freshness * docFreshness +
-    WEIGHTS.coverage_gap * coverageGap +
-    WEIGHTS.embedding_mismatch * embeddingMismatch +
-    WEIGHTS.active_narrative_hygiene * narrativeHygiene.risk +
-    WEIGHTS.priority_pressure * priorityPressure
-  );
+  const baseDebt =
+    100 *
+    (WEIGHTS.staleness * staleness +
+      WEIGHTS.symbol_drift * symbolDrift +
+      WEIGHTS.code_freshness * codeFreshness +
+      WEIGHTS.doc_freshness * docFreshness +
+      WEIGHTS.coverage_gap * coverageGap +
+      WEIGHTS.embedding_mismatch * embeddingMismatch +
+      WEIGHTS.active_narrative_hygiene * narrativeHygiene.risk +
+      WEIGHTS.priority_pressure * priorityPressure);
 
   const debt = clamp100(baseDebt);
   const confidence = clamp100(100 - debt);

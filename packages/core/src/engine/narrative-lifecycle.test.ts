@@ -19,14 +19,9 @@ test("openNarrative rejects unsupported dangling resolution actions", async () =
   });
 
   await expect(
-    openNarrative(
-      db,
-      "/tmp/lore-test",
-      "new-work",
-      "continue",
-      config,
-      {} as never,
-      { narrative: "old-work", action: "close" as never },
-    ),
+    openNarrative(db, "/tmp/lore-test", "new-work", "continue", config, {} as never, {
+      narrative: "old-work",
+      action: "close" as never,
+    }),
   ).rejects.toMatchObject({ code: "DANGLING_NARRATIVE" });
 });

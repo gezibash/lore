@@ -4,7 +4,6 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["../core/src/*"],
-      "@lore/mcp": ["../mcp/src/index.ts"],
       "@lore/sdk": ["../sdk/src/index.ts"],
       "@lore/sdk/*": ["../sdk/src/*"]
     }

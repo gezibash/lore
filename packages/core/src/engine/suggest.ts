@@ -84,29 +84,30 @@ export async function computeSuggestions(
   );
   const liveDebt = debtSnapshot.live_debt;
   const rawDebt = debtSnapshot.debt;
-  const askDebtSnapshot = ctx?.askDebtSnapshot
-    ?? (
-      ctx?.entry && ctx?.config
-        ? computeAskDebtSnapshot({
+  const askDebtSnapshot =
+    ctx?.askDebtSnapshot ??
+    (ctx?.entry && ctx?.config
+      ? computeAskDebtSnapshot({
           db,
           entry: ctx.entry,
           config: ctx.config,
           concepts: activeConcepts,
           debtSnapshot,
         })
-        : null
-    );
+      : null);
   const totalDebt = askDebtSnapshot?.debt ?? liveDebt;
   const fiedlerValue = laplacian?.fiedler_value ?? manifest?.fiedler_value ?? 0;
   const fiedlerDivisor = 1 + fiedlerValue;
   const { refDriftScoreByConcept } = debtSnapshot;
 
-  function impactForConcept(concept: ConceptRow, fraction: number = 1.0, rationale: string): SuggestionImpact {
+  function impactForConcept(
+    concept: ConceptRow,
+    fraction: number = 1.0,
+    rationale: string,
+  ): SuggestionImpact {
     const pressure = conceptPressure(concept, refDriftScoreByConcept);
     const rawReduction = (pressure * fraction) / fiedlerDivisor;
-    const pointReduction = rawDebt > 0
-      ? (rawReduction / rawDebt) * totalDebt
-      : rawReduction;
+    const pointReduction = rawDebt > 0 ? (rawReduction / rawDebt) * totalDebt : rawReduction;
     return {
       expected_debt_reduction: pointReduction,
       expected_debt_reduction_points: pointReduction,
@@ -133,7 +134,8 @@ export async function computeSuggestions(
         priority: 1,
         confidence: 1.0,
         title: `"${narrative.name}" is closing in the background`,
-        rationale: "Background close is in flight; wait for the job to finish before opening new work on the same narrative.",
+        rationale:
+          "Background close is in flight; wait for the job to finish before opening new work on the same narrative.",
         steps: [{ tool: "close", args: { narrative: narrative.name } }],
         concepts: [],
         evidence: {
@@ -152,7 +154,8 @@ export async function computeSuggestions(
         priority: 1,
         confidence: 1.0,
         title: `"${narrative.name}" close failed`,
-        rationale: "The last background close failed. Add more notes if needed, then retry the close.",
+        rationale:
+          "The last background close failed. Add more notes if needed, then retry the close.",
         steps: [{ tool: "close", args: { narrative: narrative.name } }],
         concepts: [],
         evidence: {
@@ -182,7 +185,10 @@ export async function computeSuggestions(
           entry_count: narrative.entry_count,
           age_days: Math.floor(age),
         },
-        impact: { ...ZERO_IMPACT, rationale: "Closing integrates knowledge; may reduce drift-based debt" },
+        impact: {
+          ...ZERO_IMPACT,
+          rationale: "Closing integrates knowledge; may reduce drift-based debt",
+        },
       });
     } else {
       suggestions.push({
@@ -190,7 +196,8 @@ export async function computeSuggestions(
         priority: 1,
         confidence: 1.0,
         title: `"${narrative.name}" open ${Math.floor(age)} days (0 entries)`,
-        rationale: "Narrative has been open beyond the dangling threshold with no entries recorded.",
+        rationale:
+          "Narrative has been open beyond the dangling threshold with no entries recorded.",
         steps: [
           {
             tool: "open",
@@ -283,9 +290,10 @@ export async function computeSuggestions(
       }
     }
 
-    const writeNote = investigationQuestions && investigationQuestions.length > 0
-      ? `Answer these questions:\n${investigationQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
-      : "Document what changed in the bound symbols and update the concept accordingly";
+    const writeNote =
+      investigationQuestions && investigationQuestions.length > 0
+        ? `Answer these questions:\n${investigationQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
+        : "Document what changed in the bound symbols and update the concept accordingly";
 
     suggestions.push({
       kind: "symbol-drift",
@@ -349,7 +357,10 @@ export async function computeSuggestions(
     }
 
     // Group files by directory prefix (first 2 path segments)
-    const byDir = new Map<string, Array<{ filePath: string; syms: Array<{ name: string; kind: string }> }>>();
+    const byDir = new Map<
+      string,
+      Array<{ filePath: string; syms: Array<{ name: string; kind: string }> }>
+    >();
     for (const [filePath, syms] of uncoveredByFile) {
       const parts = filePath.split("/");
       const dir = parts.length <= 2 ? (parts[0] ?? ".") : parts.slice(0, 2).join("/");
@@ -384,7 +395,14 @@ export async function computeSuggestions(
       for (const f of files) {
         for (const s of f.syms) {
           const k = s.kind;
-          kindScore += k === "interface" || k === "type" || k === "enum" ? 3 : k === "class" ? 1.5 : k === "function" ? 1 : 0.5;
+          kindScore +=
+            k === "interface" || k === "type" || k === "enum"
+              ? 3
+              : k === "class"
+                ? 1.5
+                : k === "function"
+                  ? 1
+                  : 0.5;
         }
       }
       dirGroups.push({ dir, files, totalUncovered, score: depthScore + countScore + kindScore });
@@ -412,7 +430,10 @@ export async function computeSuggestions(
       // Build rationale with phase context
       const depth = group.dir.split("/").length;
       const typeCount = group.files.reduce(
-        (acc, f) => acc + f.syms.filter((s) => s.kind === "interface" || s.kind === "type" || s.kind === "enum").length,
+        (acc, f) =>
+          acc +
+          f.syms.filter((s) => s.kind === "interface" || s.kind === "type" || s.kind === "enum")
+            .length,
         0,
       );
       const rationaleParts: string[] = [];
@@ -438,7 +459,10 @@ export async function computeSuggestions(
         steps: [
           {
             tool: "open",
-            args: { narrative: coverageNarrative, intent: `Document uncovered symbols in ${group.dir}/` },
+            args: {
+              narrative: coverageNarrative,
+              intent: `Document uncovered symbols in ${group.dir}/`,
+            },
             note: "If existing concepts already cover these symbols, use bind(concept, symbol) directly instead.",
           },
           {
@@ -488,12 +512,13 @@ export async function computeSuggestions(
     for (const concept of activeConcepts) {
       const coverage = coverageByConceptId.get(concept.id);
       const coverageDensity = coverage
-        ? coverage.reachable_count > 0 ? coverage.bound_count / coverage.reachable_count : 0
+        ? coverage.reachable_count > 0
+          ? coverage.bound_count / coverage.reachable_count
+          : 0
         : 0;
       const staleness = concept.staleness ?? 0;
       const groundResidual = concept.ground_residual ?? 0;
-      const capacity =
-        ALPHA * (1 - coverageDensity) + BETA * staleness + GAMMA * groundResidual;
+      const capacity = ALPHA * (1 - coverageDensity) + BETA * staleness + GAMMA * groundResidual;
       if (capacity > 0.3) {
         pullEntries.push({ concept, capacity });
       }
@@ -630,7 +655,11 @@ export async function computeSuggestions(
                 cluster_a: conceptA.cluster,
                 cluster_b: conceptB.cluster,
               },
-              impact: impactForConcept(source, 1.0, `Merging removes ${source.name} and its debt contribution`),
+              impact: impactForConcept(
+                source,
+                1.0,
+                `Merging removes ${source.name} and its debt contribution`,
+              ),
             });
           } else if (s >= RELATE_SIM_LOW && s <= RELATE_SIM_HIGH && !hasRelation) {
             // Same cluster required
@@ -671,7 +700,10 @@ export async function computeSuggestions(
                   cluster: conceptA.cluster,
                   existing_relations: 0,
                 },
-                impact: { ...ZERO_IMPACT, rationale: "Improves graph connectivity (raises Fiedler value over time)" },
+                impact: {
+                  ...ZERO_IMPACT,
+                  rationale: "Improves graph connectivity (raises Fiedler value over time)",
+                },
               });
             }
           }
@@ -765,7 +797,10 @@ export async function computeSuggestions(
         lore_residual: concept.lore_residual,
         self_healing: true,
       },
-      impact: { ...ZERO_IMPACT, rationale: "Self-healing; resolves with normal narrative activity" },
+      impact: {
+        ...ZERO_IMPACT,
+        rationale: "Self-healing; resolves with normal narrative activity",
+      },
     });
   }
 
@@ -798,7 +833,11 @@ export async function computeSuggestions(
         steps: [{ tool: "archive", args: { concept: concept.name } }],
         concepts: [concept.name],
         evidence: { edges: 0, active_relations: 0, staleness },
-        impact: impactForConcept(concept, 1.0, "Archiving removes concept and its full debt contribution"),
+        impact: impactForConcept(
+          concept,
+          1.0,
+          "Archiving removes concept and its full debt contribution",
+        ),
       });
     }
   }
@@ -814,11 +853,14 @@ export async function computeSuggestions(
   });
 
   const topDebtReducers = filtered
-    .filter((s) => (s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0) > 0)
+    .filter(
+      (s) =>
+        (s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0) > 0,
+    )
     .sort((a, b) => {
       const impactDelta =
-        (b.impact?.expected_debt_reduction_points ?? b.impact?.expected_debt_reduction ?? 0)
-        - (a.impact?.expected_debt_reduction_points ?? a.impact?.expected_debt_reduction ?? 0);
+        (b.impact?.expected_debt_reduction_points ?? b.impact?.expected_debt_reduction ?? 0) -
+        (a.impact?.expected_debt_reduction_points ?? a.impact?.expected_debt_reduction ?? 0);
       if (Math.abs(impactDelta) > 1e-9) return impactDelta;
       if (a.priority !== b.priority) return a.priority - b.priority;
       return b.confidence - a.confidence;
@@ -837,26 +879,22 @@ export async function computeSuggestions(
     (sum, item) => sum + (item.expected_debt_reduction_points ?? item.expected_debt_reduction),
     0,
   );
-  const projectedDebtAfterTopReducers = totalDebt > 0
-    ? Math.max(0, totalDebt - topReducerReduction)
-    : null;
+  const projectedDebtAfterTopReducers =
+    totalDebt > 0 ? Math.max(0, totalDebt - topReducerReduction) : null;
 
   const sliced = filtered.slice(0, limit);
 
   const cumulativeReduction = sliced.reduce(
-    (sum, s) => sum + (s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0),
+    (sum, s) =>
+      sum + (s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0),
     0,
   );
   const cumulativeRawReduction = sliced.reduce(
     (sum, s) => sum + (s.impact?.expected_raw_debt_reduction ?? 0),
     0,
   );
-  const projectedDebtAfter = totalDebt > 0
-    ? Math.max(0, totalDebt - cumulativeReduction)
-    : null;
-  const projectedRawDebtAfter = rawDebt > 0
-    ? Math.max(0, rawDebt - cumulativeRawReduction)
-    : null;
+  const projectedDebtAfter = totalDebt > 0 ? Math.max(0, totalDebt - cumulativeReduction) : null;
+  const projectedRawDebtAfter = rawDebt > 0 ? Math.max(0, rawDebt - cumulativeRawReduction) : null;
 
   return {
     suggestions: sliced,

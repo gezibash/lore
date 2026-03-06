@@ -2,9 +2,8 @@
 import { defineCli, defineCommand } from "boune";
 import { spawn, spawnSync } from "child_process";
 import { createWorkerClient, LoreError, type WorkerClient } from "@lore/worker";
-import { formatError, formatMcpInstallCli } from "./formatters.ts";
+import { formatError } from "./formatters.ts";
 import { registerCommand } from "./commands/register.ts";
-import { ensureProjectMcpConfig, type McpHarness } from "./commands/mcp-config.ts";
 import { openCommand } from "./commands/open.ts";
 import { logCommand } from "./commands/log.ts";
 import { queryCommand } from "./commands/query.ts";
@@ -86,11 +85,6 @@ function getWorker(): WorkerClient {
   return workerClient;
 }
 
-async function startMcpServer(): Promise<void> {
-  const { startMcpServer: startServer } = await import("@lore/mcp");
-  await startServer({ client: getWorker() });
-}
-
 function startDetachedWorker(): void {
   if (process.env.LORE_DISABLE_AUTOSPAWN === "1") return;
   try {
@@ -107,7 +101,6 @@ function startDetachedWorker(): void {
 const versionString = getVersionString();
 const rawArgv = process.argv.slice(2);
 setJsonOutput(rawArgv.includes("--json") || rawArgv.includes("-j"));
-const isMcpServerMode = rawArgv.length === 1 && rawArgv[0] === "mcp";
 
 const cli = defineCli({
   name: "lore",
@@ -121,14 +114,6 @@ const cli = defineCli({
     },
   },
   commands: {
-    mcp: defineCommand({
-      name: "mcp",
-      description: "Run Lore MCP server",
-      hidden: true,
-      async action() {
-        await startMcpServer();
-      },
-    }),
     open: defineCommand({
       name: "open",
       description: "Open a new narrative",
@@ -179,11 +164,13 @@ const cli = defineCli({
       options: {
         concept: {
           type: "string",
-          description: "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+          description:
+            "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
         },
         topic: {
           type: "string",
-          description: "Optional topic keyword (repeatable). Defaults to the concept names when omitted.",
+          description:
+            "Optional topic keyword (repeatable). Defaults to the concept names when omitted.",
         },
         symbol: {
           type: "string",
@@ -196,19 +183,22 @@ const cli = defineCli({
           ? (Array.isArray(options.concept)
               ? (options.concept as string[])
               : [options.concept as string]
-            ).map((concept: string) => concept.trim()).filter(Boolean)
+            )
+              .map((concept: string) => concept.trim())
+              .filter(Boolean)
           : [];
         const topics = options.topic
-          ? (Array.isArray(options.topic)
-              ? (options.topic as string[])
-              : [options.topic as string]
-            ).map((topic: string) => topic.trim()).filter(Boolean)
+          ? (Array.isArray(options.topic) ? (options.topic as string[]) : [options.topic as string])
+              .map((topic: string) => topic.trim())
+              .filter(Boolean)
           : [];
         const symbols = options.symbol
           ? (Array.isArray(options.symbol)
               ? (options.symbol as string[])
               : [options.symbol as string]
-            ).map((symbol: string) => symbol.trim()).filter(Boolean)
+            )
+              .map((symbol: string) => symbol.trim())
+              .filter(Boolean)
           : [];
         const refs = options.ref
           ? (options.ref as string)
@@ -322,32 +312,8 @@ const cli = defineCli({
         },
         name: { type: "string", description: "Optional lore name" },
       },
-      options: {
-        claude: {
-          type: "boolean",
-          description: "Generate/update Claude Code MCP config (.mcp.json)",
-        },
-        codex: {
-          type: "boolean",
-          description: "Generate/update Codex MCP config (.codex/config.toml)",
-        },
-        opencode: {
-          type: "boolean",
-          description: "Generate/update OpenCode MCP config (opencode.json)",
-        },
-      },
-      async action({ args, options }) {
-        const selectedHarnesses = [
-          options.claude ? "claude-code" : null,
-          options.codex ? "codex" : null,
-          options.opencode ? "opencode" : null,
-        ].filter((item): item is McpHarness => item !== null);
-        await registerCommand(
-          getWorker(),
-          args.path,
-          args.name,
-          selectedHarnesses.length > 0 ? { harnesses: selectedHarnesses } : undefined,
-        );
+      async action({ args }) {
+        await registerCommand(getWorker(), args.path, args.name);
       },
     }),
     status: defineCommand({
@@ -888,8 +854,7 @@ const cli = defineCli({
           subcommands: {
             designate: defineCommand({
               name: "designate",
-              description:
-                "Set explicit concept designations on a journal entry by chunk ID",
+              description: "Set explicit concept designations on a journal entry by chunk ID",
               arguments: {
                 narrative: { type: "string", required: true, description: "Open narrative name" },
                 chunk: { type: "string", required: true, description: "Journal chunk ID" },
@@ -906,39 +871,13 @@ const cli = defineCli({
                   ? (Array.isArray(options.concept)
                       ? (options.concept as string[])
                       : [options.concept as string]
-                    ).map((concept: string) => concept.trim()).filter(Boolean)
+                    )
+                      .map((concept: string) => concept.trim())
+                      .filter(Boolean)
                   : [];
                 await narrativeDesignateCommand(getWorker(), args.narrative, args.chunk, {
                   concepts,
                 });
-              },
-            }),
-          },
-        }),
-        mcp: defineCommand({
-          name: "mcp",
-          description: "MCP server configuration for the current lore",
-          subcommands: {
-            install: defineCommand({
-              name: "install",
-              description: "Install Lore MCP server config for AI editors",
-              options: {
-                claude: { type: "boolean", description: "Install for Claude Code (.mcp.json)" },
-                codex: { type: "boolean", description: "Install for Codex (.codex/config.toml)" },
-                opencode: { type: "boolean", description: "Install for OpenCode (opencode.json)" },
-              },
-              async action({ options }) {
-                const selected = [
-                  options.claude ? "claude-code" : null,
-                  options.codex ? "codex" : null,
-                  options.opencode ? "opencode" : null,
-                ].filter(Boolean) as McpHarness[];
-                const codePath = process.cwd();
-                const result = await ensureProjectMcpConfig(
-                  codePath,
-                  selected.length > 0 ? { harnesses: selected } : undefined,
-                );
-                console.log(formatMcpInstallCli(codePath, result));
               },
             }),
           },
@@ -1147,8 +1086,4 @@ const cli = defineCli({
   },
 });
 
-if (isMcpServerMode) {
-  await startMcpServer();
-} else {
-  await cli.run(rawArgv);
-}
+await cli.run(rawArgv);

@@ -47,14 +47,9 @@ export function getCallSitesForCallee(
     .all(calleeName, limit);
 }
 
-export function getCallSitesInFile(
-  db: Database,
-  sourceFileId: string,
-): CallSiteRow[] {
+export function getCallSitesInFile(db: Database, sourceFileId: string): CallSiteRow[] {
   return db
-    .query<CallSiteRow, [string]>(
-      `SELECT * FROM call_sites WHERE source_file_id = ? ORDER BY line`,
-    )
+    .query<CallSiteRow, [string]>(`SELECT * FROM call_sites WHERE source_file_id = ? ORDER BY line`)
     .all(sourceFileId);
 }
 

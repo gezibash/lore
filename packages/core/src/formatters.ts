@@ -97,8 +97,12 @@ export function formatQuery(result: QueryResult): string {
   lines.push(`  returned_results: ${compactCount(result.meta.scanned.returned_results)}`);
   lines.push(`  return_limit: ${compactCount(result.meta.scanned.return_limit)}`);
   lines.push(`  vector_limit: ${compactCount(result.meta.scanned.vector_limit)}`);
-  lines.push(`  text_vector_candidates: ${compactCount(result.meta.scanned.text_vector_candidates)}`);
-  lines.push(`  code_vector_candidates: ${compactCount(result.meta.scanned.code_vector_candidates)}`);
+  lines.push(
+    `  text_vector_candidates: ${compactCount(result.meta.scanned.text_vector_candidates)}`,
+  );
+  lines.push(
+    `  code_vector_candidates: ${compactCount(result.meta.scanned.code_vector_candidates)}`,
+  );
   lines.push(`  fused_candidates: ${compactCount(result.meta.scanned.fused_candidates)}`);
   lines.push(`  staleness_checks: ${compactCount(result.meta.scanned.staleness_checks)}`);
   lines.push("  web:");
@@ -126,7 +130,9 @@ export function formatQuery(result: QueryResult): string {
   lines.push(`  source_matches: ${compactCount(result.meta.executive_summary.source_matches)}`);
   if (result.meta.executive_summary.usage?.total_tokens > 0) {
     const u = result.meta.executive_summary.usage;
-    lines.push(`  tokens: ${compactCount(u.prompt_tokens)} in / ${compactCount(u.completion_tokens)} out (${compactCount(u.total_tokens)} total)`);
+    lines.push(
+      `  tokens: ${compactCount(u.prompt_tokens)} in / ${compactCount(u.completion_tokens)} out (${compactCount(u.total_tokens)} total)`,
+    );
   }
   lines.push("grounding:");
   lines.push(`  enabled: ${result.meta.grounding.enabled}`);
@@ -178,13 +184,21 @@ export function formatQuery(result: QueryResult): string {
     lines.push(`- chunk_id: ${item.meta.chunk_id}`);
     lines.push(`- residual: ${formatPct(item.meta.residual)}`);
     lines.push(`- staleness: ${formatPct(item.meta.staleness)}`);
-    lines.push(`- last_updated: ${item.meta.last_updated ? timeAgo(item.meta.last_updated) : "unknown"}`);
+    lines.push(
+      `- last_updated: ${item.meta.last_updated ? timeAgo(item.meta.last_updated) : "unknown"}`,
+    );
     if (item.meta.last_narrative) {
-      const narrativeAge = item.meta.last_narrative.closed_at ? timeAgo(item.meta.last_narrative.closed_at) : "";
-      lines.push(`- last narrative: ${item.meta.last_narrative.name} (${narrativeAge}) — "${item.meta.last_narrative.intent}"`);
+      const narrativeAge = item.meta.last_narrative.closed_at
+        ? timeAgo(item.meta.last_narrative.closed_at)
+        : "";
+      lines.push(
+        `- last narrative: ${item.meta.last_narrative.name} (${narrativeAge}) — "${item.meta.last_narrative.intent}"`,
+      );
     }
     lines.push(`- symbol_drift: ${item.meta.symbol_drift}`);
-    lines.push(`- symbols: bound=${compactCount(item.meta.symbols_bound)}, drifted=${compactCount(item.meta.symbols_drifted)}`);
+    lines.push(
+      `- symbols: bound=${compactCount(item.meta.symbols_bound)}, drifted=${compactCount(item.meta.symbols_drifted)}`,
+    );
     lines.push(`- files: ${files}`);
     if (item.meta.cluster != null) {
       lines.push(`- cluster: ${item.meta.cluster}`);
@@ -311,8 +325,7 @@ export function formatClose(result: CloseResult): string {
     for (const ci of result.impact.concept_impacts) {
       const before =
         ci.residual_before != null ? `${(ci.residual_before * 100).toFixed(0)}%` : "new";
-      const after =
-        ci.residual_after != null ? `${(ci.residual_after * 100).toFixed(0)}%` : "?";
+      const after = ci.residual_after != null ? `${(ci.residual_after * 100).toFixed(0)}%` : "?";
       if (ci.residual_before == null) {
         const diffTag = ci.content_diff ? ` [+${ci.content_diff.adds} lines]` : "";
         lines.push(`  ${ci.concept}: new (${after})${diffTag}`);
@@ -340,14 +353,21 @@ export function formatClose(result: CloseResult): string {
     for (const o of result.concept_overlaps) {
       const pct = (o.similarity * 100).toFixed(0);
       lines.push(`  • '${o.concept}' ↔ '${o.overlaps_with}' (${pct}% similar)`);
-      lines.push(`    Did you mean to also update '${o.overlaps_with}'? Open a new narrative targeting it.`);
+      lines.push(
+        `    Did you mean to also update '${o.overlaps_with}'? Open a new narrative targeting it.`,
+      );
     }
   }
   if (result.phase_transitions && result.phase_transitions.length > 0) {
     lines.push("\n## Phase Transitions\n");
     for (const pt of result.phase_transitions) {
       const distPct = (pt.distance * 100).toFixed(0);
-      const tag = pt.magnitude === "structural" ? "[STRUCTURAL]" : pt.magnitude === "strong" ? "[STRONG]" : "[moderate]";
+      const tag =
+        pt.magnitude === "structural"
+          ? "[STRUCTURAL]"
+          : pt.magnitude === "strong"
+            ? "[STRONG]"
+            : "[moderate]";
       lines.push(`${tag} ${pt.concept_name} — distance ${distPct}%`);
       if (pt.magnitude === "structural") {
         lines.push(`  ! Likely contradiction or architectural shift. Review concept after close.`);
@@ -414,13 +434,13 @@ export function formatStatus(result: StatusResult): string {
   lines.push(`Health: ${result.health}`);
   lines.push(result.summary);
   if (result.state_distance != null) {
-    lines.push(`State distance: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap vs codebase)`);
+    lines.push(
+      `State distance: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap vs codebase)`,
+    );
   }
 
   if ((result.debt ?? 0) > 0) {
-    lines.push(
-      "Debt path: run suggest() and prioritize items with non-zero impact.",
-    );
+    lines.push("Debt path: run suggest() and prioritize items with non-zero impact.");
   }
 
   if (result.lake) {
@@ -432,10 +452,17 @@ export function formatStatus(result: StatusResult): string {
     const codeStale = staleLabel(l.stale_source_files, Math.max(1, l.source_files));
     const docStale = staleLabel(l.stale_doc_files, Math.max(1, l.doc_chunks));
     lines.push("\n## Lake\n");
-    lines.push(`code:    ${compactCount(l.source_chunks)} symbols · ${compactCount(l.source_files)} files · ${codeAge}${codeStale}`);
+    lines.push(
+      `code:    ${compactCount(l.source_chunks)} symbols · ${compactCount(l.source_files)} files · ${codeAge}${codeStale}`,
+    );
     lines.push(`docs:    ${compactCount(l.doc_chunks)} files · ${docAge}${docStale}`);
     lines.push(`journal: ${compactCount(l.journal_entries)} entries`);
-    if (codeSev.level === "high" || codeSev.level === "medium" || docSev.level === "high" || docSev.level === "medium") {
+    if (
+      codeSev.level === "high" ||
+      codeSev.level === "medium" ||
+      docSev.level === "high" ||
+      docSev.level === "medium"
+    ) {
       lines.push(`\n⚠ Index is stale — run ingest() to refresh`);
     } else if (codeSev.level === "low" || docSev.level === "low") {
       lines.push(`\nMinor index drift — ingest() when convenient`);
@@ -447,8 +474,12 @@ export function formatStatus(result: StatusResult): string {
     for (const p of result.priorities) {
       lines.push(`- **${p.concept}**: ${p.action} — ${p.reason}`);
       if (p.last_narrative) {
-        const narrativeAge = p.last_narrative.closed_at ? timeAgo(p.last_narrative.closed_at) : "unknown";
-        lines.push(`  Last narrative: ${p.last_narrative.name} (${narrativeAge}) — "${p.last_narrative.intent}"`);
+        const narrativeAge = p.last_narrative.closed_at
+          ? timeAgo(p.last_narrative.closed_at)
+          : "unknown";
+        lines.push(
+          `  Last narrative: ${p.last_narrative.name} (${narrativeAge}) — "${p.last_narrative.intent}"`,
+        );
       }
       if (p.changed_at) {
         lines.push(`  Last changed: ${timeAgo(p.changed_at)}`);
@@ -481,9 +512,9 @@ export function formatStatus(result: StatusResult): string {
   if (result.coverage) {
     const pct = (result.coverage.ratio * 100).toFixed(0);
     lines.push(`\n## Coverage & Bindings\n`);
-      lines.push(
-        `coverage: ${pct}% (${compactCount(result.coverage.exported_covered)}/${compactCount(result.coverage.exported_total)} exported symbols)`,
-      );
+    lines.push(
+      `coverage: ${pct}% (${compactCount(result.coverage.exported_covered)}/${compactCount(result.coverage.exported_total)} exported symbols)`,
+    );
     if (result.coverage.total_bindings != null) {
       lines.push(
         `bindings: ${compactCount(result.coverage.total_bindings)} (ref: ${compactCount(result.coverage.by_type.ref)}, mention: ${compactCount(result.coverage.by_type.mention)})`,
@@ -741,7 +772,8 @@ function formatOneSuggestion(s: Suggestion, position: number, total: number): st
   const lines: string[] = [];
   lines.push(DIVIDER);
   lines.push("");
-  const impactPoints = s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0;
+  const impactPoints =
+    s.impact?.expected_debt_reduction_points ?? s.impact?.expected_debt_reduction ?? 0;
   let header = `[${compactCount(position)}/${compactCount(total)}] ${s.kind.toUpperCase()}  confidence: ${(s.confidence * 100).toFixed(0)}%`;
   if (s.impact && impactPoints > 0) {
     header += `  impact: -${(s.impact.percentage_of_total * 100).toFixed(0)}% debt`;
@@ -751,9 +783,10 @@ function formatOneSuggestion(s: Suggestion, position: number, total: number): st
   lines.push("");
   if (s.impact) {
     if (impactPoints > 0) {
-      const rawDetail = s.impact.expected_raw_debt_reduction != null
-        ? `, raw -${s.impact.expected_raw_debt_reduction.toFixed(3)}`
-        : "";
+      const rawDetail =
+        s.impact.expected_raw_debt_reduction != null
+          ? `, raw -${s.impact.expected_raw_debt_reduction.toFixed(3)}`
+          : "";
       lines.push(
         `Impact: -${impactPoints.toFixed(2)} debt points (${(s.impact.percentage_of_total * 100).toFixed(0)}% of total${rawDetail}) — ${s.impact.rationale}`,
       );
@@ -791,7 +824,9 @@ export function formatSuggest(result: SuggestResult): string {
   );
 
   if (!meta.pairwise_computed) {
-    lines.push(`(pairwise similarity skipped — ${compactCount(meta.concept_count)} concepts exceeds 200 limit)`);
+    lines.push(
+      `(pairwise similarity skipped — ${compactCount(meta.concept_count)} concepts exceeds 200 limit)`,
+    );
   }
 
   if (suggestions.length === 0) {
@@ -809,15 +844,16 @@ export function formatSuggest(result: SuggestResult): string {
   ) {
     const reduction = meta.total_debt - meta.projected_debt_after_top_reducers;
     if (reduction > 0) {
-      const pct = (reduction / meta.total_debt * 100).toFixed(0);
+      const pct = ((reduction / meta.total_debt) * 100).toFixed(0);
       lines.push(
         `Debt reduction path: ask debt ${meta.total_debt.toFixed(1)} → ${meta.projected_debt_after_top_reducers.toFixed(1)} (-${pct}%) from top reducers`,
       );
       for (const item of meta.top_debt_reducers) {
         const points = item.expected_debt_reduction_points ?? item.expected_debt_reduction;
-        const raw = item.expected_raw_debt_reduction != null
-          ? `, raw -${item.expected_raw_debt_reduction.toFixed(3)}`
-          : "";
+        const raw =
+          item.expected_raw_debt_reduction != null
+            ? `, raw -${item.expected_raw_debt_reduction.toFixed(3)}`
+            : "";
         lines.push(
           `  - ${item.kind}: -${points.toFixed(2)} points (${(item.percentage_of_total * 100).toFixed(0)}%${raw}) — ${item.title}`,
         );
@@ -828,7 +864,7 @@ export function formatSuggest(result: SuggestResult): string {
   if (meta.total_debt != null && meta.projected_debt_after != null && meta.total_debt > 0) {
     const reduction = meta.total_debt - meta.projected_debt_after;
     if (reduction > 0) {
-      const pct = (reduction / meta.total_debt * 100).toFixed(0);
+      const pct = ((reduction / meta.total_debt) * 100).toFixed(0);
       lines.push(
         `Projected impact (shown items): ask debt ${meta.total_debt.toFixed(1)} → ${meta.projected_debt_after.toFixed(1)} (-${pct}%) if all ${compactCount(suggestions.length)} acted on`,
       );
@@ -891,9 +927,13 @@ export function formatTreeDiff(diff: TreeDiff, opts?: TreeDiffFormatOptions): st
     lines.push(`**Entries:** ${compactCount(diff.narrative.entryCount)}`);
   }
 
-  lines.push(`**Changes:** +${compactCount(diff.added.length)} ~${compactCount(diff.modified.length)} -${compactCount(diff.removed.length)} (${compactCount(totalChanges)} total)`);
+  lines.push(
+    `**Changes:** +${compactCount(diff.added.length)} ~${compactCount(diff.modified.length)} -${compactCount(diff.removed.length)} (${compactCount(totalChanges)} total)`,
+  );
   if (totalPages > 1) {
-    lines.push(`**Page ${compactCount(clampedPage)}/${compactCount(totalPages)}** (${compactCount(pageSize)} per page)`);
+    lines.push(
+      `**Page ${compactCount(clampedPage)}/${compactCount(totalPages)}** (${compactCount(pageSize)} per page)`,
+    );
   }
   lines.push("");
 
@@ -1049,7 +1089,9 @@ export function formatBootstrapPlan(plan: BootstrapPlan): string {
   lines.push(
     `Coverage: ${pct}% (${compactCount(plan.progress.covered_exported)}/${compactCount(plan.progress.total_exported)} exported symbols)`,
   );
-  lines.push(`Progress: ${compactCount(plan.progress.phases_complete)}/${compactCount(plan.progress.phases_total)} phases complete`);
+  lines.push(
+    `Progress: ${compactCount(plan.progress.phases_complete)}/${compactCount(plan.progress.phases_total)} phases complete`,
+  );
 
   if (plan.phases.length === 0) {
     lines.push("");
@@ -1061,7 +1103,9 @@ export function formatBootstrapPlan(plan: BootstrapPlan): string {
     lines.push("");
     lines.push(`## ${phase.name}`);
     lines.push(`*${phase.rationale}*`);
-    lines.push(`${compactCount(phase.total_symbols)} uncovered symbols across ${compactCount(phase.files.length)} files`);
+    lines.push(
+      `${compactCount(phase.total_symbols)} uncovered symbols across ${compactCount(phase.files.length)} files`,
+    );
     lines.push("");
     for (const f of phase.files) {
       const syms = f.symbols.map((s) => s.name).join(", ");

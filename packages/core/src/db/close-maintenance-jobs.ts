@@ -264,10 +264,7 @@ export function getCloseMaintenanceJobCounts(
   return counts;
 }
 
-export function hasPendingCloseMaintenanceJobs(
-  db: Database,
-  opts: { lorePath: string },
-): boolean {
+export function hasPendingCloseMaintenanceJobs(db: Database, opts: { lorePath: string }): boolean {
   const row = db
     .query<{ count: number }, [string]>(
       `SELECT COUNT(*) as count

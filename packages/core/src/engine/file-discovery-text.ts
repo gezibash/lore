@@ -2,12 +2,31 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join, extname, relative } from "path";
 
 const TEXT_EXTENSIONS = new Set([
-  ".md", ".mdx", ".txt", ".rst", ".yaml", ".yml", ".json", ".toml", ".adoc",
+  ".md",
+  ".mdx",
+  ".txt",
+  ".rst",
+  ".yaml",
+  ".yml",
+  ".json",
+  ".toml",
+  ".adoc",
 ]);
 
 const SKIP_DIRS = new Set([
-  "node_modules", ".git", ".lore", "dist", "build", "__pycache__", "target",
-  "vendor", ".next", ".nuxt", "coverage", ".turbo", ".cache",
+  "node_modules",
+  ".git",
+  ".lore",
+  "dist",
+  "build",
+  "__pycache__",
+  "target",
+  "vendor",
+  ".next",
+  ".nuxt",
+  "coverage",
+  ".turbo",
+  ".cache",
 ]);
 
 export interface DiscoveredTextFile {
@@ -66,9 +85,7 @@ export function discoverTextFiles(codePath: string, _lorePath?: string): Discove
   const loreignoreLines = readIgnoreFile(join(codePath, ".loreignore"));
 
   // Split loreignore into force-includes and extra-excludes
-  const loreForceIncludes = loreignoreLines
-    .filter((l) => l.startsWith("!"))
-    .map((l) => l.slice(1));
+  const loreForceIncludes = loreignoreLines.filter((l) => l.startsWith("!")).map((l) => l.slice(1));
   const loreExtraExcludes = loreignoreLines.filter((l) => !l.startsWith("!"));
 
   function shouldExclude(relativePath: string): boolean {

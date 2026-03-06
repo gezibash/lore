@@ -29,7 +29,7 @@ describe("Elixir parser", () => {
     // Module
     expect(names).toContain("Arc.Storage");
     // Public functions (qualified with module)
-    expect(names).toContain("Arc.Storage.hello");  // def hello do (no parens)
+    expect(names).toContain("Arc.Storage.hello"); // def hello do (no parens)
     expect(names).toContain("Arc.Storage.greet");
     expect(names).toContain("Arc.Storage.decode"); // with guard
     // Private functions

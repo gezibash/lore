@@ -10,18 +10,18 @@ Every feature, optimization, and design decision must serve at least one of thes
 
 ### Scorecard
 
-| #   | Journey                          | Score | Bottleneck                                                                                                                                                                                                                                                                                                                                         |
-| --- | -------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Fix the bug in auth              | 10/10 | CloseResult shows per-concept residual impact (before → after with delta) plus content_diff (adds/removes line counts) per concept. Formatter renders `[+N/-M lines]` inline. Follow-up nudges agent to scan+bind. Remaining gap: no auto-scan on close |
-| 2   | Add feature in unknown territory | 9/10  | ask() returns cluster_summary (deterministic narrative from peer metadata), cluster_peers, relations (direction/type), neighbors_2hop sorted by weight (multiplicative path strength as %). Formatter renders weight percentages. Gap to 10: no cluster-level summary from LLM (current is keyword-based), no cross-cluster bridge detection |
-| 3   | I'm back after two weeks         | 9/10  | status() priorities now include `last_narrative` (name/intent/closed_at) and `changed_at` per priority concept. Both MCP and CLI formatters render these inline. Agent sees WHEN and WHY each priority concept last changed. Gap to 10: no content-level diff in status priorities, no per-field staleness |
-| 4   | The lore is wrong                | 9/10  | `last_narrative` on QueryResultMeta shows name/intent/closed_at of the narrative that last touched each concept. Auto-refresh warning fires when staleness > 0.4 AND age > 7d. Both formatters render last narrative inline. Gap to 10: no one-click "refresh this concept" action from the warning, no per-field staleness (concept-level only) |
+| #   | Journey                          | Score | Bottleneck                                                                                                                                                                                                                                                                                                                                                  |
+| --- | -------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Fix the bug in auth              | 10/10 | CloseResult shows per-concept residual impact (before → after with delta) plus content_diff (adds/removes line counts) per concept. Formatter renders `[+N/-M lines]` inline. Follow-up nudges agent to scan+bind. Remaining gap: no auto-scan on close                                                                                                     |
+| 2   | Add feature in unknown territory | 9/10  | ask() returns cluster_summary (deterministic narrative from peer metadata), cluster_peers, relations (direction/type), neighbors_2hop sorted by weight (multiplicative path strength as %). Formatter renders weight percentages. Gap to 10: no cluster-level summary from LLM (current is keyword-based), no cross-cluster bridge detection                |
+| 3   | I'm back after two weeks         | 9/10  | status() priorities now include `last_narrative` (name/intent/closed_at) and `changed_at` per priority concept. CLI formatters render these inline. Agent sees WHEN and WHY each priority concept last changed. Gap to 10: no content-level diff in status priorities, no per-field staleness                                                               |
+| 4   | The lore is wrong                | 9/10  | `last_narrative` on QueryResultMeta shows name/intent/closed_at of the narrative that last touched each concept. Auto-refresh warning fires when staleness > 0.4 AND age > 7d. Both formatters render last narrative inline. Gap to 10: no one-click "refresh this concept" action from the warning, no per-field staleness (concept-level only)            |
 | 5   | Routine maintenance              | 9/10  | Per-item impact + cumulative projection. `SuggestResult.meta.projected_debt_after` computed as `total_debt - sum(expected_debt_reduction)`. Formatter renders `Projected impact: debt 4.2 → 2.8 (-33%) if all 5 acted on` before individual suggestions. Gap to 10: no before/after debt simulation per-suggestion (only cumulative), no "apply all" action |
-| 6   | Explain this to me               | 10/10 | Per-claim attribution with confidence + staleness badge: claims[] has text + source_concepts + confidence + max_staleness. Rendered as `[75%] claim [concepts] — stale (68%)` when max_staleness > 40%. `⚠ low confidence` when < 50%. Remaining gap: no "click to refresh" affordance |
-| 7   | What changed while I was away    | 10/10 | `show(concept, ref)` computes diff_from_current with line-level unified diff. `log(since="2w")` works in both MCP and CLI (--since flag). `ls` staleness column now shows percentages instead of text labels. Remaining gap: no per-concept diff summary in `ls` (expensive for every concept) |
-| 8   | Cross-lore query                 | N/I   | Not yet implemented. Multi-lore federation requires a coordinator layer that does not exist in the current codebase. All operations are single-lore. |
-| 9   | Bootstrap new codebase           | 9/10  | Python relative import support added alongside TS/JS — `from .utils import x` / `from ..config import y` drive dependency boost. `coverage_change` on CloseResult shows before/after coverage stats so agent sees progress without re-running bootstrap. Gap to 10: Go/Rust dependency ordering, no incremental progress event (only visible on close) |
-| 10  | Deep research                    | 9/10  | Full thread reconstruction via `trail(narrative)` returns all entries with positions, statuses, topics. ask() trail entries show `entry_index` (e.g. "3/8") so agent sees where each match falls. Gap to 10: no narrative-level intent search (FTS needed), no cross-narrative linking (related investigations) |
+| 6   | Explain this to me               | 10/10 | Per-claim attribution with confidence + staleness badge: claims[] has text + source_concepts + confidence + max_staleness. Rendered as `[75%] claim [concepts] — stale (68%)` when max_staleness > 40%. `⚠ low confidence` when < 50%. Remaining gap: no "click to refresh" affordance                                                                      |
+| 7   | What changed while I was away    | 10/10 | `show(concept, ref)` computes diff_from_current with line-level unified diff. `log(since="2w")` works in CLI (`--since`). `ls` staleness column now shows percentages instead of text labels. Remaining gap: no per-concept diff summary in `ls` (expensive for every concept)                                                                              |
+| 8   | Cross-lore query                 | N/I   | Not yet implemented. Multi-lore federation requires a coordinator layer that does not exist in the current codebase. All operations are single-lore.                                                                                                                                                                                                        |
+| 9   | Bootstrap new codebase           | 9/10  | Python relative import support added alongside TS/JS — `from .utils import x` / `from ..config import y` drive dependency boost. `coverage_change` on CloseResult shows before/after coverage stats so agent sees progress without re-running bootstrap. Gap to 10: Go/Rust dependency ordering, no incremental progress event (only visible on close)      |
+| 10  | Deep research                    | 9/10  | Full thread reconstruction via `trail(narrative)` returns all entries with positions, statuses, topics. ask() trail entries show `entry_index` (e.g. "3/8") so agent sees where each match falls. Gap to 10: no narrative-level intent search (FTS needed), no cross-narrative linking (related investigations)                                             |
 
 **Overall: 9.3/10** — Update scores honestly after each change. Bottleneck must be specific and actionable.
 
@@ -92,8 +92,7 @@ Concrete packages:
 1. **Adapters**
 
 - `@lore/cli` (human-facing terminal UX)
-- `@lore/mcp` (MCP server UX)
-- `@lore/rendering` (shared output formatters for CLI and MCP)
+- `@lore/rendering` (shared output formatters for CLI)
 
 2. **Domain client**
 
@@ -144,7 +143,7 @@ Worker is intentionally local-scope.
 Shared output formatting layer:
 
 - plain text, markdown, and JSON rendering modes
-- consumed by both CLI and MCP adapters
+- consumed by CLI adapters and machine-readable flows
 - no domain logic; purely presentational
 
 ### `@lore/cli`
@@ -154,13 +153,6 @@ Adapter over worker and rendering:
 - all commands are local-scope (single lore)
 - `lore mind` subtree for maintenance/admin operations
 
-### `@lore/mcp`
-
-Adapter over worker and rendering:
-
-- exposes local lore MCP tools and resources
-- single-lore scope; no federation operations
-
 ## CLI Commands
 
 ### Core Workflow
@@ -168,8 +160,8 @@ Adapter over worker and rendering:
 - `lore open <narrative> <intent> [--target ...]`
 - `lore write <narrative> <entry> --concept <name> [--concept <name> ...] [--ref file:lines]`
 - `lore ask <query> [--mode arch|code] [--brief] [--sources]`
-- `lore close <narrative> [--mode merge|discard] [--merge-strategy ...]`
-- `lore init [path] [name] [--claude|--codex|--opencode]`
+- `lore close <narrative> [--wait] [--mode merge|discard] [--merge-strategy ...]`
+- `lore init [path] [name]`
 
 ### Inspection
 
@@ -180,6 +172,7 @@ Adapter over worker and rendering:
 - `lore log [limit] [--since duration|ulid|main~N]`
 - `lore suggest`
 - `lore ingest [file]`
+- `lore jobs` / `lore job <id>` / `lore wait <id>`
 
 ### System Administration (`lore sys <subcommand>`)
 
@@ -191,35 +184,16 @@ Adapter over worker and rendering:
 - `lore sys concept {restore,tag,untag,tags,history,bindings,bind,unbind}`
 - `lore sys relations {set,unset,list}`
 - `lore sys health {compute,explain,heal}`
-- `lore sys mcp install [--claude|--codex|--opencode]`
+- `lore sys worker --once|--watch`
 - `lore sys migrate` / `lore sys migrate-status` / `lore sys repair` / `lore sys audit`
 - `lore sys provider {list,get,set,unset}`
 - `lore sys ls` / `lore sys remove <name> [--force]`
-
-## MCP Surface
-
-MCP is worker-local. Tools exposed via `registerTools`:
-
-```
-open, write, append, ask, recall, score, close,
-patch, relate, status, suggest, ls, show, trail,
-bind, history, archive, rename, merge, diff, log,
-config, ingest
-```
-
-Resources:
-
-- `lore://concepts/list` — JSON snapshot of active concepts (current truth)
-- `lore://coverage/map` — symbol coverage stats
-
-Note: the `trail` tool accepts either `narrative` or legacy `delta` for backwards MCP compatibility.
 
 ## Architecture Rules For Contributors
 
 1. **Do not let adapters import core or sdk directly**
 
-- `mcp` imports only `@lore/worker` and `@lore/rendering`
-- `cli` imports `@lore/worker` and `@lore/rendering`; the hidden `lore mcp` pass-through may call the public `@lore/mcp` entrypoint
+- `cli` imports `@lore/worker` and `@lore/rendering`
 - boundary tests enforce this
 
 2. **Put domain orchestration in worker, not adapters**
@@ -246,7 +220,6 @@ Use Bun.
 - format: `bun run fmt`
 - lint: `bun run lint`
 - run CLI: `bun run dev`
-- run MCP server: `bun run mcp`
 
 ## Known Technical Debt
 

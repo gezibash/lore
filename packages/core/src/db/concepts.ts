@@ -40,9 +40,7 @@ function loadCurrentConceptsByIds(db: Database, ids: readonly string[]): Map<str
   if (ids.length === 0) return new Map();
   const placeholders = ids.map(() => "?").join(", ");
   const rows = db
-    .query<ConceptRow, string[]>(
-      `SELECT * FROM current_concepts WHERE id IN (${placeholders})`,
-    )
+    .query<ConceptRow, string[]>(`SELECT * FROM current_concepts WHERE id IN (${placeholders})`)
     .all(...ids);
   return new Map(rows.map((row) => [row.id, row]));
 }
@@ -136,11 +134,7 @@ export function insertConcept(
 }
 
 /** Insert a new version of an existing concept (append-only update). */
-export function insertConceptVersion(
-  db: Database,
-  id: string,
-  fields: ConceptVersionFields,
-): void {
+export function insertConceptVersion(db: Database, id: string, fields: ConceptVersionFields): void {
   insertConceptVersionBatch(db, [{ id, fields }]);
 }
 
@@ -150,7 +144,8 @@ export function insertConceptVersionBatch(
   currentById?: Map<string, ConceptRow>,
 ): void {
   if (items.length === 0) return;
-  const conceptMap = currentById ?? loadCurrentConceptsByIds(db, [...new Set(items.map((item) => item.id))]);
+  const conceptMap =
+    currentById ?? loadCurrentConceptsByIds(db, [...new Set(items.map((item) => item.id))]);
   const stmt = db.prepare(
     `INSERT INTO concepts (version_id, id, name, active_chunk_id, residual, churn, ground_residual, lore_residual, staleness, cluster, is_hub, lifecycle_status, archived_at, lifecycle_reason, merged_into_concept_id, inserted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

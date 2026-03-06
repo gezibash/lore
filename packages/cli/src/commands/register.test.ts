@@ -1,14 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, readdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { WorkerClient } from "@lore/worker";
-import {
-  LORE_MCP_SPEC_FILENAME,
-  CLAUDE_MCP_CONFIG_FILENAME,
-  CODEX_MCP_CONFIG_FILENAME,
-  OPENCODE_MCP_CONFIG_FILENAME,
-} from "./mcp-config.ts";
 import { registerCommand } from "./register.ts";
 
 function createTempDir(): string {
@@ -36,35 +30,14 @@ function withStubbedConsoleLog(fn: () => Promise<void>): Promise<void> {
   });
 }
 
-test("registerCommand does not generate MCP configs when no harness flags are provided", async () => {
+test("registerCommand initializes the lore without creating editor config files", async () => {
   const dir = createTempDir();
   try {
     await withStubbedConsoleLog(async () => {
       await registerCommand(createWorkerClientStub(), dir);
     });
 
-    expect(await Bun.file(join(dir, LORE_MCP_SPEC_FILENAME)).exists()).toBe(false);
-    expect(await Bun.file(join(dir, CLAUDE_MCP_CONFIG_FILENAME)).exists()).toBe(false);
-    expect(await Bun.file(join(dir, CODEX_MCP_CONFIG_FILENAME)).exists()).toBe(false);
-    expect(await Bun.file(join(dir, OPENCODE_MCP_CONFIG_FILENAME)).exists()).toBe(false);
-  } finally {
-    removeTempDir(dir);
-  }
-});
-
-test("registerCommand generates only selected MCP harness configs", async () => {
-  const dir = createTempDir();
-  try {
-    await withStubbedConsoleLog(async () => {
-      await registerCommand(createWorkerClientStub(), dir, undefined, {
-        harnesses: ["claude-code"],
-      });
-    });
-
-    expect(await Bun.file(join(dir, LORE_MCP_SPEC_FILENAME)).exists()).toBe(true);
-    expect(await Bun.file(join(dir, CLAUDE_MCP_CONFIG_FILENAME)).exists()).toBe(true);
-    expect(await Bun.file(join(dir, CODEX_MCP_CONFIG_FILENAME)).exists()).toBe(false);
-    expect(await Bun.file(join(dir, OPENCODE_MCP_CONFIG_FILENAME)).exists()).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
   } finally {
     removeTempDir(dir);
   }

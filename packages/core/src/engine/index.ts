@@ -574,7 +574,9 @@ export class LoreEngine {
     }
     return {
       job: this.serializeCloseJob(row),
-      result: row.close_result_json ? (JSON.parse(row.close_result_json) as CloseResult) : undefined,
+      result: row.close_result_json
+        ? (JSON.parse(row.close_result_json) as CloseResult)
+        : undefined,
     };
   }
 
@@ -637,7 +639,8 @@ export class LoreEngine {
                 ? `Maintenance failed: ${opts.maintenanceError}`
                 : undefined,
           };
-    const debtAfter = getManifest(db)?.debt ?? result.impact.debt_after ?? result.impact.debt_before;
+    const debtAfter =
+      getManifest(db)?.debt ?? result.impact.debt_after ?? result.impact.debt_before;
     return {
       ...result,
       narrative_status: "closed",
@@ -1511,7 +1514,10 @@ export class LoreEngine {
       const detail = this.readCloseJobDetail(entry, jobId);
       if (detail.job.status === "done") {
         if (!detail.result) {
-          throw new LoreError("CLOSE_JOB_FAILED", `Close job '${jobId}' completed without a result`);
+          throw new LoreError(
+            "CLOSE_JOB_FAILED",
+            `Close job '${jobId}' completed without a result`,
+          );
         }
         return { ...detail.result, close_job: detail.job };
       }
@@ -1955,10 +1961,10 @@ export class LoreEngine {
             : d.status === "close_failed"
               ? "Close failed; write or retry close"
               : d.entry_count < 3
-            ? "Early stage"
-            : d.convergence != null && d.convergence > config.thresholds.convergence
-              ? "Converging"
-              : "In progress",
+                ? "Early stage"
+                : d.convergence != null && d.convergence > config.thresholds.convergence
+                  ? "Converging"
+                  : "In progress",
       })),
       dangling_narratives: danglingNarratives.map((d) => ({
         name: d.name,
@@ -2079,9 +2085,10 @@ export class LoreEngine {
     const pendingWork =
       closeJobs.queued + closeJobs.leased + closeMaintenance.queued + closeMaintenance.leased;
     const failedWork = closeJobs.failed + closeMaintenance.failed;
-    const oldestPendingAt = [closeJobs.oldest_pending_at, closeMaintenance.oldest_pending_at]
-      .filter((value): value is string => value != null)
-      .sort()[0] ?? null;
+    const oldestPendingAt =
+      [closeJobs.oldest_pending_at, closeMaintenance.oldest_pending_at]
+        .filter((value): value is string => value != null)
+        .sort()[0] ?? null;
     if (conceptCount === 0) {
       return {
         status:
@@ -3794,8 +3801,7 @@ export class LoreEngine {
         updates: plan.updates,
         creates: plan.creates,
       },
-      unresolved_entries:
-        plan.unresolvedEntries.length > 0 ? plan.unresolvedEntries : undefined,
+      unresolved_entries: plan.unresolvedEntries.length > 0 ? plan.unresolvedEntries : undefined,
     };
   }
 
@@ -3809,12 +3815,17 @@ export class LoreEngine {
     if (!current || (current.status !== "open" && current.status !== "close_failed")) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
-    const narrative = current.status === "close_failed" ? (reopenNarrative(db, current.id), getNarrative(db, current.id)) : current;
+    const narrative =
+      current.status === "close_failed"
+        ? (reopenNarrative(db, current.id), getNarrative(db, current.id))
+        : current;
     if (!narrative) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
 
-    const chunk = getJournalChunksForNarrative(db, narrative.id).find((item) => item.id === chunkId);
+    const chunk = getJournalChunksForNarrative(db, narrative.id).find(
+      (item) => item.id === chunkId,
+    );
     if (!chunk) {
       throw new LoreError(
         "CHUNK_NOT_FOUND",

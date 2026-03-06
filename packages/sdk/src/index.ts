@@ -207,7 +207,13 @@ interface LoreClientEngine {
   log(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
+    opts: {
+      topics?: string[];
+      codePath?: string;
+      refs?: FileRef[];
+      concepts: string[];
+      symbols?: string[];
+    },
   ): Promise<LogResult>;
   designateJournalEntry(
     narrative: string,
@@ -331,8 +337,19 @@ interface LoreClientEngine {
   rebuild(opts?: { codePath?: string }): Promise<RebuildResult>;
   reEmbed(opts?: {
     codePath?: string;
-    onProgress?: (phase: "text" | "code" | "graph", current: number, total: number, model?: string) => void;
-  }): Promise<{ reEmbedded: number; codeEmbedded: number; deleted: number; textModel: string; codeModel: string | null }>;
+    onProgress?: (
+      phase: "text" | "code" | "graph",
+      current: number,
+      total: number,
+      model?: string,
+    ) => void;
+  }): Promise<{
+    reEmbedded: number;
+    codeEmbedded: number;
+    deleted: number;
+    textModel: string;
+    codeModel: string | null;
+  }>;
   dryRunClose(narrative: string, opts?: { codePath?: string }): Promise<DryRunCloseResult>;
   migrate(opts?: { codePath?: string }): { applied: number };
   migrateStatus(opts?: { codePath?: string }): MigrationStatus;
@@ -391,8 +408,15 @@ interface LoreClientEngine {
   scanStats(opts?: { codePath?: string }): ScanStats;
   coverageReport(opts?: { codePath?: string; limit?: number; filePath?: string }): CoverageReport;
   bootstrapPlan(opts?: { codePath?: string }): BootstrapPlan;
-  recallResult(resultId: string, opts?: { codePath?: string; section?: RecallSection }): RecallResult | null;
-  scoreResult(resultId: string, score: number, opts?: { codePath?: string; scoredBy?: string }): void;
+  recallResult(
+    resultId: string,
+    opts?: { codePath?: string; section?: RecallSection },
+  ): RecallResult | null;
+  scoreResult(
+    resultId: string,
+    score: number,
+    opts?: { codePath?: string; scoredBy?: string },
+  ): void;
 }
 
 export interface LoreClientOptions {
@@ -431,7 +455,13 @@ export class LoreClient {
   write(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
+    opts: {
+      topics?: string[];
+      codePath?: string;
+      refs?: FileRef[];
+      concepts: string[];
+      symbols?: string[];
+    },
   ): Promise<LogResult> {
     return this.engine.log(narrative, entry, { ...opts, topics: opts.topics ?? [] });
   }
@@ -439,7 +469,13 @@ export class LoreClient {
   log(
     narrative: string,
     entry: string,
-    opts: { topics?: string[]; codePath?: string; refs?: FileRef[]; concepts: string[]; symbols?: string[] },
+    opts: {
+      topics?: string[];
+      codePath?: string;
+      refs?: FileRef[];
+      concepts: string[];
+      symbols?: string[];
+    },
   ): Promise<LogResult> {
     return this.write(narrative, entry, opts);
   }
@@ -680,15 +716,37 @@ export class LoreClient {
 
   refreshEmbeddings(opts?: {
     codePath?: string;
-    onProgress?: (phase: "text" | "code" | "graph", current: number, total: number, model?: string) => void;
-  }): Promise<{ reEmbedded: number; codeEmbedded: number; deleted: number; textModel: string; codeModel: string | null }> {
+    onProgress?: (
+      phase: "text" | "code" | "graph",
+      current: number,
+      total: number,
+      model?: string,
+    ) => void;
+  }): Promise<{
+    reEmbedded: number;
+    codeEmbedded: number;
+    deleted: number;
+    textModel: string;
+    codeModel: string | null;
+  }> {
     return this.engine.reEmbed(opts);
   }
 
   reEmbed(opts?: {
     codePath?: string;
-    onProgress?: (phase: "text" | "code" | "graph", current: number, total: number, model?: string) => void;
-  }): Promise<{ reEmbedded: number; codeEmbedded: number; deleted: number; textModel: string; codeModel: string | null }> {
+    onProgress?: (
+      phase: "text" | "code" | "graph",
+      current: number,
+      total: number,
+      model?: string,
+    ) => void;
+  }): Promise<{
+    reEmbedded: number;
+    codeEmbedded: number;
+    deleted: number;
+    textModel: string;
+    codeModel: string | null;
+  }> {
     return this.engine.reEmbed(opts);
   }
 
@@ -861,7 +919,11 @@ export class LoreClient {
     return this.engine.recallResult(resultId, opts);
   }
 
-  scoreResult(resultId: string, score: number, opts?: { codePath?: string; scoredBy?: string }): void {
+  scoreResult(
+    resultId: string,
+    score: number,
+    opts?: { codePath?: string; scoredBy?: string },
+  ): void {
     return this.engine.scoreResult(resultId, score, opts);
   }
 }
@@ -889,7 +951,9 @@ export function formatCoverage(
     const file = files.find((f) => f.file_path === opts.filePath);
     if (file) {
       const filePct = (file.coverage_ratio * 100).toFixed(0);
-      lines.push(`\n${file.file_path}  ${compactCount(file.bound_count)}/${compactCount(file.symbol_count)}  (${filePct}%)`);
+      lines.push(
+        `\n${file.file_path}  ${compactCount(file.bound_count)}/${compactCount(file.symbol_count)}  (${filePct}%)`,
+      );
     }
     if (uncovered.length > 0) {
       lines.push("");

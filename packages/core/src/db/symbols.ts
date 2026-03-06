@@ -126,7 +126,11 @@ export function expandCamelCase(query: string): string {
   const expanded = new Set<string>();
   for (const term of terms) {
     expanded.add(term);
-    const parts = term.replace(/([A-Z])/g, " $1").trim().toLowerCase().split(/\s+/);
+    const parts = term
+      .replace(/([A-Z])/g, " $1")
+      .trim()
+      .toLowerCase()
+      .split(/\s+/);
     if (parts.length > 1) parts.forEach((p) => expanded.add(p));
   }
   return Array.from(expanded).join(" ");

@@ -9,7 +9,7 @@ export async function closeCommand(
   mergeStrategy?: MergeStrategy,
   fromResultId?: string,
   opts?: { wait?: boolean; pollMs?: number },
-){
+) {
   const result = await client.close(narrative, {
     mode,
     mergeStrategy,

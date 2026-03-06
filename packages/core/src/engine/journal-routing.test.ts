@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { insertNarrative } from "@/db/narratives.ts";
 import { insertConcept } from "@/db/index.ts";
-import { resolveJournalConceptDesignations, loadJournalConceptDesignations } from "./journal-routing.ts";
+import {
+  resolveJournalConceptDesignations,
+  loadJournalConceptDesignations,
+} from "./journal-routing.ts";
 import { createTestDb } from "../../test/support/db.ts";
 
 test("resolveJournalConceptDesignations auto-inherits the single create/update target", () => {

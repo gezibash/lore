@@ -58,11 +58,17 @@ export async function createEmbeddingModelFromProviderConfig(
   }
 }
 
-export async function createEmbeddingModel(config: LoreConfig, appName?: string): Promise<EmbeddingModel> {
+export async function createEmbeddingModel(
+  config: LoreConfig,
+  appName?: string,
+): Promise<EmbeddingModel> {
   return createEmbeddingModelFromProviderConfig(config.ai.embedding, appName);
 }
 
-export async function createGenerationModel(config: LoreConfig, appName?: string): Promise<LanguageModel> {
+export async function createGenerationModel(
+  config: LoreConfig,
+  appName?: string,
+): Promise<LanguageModel> {
   const { provider, model, base_url, api_key } = config.ai.generation;
   switch (provider) {
     case "ollama": {

@@ -11,7 +11,7 @@
     "./config/prompts": "./src/config/prompts.ts",
     "./db": "./src/db/index.ts",
     "./format": "./src/format.ts",
-    "./mcp-formatters": "./src/mcp-formatters.ts",
+    "./formatters": "./src/formatters.ts",
     "./engine/line-diff": "./src/engine/line-diff.ts"
   },
   "scripts": {

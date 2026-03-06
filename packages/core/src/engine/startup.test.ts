@@ -34,7 +34,9 @@ test("verifyIntegrity reports missing main and journals", async () => {
   expect(result.ok).toBe(false);
   expect(result.issues).toContain("main/ directory missing");
   expect(
-    result.issues.some((issue) => issue.includes("Journal directory missing for narrative 'alpha'")),
+    result.issues.some((issue) =>
+      issue.includes("Journal directory missing for narrative 'alpha'"),
+    ),
   ).toBe(true);
 
   db.close();

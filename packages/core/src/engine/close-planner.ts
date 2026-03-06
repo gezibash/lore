@@ -147,7 +147,10 @@ function parsePatchOps(raw: string): PatchOp[] | null {
   }
 }
 
-function applyPatchOps(existingBlocks: readonly ContentBlock[], ops: readonly PatchOp[]): string | null {
+function applyPatchOps(
+  existingBlocks: readonly ContentBlock[],
+  ops: readonly PatchOp[],
+): string | null {
   const blocks = existingBlocks.map((block) => ({ ...block }));
   let syntheticIndex = 0;
 
@@ -193,7 +196,11 @@ function applyPatchOps(existingBlocks: readonly ContentBlock[], ops: readonly Pa
     });
   }
 
-  const content = blocks.map((block) => block.content.trim()).filter(Boolean).join("\n\n").trim();
+  const content = blocks
+    .map((block) => block.content.trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
   return content.length > 0 ? content : null;
 }
 
@@ -388,7 +395,9 @@ export async function buildExplicitClosePlan(
     > => {
       const activeConcept = getActiveConceptByName(db, conceptName);
       if (activeConcept) {
-        const chunkRow = activeConcept.active_chunk_id ? getChunk(db, activeConcept.active_chunk_id) : null;
+        const chunkRow = activeConcept.active_chunk_id
+          ? getChunk(db, activeConcept.active_chunk_id)
+          : null;
         const existingContent = chunkRow ? (await readChunk(chunkRow.file_path)).content : "";
         const update = await generatePatchUpdate(
           generator,
@@ -428,7 +437,12 @@ export async function buildExplicitClosePlan(
         kind: "create",
         value: {
           conceptName,
-          content: await generator.generateIntegration(group.entries, [], conceptName, mergeStrategy),
+          content: await generator.generateIntegration(
+            group.entries,
+            [],
+            conceptName,
+            mergeStrategy,
+          ),
           sourceEntryIndices: group.indices,
         },
       };

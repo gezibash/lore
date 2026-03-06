@@ -19,7 +19,11 @@ export {
   markSuperseded,
   updateChunkFrontmatter,
 } from "./chunk-writer.ts";
-export type { WriteStateChunkOpts, WriteJournalChunkOpts, WriteSourceChunkOpts } from "./chunk-writer.ts";
+export type {
+  WriteStateChunkOpts,
+  WriteJournalChunkOpts,
+  WriteSourceChunkOpts,
+} from "./chunk-writer.ts";
 export {
   readChunk,
   readAllMainChunks,

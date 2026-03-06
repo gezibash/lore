@@ -23,9 +23,7 @@ export function insertQueryCache(
     expiresAt?: string | null;
   },
 ): void {
-  const embeddingBlob = opts.queryEmbedding
-    ? new Uint8Array(opts.queryEmbedding.buffer)
-    : null;
+  const embeddingBlob = opts.queryEmbedding ? new Uint8Array(opts.queryEmbedding.buffer) : null;
   db.run(
     `INSERT INTO query_cache (id, query_text, query_embedding, result_json, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -65,10 +63,7 @@ export function scoreQueryCache(
   return result.changes > 0;
 }
 
-export function getTopScoredQueries(
-  db: Database,
-  limit: number = 20,
-): QueryCacheRow[] {
+export function getTopScoredQueries(db: Database, limit: number = 20): QueryCacheRow[] {
   return db
     .query<QueryCacheRow, [number]>(
       `SELECT id, query_text, query_embedding, result_json, score, scored_by, scored_at, created_at, expires_at
@@ -79,9 +74,8 @@ export function getTopScoredQueries(
 
 export function pruneExpiredQueryCache(db: Database): number {
   const now = new Date().toISOString();
-  const result = db.run(
-    `DELETE FROM query_cache WHERE expires_at IS NOT NULL AND expires_at < ?`,
-    [now],
-  );
+  const result = db.run(`DELETE FROM query_cache WHERE expires_at IS NOT NULL AND expires_at < ?`, [
+    now,
+  ]);
   return result.changes;
 }

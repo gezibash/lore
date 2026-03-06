@@ -54,12 +54,12 @@ test("abandon-narrative suggestion for dangling narrative with no entries", asyn
   expect(s).toBeDefined();
   expect(s!.steps[0]!.tool).toBe("open");
   expect(
-    (s!.steps[0]!.args as { resolve_dangling?: { narrative: string; action: string } }).resolve_dangling
-      ?.narrative,
+    (s!.steps[0]!.args as { resolve_dangling?: { narrative: string; action: string } })
+      .resolve_dangling?.narrative,
   ).toBe("empty-narrative");
   expect(
-    (s!.steps[0]!.args as { resolve_dangling?: { narrative: string; action: string } }).resolve_dangling
-      ?.action,
+    (s!.steps[0]!.args as { resolve_dangling?: { narrative: string; action: string } })
+      .resolve_dangling?.action,
   ).toBe("abandon");
 
   db.close();

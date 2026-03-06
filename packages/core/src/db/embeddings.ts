@@ -31,13 +31,7 @@ export function insertEmbeddingBatch(
   );
   const now = new Date().toISOString();
   for (const item of items) {
-    stmt.run(
-      ulid(),
-      item.chunkId,
-      new Uint8Array(item.embedding.buffer),
-      item.model,
-      now,
-    );
+    stmt.run(ulid(), item.chunkId, new Uint8Array(item.embedding.buffer), item.model, now);
   }
 }
 
@@ -182,13 +176,7 @@ export function insertSymbolEmbeddingBatch(
   );
   const now = new Date().toISOString();
   for (const item of items) {
-    stmt.run(
-      ulid(),
-      item.symbolId,
-      new Uint8Array(item.embedding.buffer),
-      item.model,
-      now,
-    );
+    stmt.run(ulid(), item.symbolId, new Uint8Array(item.embedding.buffer), item.model, now);
   }
 }
 

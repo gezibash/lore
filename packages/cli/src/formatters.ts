@@ -16,10 +16,6 @@ import type {
 import { renderLs as renderLsRoute, renderStatus as renderStatusRoute } from "@lore/rendering";
 import { renderAsk, renderAskBrief } from "@lore/rendering";
 import { timeAgo } from "@lore/worker";
-import type {
-  EnsureProjectMcpConfigResult,
-  HarnessMcpConfigResult,
-} from "./commands/mcp-config.ts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -124,14 +120,18 @@ export function formatHistory(
   for (const entry of sorted) {
     const tag =
       entry.supersededBy == null ? `${GREEN}[active]${RESET}` : `${DIM}[superseded]${RESET}`;
-    const viaStr = entry.narrative ? `  via narrative ${CYAN}"${entry.narrative.name}"${RESET}` : "";
+    const viaStr = entry.narrative
+      ? `  via narrative ${CYAN}"${entry.narrative.name}"${RESET}`
+      : "";
     lines.push(`${BOLD}v${entry.version}${RESET}  ${tag}  ${timeAgo(entry.createdAt)}${viaStr}`);
 
     if (entry.narrative) {
       lines.push(`    ${DIM}intent:${RESET} ${entry.narrative.intent}`);
     }
     if (entry.drift != null) {
-      lines.push(`    ${DIM}drift:${RESET} ${(entry.drift * 100).toFixed(0)}% (from v${entry.version - 1})`);
+      lines.push(
+        `    ${DIM}drift:${RESET} ${(entry.drift * 100).toFixed(0)}% (from v${entry.version - 1})`,
+      );
     }
     if (entry.journalSnippets && entry.journalSnippets.length > 0) {
       const formatted = entry.journalSnippets
@@ -155,60 +155,11 @@ export function formatStatusCli(result: StatusResult): string {
   return renderStatusRoute(result, { route: "cli", format: "plain" });
 }
 
-export function formatRegisterCli(
-  codePath: string,
-  lorePath: string,
-  mcp?: EnsureProjectMcpConfigResult,
-): string {
-  const lines = [
+export function formatRegisterCli(codePath: string, lorePath: string): string {
+  return [
     `${GREEN}✓${RESET} Initialized at ${CYAN}${codePath}${RESET}`,
     `${DIM}lore:${RESET} ${lorePath}`,
-  ];
-
-  if (mcp) {
-    const canonicalNote =
-      mcp.canonical.status === "created"
-        ? "created"
-        : mcp.canonical.status === "updated"
-          ? "updated"
-          : "already present";
-    lines.push(
-      `${DIM}mcp source:${RESET} ${mcp.canonical.path} (${canonicalNote}, server '${mcp.canonical.server}')`,
-    );
-    for (const harness of mcp.harnesses) {
-      lines.push(formatHarnessMcpLine(harness));
-    }
-  }
-
-  return lines.join("\n");
-}
-
-function formatHarnessMcpLine(harness: HarnessMcpConfigResult): string {
-  const note =
-    harness.status === "created"
-      ? "created"
-      : harness.status === "updated"
-        ? "updated"
-        : "already present";
-  return `${DIM}${harness.harness}:${RESET} ${harness.path} (${note}, server '${harness.server}')`;
-}
-
-export function formatMcpInstallCli(
-  codePath: string,
-  result: EnsureProjectMcpConfigResult,
-): string {
-  const canonicalNote =
-    result.canonical.status === "created"
-      ? "created"
-      : result.canonical.status === "updated"
-        ? "updated"
-        : "already present";
-  const lines = [
-    `${GREEN}✓${RESET} MCP config for ${CYAN}${codePath}${RESET}`,
-    `${DIM}mcp source:${RESET} ${result.canonical.path} (${canonicalNote}, server '${result.canonical.server}')`,
-    ...result.harnesses.map(formatHarnessMcpLine),
-  ];
-  return lines.join("\n");
+  ].join("\n");
 }
 
 export function formatLogCli(note?: string): string {

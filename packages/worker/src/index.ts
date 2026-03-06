@@ -499,9 +499,7 @@ export class WorkerClient {
     return this.client.bootstrapPlan(...args);
   }
 
-  recall(
-    ...args: Parameters<WorkerClientDeps["recall"]>
-  ): ReturnType<WorkerClientDeps["recall"]> {
+  recall(...args: Parameters<WorkerClientDeps["recall"]>): ReturnType<WorkerClientDeps["recall"]> {
     return this.client.recall(...args);
   }
 
@@ -529,9 +527,7 @@ export class WorkerClient {
     return this.client.migrateStatus(...args);
   }
 
-  repair(
-    ...args: Parameters<WorkerClientDeps["repair"]>
-  ): ReturnType<WorkerClientDeps["repair"]> {
+  repair(...args: Parameters<WorkerClientDeps["repair"]>): ReturnType<WorkerClientDeps["repair"]> {
     return this.client.repair(...args);
   }
 

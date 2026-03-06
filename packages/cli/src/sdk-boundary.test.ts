@@ -31,7 +31,7 @@ test("cli source imports only allowed public lore packages and local files", () 
   const files = walkTsFiles(import.meta.dir);
   const offenders: string[] = [];
   const packageRoot = resolve(import.meta.dir, "..");
-  const allowedLoreImports = new Set(["@lore/mcp", "@lore/rendering", "@lore/worker"]);
+  const allowedLoreImports = new Set(["@lore/rendering", "@lore/worker"]);
 
   for (const file of files) {
     if (file.endsWith("sdk-boundary.test.ts")) continue;

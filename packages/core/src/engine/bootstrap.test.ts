@@ -18,10 +18,12 @@ function addConcept(db: ReturnType<typeof createTestDb>, name: string): string {
   const id = ulid();
   const versionId = ulid();
   const now = new Date().toISOString();
-  db.run(
-    `INSERT INTO concepts (version_id, id, name, inserted_at) VALUES (?, ?, ?, ?)`,
-    [versionId, id, name, now],
-  );
+  db.run(`INSERT INTO concepts (version_id, id, name, inserted_at) VALUES (?, ?, ?, ?)`, [
+    versionId,
+    id,
+    name,
+    now,
+  ]);
   return id;
 }
 
@@ -279,10 +281,7 @@ describe("computeDependencyBoost", () => {
       writeFileSync(join(tmpDir, "src/utils/a.ts"), `import { b } from './b';\n`);
       writeFileSync(join(tmpDir, "src/utils/b.ts"), `export const b = 1;\n`);
 
-      const sourceFiles = [
-        { file_path: "src/utils/a.ts" },
-        { file_path: "src/utils/b.ts" },
-      ];
+      const sourceFiles = [{ file_path: "src/utils/a.ts" }, { file_path: "src/utils/b.ts" }];
       const boost = computeDependencyBoost(sourceFiles, tmpDir);
       // Same directory — no boost
       expect(boost.size).toBe(0);
@@ -464,10 +463,7 @@ describe("Python dependency ordering", () => {
       mkdirSync(join(tmpDir, "src/services"), { recursive: true });
       mkdirSync(join(tmpDir, "src/api"), { recursive: true });
 
-      writeFileSync(
-        join(tmpDir, "src/models/user.py"),
-        `class User:\n    pass\n`,
-      );
+      writeFileSync(join(tmpDir, "src/models/user.py"), `class User:\n    pass\n`);
       writeFileSync(
         join(tmpDir, "src/services/auth.py"),
         `from ..models.user import User\n\ndef authenticate(u: User):\n    pass\n`,
@@ -505,10 +501,7 @@ describe("Python dependency ordering", () => {
       mkdirSync(join(tmpDir, "src/api"), { recursive: true });
 
       writeFileSync(join(tmpDir, "src/models/user.py"), `class User:\n    pass\n`);
-      writeFileSync(
-        join(tmpDir, "src/api/routes.py"),
-        `from ..models.user import User\n`,
-      );
+      writeFileSync(join(tmpDir, "src/api/routes.py"), `from ..models.user import User\n`);
 
       // Register files in DB
       const sf1 = addFile(db, "src/models/user.py", 1, "python");

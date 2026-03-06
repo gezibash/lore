@@ -579,9 +579,10 @@ export function recomputeGraph(db: Database): RecomputeGraphResult | null {
   if (unclusteredConcepts.length > 0) {
     componentData.push({ concepts: unclusteredConcepts, fiedlerValue: 0 });
   }
-  const newDebt = componentData.length > 0
-    ? computeComponentDebt(componentData)
-    : computeTotalDebt(freshConcepts, fiedler.fiedlerValue);
+  const newDebt =
+    componentData.length > 0
+      ? computeComponentDebt(componentData)
+      : computeTotalDebt(freshConcepts, fiedler.fiedlerValue);
 
   // Update manifest with fresh graph data + debt
   upsertManifest(db, {

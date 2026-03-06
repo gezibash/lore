@@ -19,7 +19,7 @@ import { homedir } from "os";
 import { ulid } from "ulid";
 
 const SEMANTIC_BIND_BATCH_SIZE = 32;
-const SEMANTIC_DISTANCE_THRESHOLD = 0.60; // distance ≤ this → bind
+const SEMANTIC_DISTANCE_THRESHOLD = 0.6; // distance ≤ this → bind
 const SEMANTIC_MAX_PER_CONCEPT = 30; // max symbol bindings per concept
 
 export interface BindingExtractionResult {
@@ -350,7 +350,14 @@ export async function autoBindByFileOverlap(
     // Get files from already-bound symbols
     const boundFiles = getFilesForConcept(db, concept.id);
     if (boundFiles.length === 0) {
-      log({ type: "concept", concept: concept.name, bound_files: 0, exported: 0, bound: 0, skipped_protected: 0 });
+      log({
+        type: "concept",
+        concept: concept.name,
+        bound_files: 0,
+        exported: 0,
+        bound: 0,
+        skipped_protected: 0,
+      });
       continue;
     }
 
@@ -359,10 +366,7 @@ export async function autoBindByFileOverlap(
     // Get all exported symbols from those files
     const placeholders = boundFiles.map(() => "?").join(",");
     const exportedSymbols = db
-      .query<
-        { id: string; body_hash: string | null; name: string },
-        string[]
-      >(
+      .query<{ id: string; body_hash: string | null; name: string }, string[]>(
         `SELECT s.id, s.body_hash, s.name FROM symbols s
          JOIN source_files sf ON s.source_file_id = sf.id
          WHERE sf.file_path IN (${placeholders})
@@ -371,7 +375,14 @@ export async function autoBindByFileOverlap(
       .all(...boundFiles);
 
     if (exportedSymbols.length === 0) {
-      log({ type: "concept", concept: concept.name, bound_files: boundFiles.length, exported: 0, bound: 0, skipped_protected: 0 });
+      log({
+        type: "concept",
+        concept: concept.name,
+        bound_files: boundFiles.length,
+        exported: 0,
+        bound: 0,
+        skipped_protected: 0,
+      });
       continue;
     }
 

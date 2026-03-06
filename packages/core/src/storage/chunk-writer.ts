@@ -1,7 +1,17 @@
 import { ulid } from "ulid";
 import { writeFile, readFile, unlink } from "fs/promises";
 import { serializeChunk, updateFrontmatterField } from "./frontmatter.ts";
-import { stateChunkFile, journalChunkFile, sourceChunkFile, docsDir, docChunkFile, ensureDir, mainDir, journalDir, sourceDir } from "./paths.ts";
+import {
+  stateChunkFile,
+  journalChunkFile,
+  sourceChunkFile,
+  docsDir,
+  docChunkFile,
+  ensureDir,
+  mainDir,
+  journalDir,
+  sourceDir,
+} from "./paths.ts";
 import type {
   StateChunkFrontmatter,
   JournalChunkFrontmatter,
@@ -152,7 +162,10 @@ export async function writeSourceChunk(
     fl_created_at: new Date().toISOString(),
   };
 
-  await writeFile(filePath, serializeChunk(frontmatter as unknown as StateChunkFrontmatter, opts.body));
+  await writeFile(
+    filePath,
+    serializeChunk(frontmatter as unknown as StateChunkFrontmatter, opts.body),
+  );
   return { id, filePath };
 }
 
@@ -167,7 +180,7 @@ export async function deleteSourceChunkFile(filePath: string): Promise<boolean> 
 
 export interface WriteDocChunkOpts {
   lorePath: string;
-  docPath: string;    // relative path from codePath root
+  docPath: string; // relative path from codePath root
   bodyHash: string;
   content: string;
 }
@@ -187,7 +200,10 @@ export async function writeDocChunk(
     fl_created_at: new Date().toISOString(),
   };
 
-  await writeFile(filePath, serializeChunk(frontmatter as unknown as StateChunkFrontmatter, opts.content));
+  await writeFile(
+    filePath,
+    serializeChunk(frontmatter as unknown as StateChunkFrontmatter, opts.content),
+  );
   return { id, filePath };
 }
 

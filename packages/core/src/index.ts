@@ -21,11 +21,8 @@ export {
   formatTreeDiff,
   formatCommitLog,
   formatBootstrapPlan,
-} from "./mcp-formatters.ts";
-export type { TreeDiffFormatOptions, DryRunCloseFormatInput } from "./mcp-formatters.ts";
-export {
-  computeLineDiff,
-  isDiffTooLarge,
-} from "./engine/line-diff.ts";
+} from "./formatters.ts";
+export type { TreeDiffFormatOptions, DryRunCloseFormatInput } from "./formatters.ts";
+export { computeLineDiff, isDiffTooLarge } from "./engine/line-diff.ts";
 export type { DiffHunk, DiffLine } from "./engine/line-diff.ts";
 export type * from "./types/index.ts";

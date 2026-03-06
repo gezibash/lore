@@ -40,11 +40,7 @@ export async function closeJobCommand(
   return detail;
 }
 
-export async function waitCommand(
-  client: WorkerClient,
-  jobId: string,
-  opts?: { pollMs?: number },
-) {
+export async function waitCommand(client: WorkerClient, jobId: string, opts?: { pollMs?: number }) {
   const result = await client.waitForCloseJob(jobId, { pollMs: opts?.pollMs });
   emit(result, formatClose);
   return result;

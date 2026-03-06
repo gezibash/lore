@@ -336,8 +336,7 @@ export function computeBootstrapPlan(db: Database, codePath?: string): Bootstrap
   // Incremental progress: dirs with exported symbols that have NO uncovered symbols
   const uncoveredDirs = new Set(groups.map((g) => g.directory));
   const phasesComplete = allExportedDirs.size - uncoveredDirs.size;
-  const coverageRatio =
-    stats.total_exported > 0 ? stats.bound_exported / stats.total_exported : 0;
+  const coverageRatio = stats.total_exported > 0 ? stats.bound_exported / stats.total_exported : 0;
 
   return {
     phases,

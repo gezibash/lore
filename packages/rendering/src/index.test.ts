@@ -74,10 +74,6 @@ test("renderStatus uses route defaults", () => {
   expect(cliDetails).toContain("Health:");
   expect(cliDetails).toContain("debt 12.3%");
 
-  const mcp = renderStatus(status, { route: "mcp" });
-  expect(mcp).toContain("Health: degrading");
-  expect(mcp).toContain("Debt path:");
-
   const http = renderStatus(status, { route: "http" });
   const parsed = JSON.parse(http) as StatusResult;
   expect(parsed.debt).toBe(12.3);
@@ -89,9 +85,6 @@ test("renderLs uses route defaults", () => {
   const cli = renderLs(ls, { route: "cli" });
   expect(cli).toContain("flowlake");
   expect(cli).toContain("debt 12.3%");
-
-  const mcp = renderLs(ls, { route: "mcp" });
-  expect(mcp).toContain("**flowlake**");
 
   const http = renderLs(ls, { route: "http" });
   const parsed = JSON.parse(http) as LsResult;
@@ -270,14 +263,14 @@ test("renderAskBrief includes provenance, attribution, result_id, and CLI guidan
   expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
 });
 
-test("renderAsk includes sources and MCP guidance", () => {
-  const rendered = renderAsk(sampleQueryResult(), { route: "mcp", includeSources: true });
+test("renderAsk includes sources and CLI guidance", () => {
+  const rendered = renderAsk(sampleQueryResult(), { route: "cli", includeSources: true });
   expect(rendered).toContain("## Sources");
   expect(rendered).toContain("- auth-model (score 92.0%)");
-  expect(rendered).toContain('show(concept="auth-model", result_id="01ASK123")');
+  expect(rendered).toContain("lore show auth-model --from-result 01ASK123");
   expect(rendered).toContain("bindings: authenticateUser (function, src/auth.ts:12)");
   expect(rendered).toContain("## Investigation Trail");
-  expect(rendered).toContain('trail(narrative="auth-debug", result_id="01ASK123")');
+  expect(rendered).toContain("lore trail auth-debug --from-result 01ASK123");
 });
 
 test("renderRecall renders requested sections", () => {
