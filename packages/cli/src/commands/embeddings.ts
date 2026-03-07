@@ -1,5 +1,5 @@
 import type { WorkerClient } from "@lore/worker";
-import { createProgressBar } from "boune";
+import { createProgressBar } from "../tty.ts";
 
 export async function refreshEmbeddingsCommand(client: WorkerClient): Promise<void> {
   const bars: {

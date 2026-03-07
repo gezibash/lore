@@ -8,7 +8,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun --cwd packages/cli run src/index.ts",
+    "dev": "bun --cwd packages/cli ./src/index.ts",
     "link": "bun ./scripts/link-local.ts",
     "link:global": "bun ./scripts/link-global.ts",
     "lint": "oxlint .",

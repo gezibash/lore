@@ -1,7 +1,7 @@
 import type { WorkerClient } from "@lore/worker";
-import { createDraft } from "boune";
 import { formatAskCli } from "../formatters.ts";
 import { emit, isJsonOutput } from "../output.ts";
+import { createDraft, isInteractiveOutputEnabled } from "../tty.ts";
 
 export async function queryCommand(
   client: WorkerClient,
@@ -20,7 +20,7 @@ export async function queryCommand(
   let phaseStartedAtMs = Date.now();
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameIndex = 0;
-  const interactive = !isJsonOutput() && process.stdout.isTTY && process.env.CI !== "true";
+  const interactive = isInteractiveOutputEnabled() && !isJsonOutput();
 
   const formatElapsed = (elapsedMs: number): string => `${(elapsedMs / 1000).toFixed(1)}s`;
   const renderProgress = (): void => {
