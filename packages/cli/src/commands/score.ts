@@ -7,7 +7,7 @@ export async function scoreCommand(
   score: number,
 ): Promise<void> {
   try {
-    client.scoreResult(resultId, score);
+    await client.scoreResult(resultId, score);
   } catch {
     throw new Error(`No cached result found for ID: ${resultId}`);
   }

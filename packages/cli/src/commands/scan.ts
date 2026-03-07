@@ -33,21 +33,24 @@ export async function scanCommand(client: WorkerClient): Promise<void> {
 export function coverageCommand(
   client: WorkerClient,
   opts?: { uncovered?: boolean; file?: string },
-): void {
-  const report = client.coverageReport({
-    filePath: opts?.file,
-    limit: opts?.uncovered ? 100 : 50,
-  });
-  console.log(
-    formatCoverage(report, {
-      showUncovered: opts?.uncovered,
+): Promise<void> {
+  return client
+    .coverageReport({
       filePath: opts?.file,
-    }),
-  );
+      limit: opts?.uncovered ? 100 : 50,
+    })
+    .then((report) => {
+      console.log(
+        formatCoverage(report, {
+          showUncovered: opts?.uncovered,
+          filePath: opts?.file,
+        }),
+      );
+    });
 }
 
 export async function scanStatsCommand(client: WorkerClient): Promise<void> {
-  const stats = client.scanStats();
+  const stats = await client.scanStats();
   const parts: string[] = [];
   parts.push(`${BOLD}Source Code Index${RESET}`);
   parts.push(`  ${BOLD}Files:${RESET} ${stats.file_count}`);

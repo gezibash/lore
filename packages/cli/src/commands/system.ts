@@ -13,7 +13,7 @@ function pad(str: string, width: number): string {
 }
 
 export async function systemMigrateCommand(client: WorkerClient): Promise<void> {
-  const { applied } = client.migrate();
+  const { applied } = await client.migrate();
   if (applied === 0) {
     console.log(`${DIM}0 migrations applied — database is up to date${RESET}`);
   } else {
@@ -22,7 +22,7 @@ export async function systemMigrateCommand(client: WorkerClient): Promise<void> 
 }
 
 export async function systemMigrateStatusCommand(client: WorkerClient): Promise<void> {
-  const { applied, pending } = client.migrateStatus();
+  const { applied, pending } = await client.migrateStatus();
 
   console.log(`${BOLD}Applied migrations${RESET}`);
   if (applied.length === 0) {
@@ -43,7 +43,7 @@ export async function systemMigrateStatusCommand(client: WorkerClient): Promise<
 }
 
 export async function systemRepairCommand(client: WorkerClient, check?: boolean): Promise<void> {
-  const result = client.repair({ check });
+  const result = await client.repair({ check });
 
   console.log(`${BOLD}Repair summary${RESET}`);
   console.log(`  ${DIM}mode:${RESET} ${result.mode}`);

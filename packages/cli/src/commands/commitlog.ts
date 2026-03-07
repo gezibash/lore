@@ -15,7 +15,7 @@ export async function commitlogCommand(
   limit: number = 20,
   since?: string,
 ): Promise<void> {
-  const entries = client.commitLog({ limit, since });
+  const entries = await client.commitLog({ limit, since });
 
   if (entries.length === 0) {
     emit(entries, () => `${DIM}No commits yet${RESET}`);

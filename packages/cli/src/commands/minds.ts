@@ -13,7 +13,7 @@ function pad(str: string, width: number): string {
 }
 
 export async function mindsListCommand(client: WorkerClient): Promise<void> {
-  const loreMinds = client.listLoreMinds();
+  const loreMinds = await client.listLoreMinds();
 
   if (loreMinds.length === 0) {
     console.log(`${DIM}No lores registered yet. Run 'lore init'.${RESET}`);
@@ -35,7 +35,7 @@ export async function mindsRemoveCommand(
   name: string,
   force: boolean = false,
 ): Promise<void> {
-  const loreMinds = client.listLoreMinds();
+  const loreMinds = await client.listLoreMinds();
   const loreMind = loreMinds.find((lore) => lore.name === name);
   if (!loreMind) {
     console.log(formatError(`No lore registered with name '${name}'`));
@@ -60,7 +60,7 @@ export async function mindsRemoveCommand(
     }
   }
 
-  client.removeLoreMind(name, true);
+  await client.removeLoreMind(name, true);
   console.log(`${GREEN}✓${RESET} Removed lore '${name}'`);
 }
 
@@ -85,6 +85,6 @@ export async function mindResetCommand(
     }
   }
 
-  const { name } = client.resetLoreMind();
+  const { name } = await client.resetLoreMind();
   console.log(`${GREEN}✓${RESET} Reset lore mind '${name}' — all data wiped`);
 }

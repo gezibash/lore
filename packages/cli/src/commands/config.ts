@@ -97,7 +97,7 @@ function maskSecret(value: string): string {
 }
 
 export async function configGetCommand(client: WorkerClient, key: string): Promise<void> {
-  const { config, resolved } = client.getLoreMindConfig();
+  const { config, resolved } = await client.getLoreMindConfig();
 
   const overrideValue = config ? getDeepValue(config as Record<string, unknown>, key) : undefined;
   const resolvedValue = getDeepValue(resolved as unknown as Record<string, unknown>, key);
@@ -118,7 +118,7 @@ export async function configShowCommand(
   client: WorkerClient,
   opts?: { overridesOnly?: boolean },
 ): Promise<void> {
-  const { config: overrides, resolved } = client.getLoreMindConfig();
+  const { config: overrides, resolved } = await client.getLoreMindConfig();
 
   // Pre-compute all rows so column widths can be measured before rendering
   const rows = flattenObject(resolved)
@@ -164,12 +164,12 @@ export async function configSetCommand(
   value: string,
 ): Promise<void> {
   const coerced = coerceValue(key, value);
-  client.setLoreMindConfig(key, coerced);
+  await client.setLoreMindConfig(key, coerced);
   console.log(`${GREEN}✓${RESET} Set ${BOLD}${key}${RESET} = ${JSON.stringify(coerced)}`);
 }
 
 export async function configUnsetCommand(client: WorkerClient, key: string): Promise<void> {
-  client.unsetLoreMindConfig(key);
+  await client.unsetLoreMindConfig(key);
   console.log(`${GREEN}✓${RESET} Unset ${BOLD}${key}${RESET}`);
 }
 
@@ -182,7 +182,7 @@ export async function configPromptPreviewCommand(client: WorkerClient, key: stri
     );
   }
 
-  const previews = client.getPromptPreview(resolvedKey);
+  const previews = await client.getPromptPreview(resolvedKey);
   for (let i = 0; i < previews.length; i++) {
     const preview = previews[i]!;
     if (i > 0) console.log("");
@@ -198,7 +198,7 @@ export async function configPromptPreviewCommand(client: WorkerClient, key: stri
 }
 
 export async function configCloneCommand(client: WorkerClient, lore: string): Promise<void> {
-  const result = client.cloneLoreMindConfig(lore);
+  const result = await client.cloneLoreMindConfig(lore);
   if (!result.hasConfig) {
     console.log(
       `${GREEN}✓${RESET} Source lore mind ${BOLD}${CYAN}${result.source}${RESET} has no config overrides; cleared overrides for current lore mind ${BOLD}${CYAN}${result.target}${RESET}.`,
@@ -212,7 +212,7 @@ export async function configCloneCommand(client: WorkerClient, lore: string): Pr
 }
 
 export async function providerConfigListCommand(client: WorkerClient): Promise<void> {
-  const providers = client.listProviderCredentials();
+  const providers = await client.listProviderCredentials();
   if (providers.length === 0) {
     console.log(`${DIM}No shared provider credentials configured.${RESET}`);
     return;
@@ -232,7 +232,7 @@ export async function providerConfigGetCommand(
   provider: string,
 ): Promise<void> {
   const parsedProvider = parseProvider(provider);
-  const config = client.getProviderCredential(parsedProvider);
+  const config = await client.getProviderCredential(parsedProvider);
   if (!config) {
     console.log(`${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`);
     return;
@@ -253,7 +253,7 @@ export async function providerConfigSetCommand(
   if (options.apiKey === undefined && options.baseUrl === undefined) {
     throw new Error("Provide at least one option: --api-key <value> or --base-url <value>");
   }
-  client.setProviderCredential(parsedProvider, {
+  await client.setProviderCredential(parsedProvider, {
     api_key: options.apiKey,
     base_url: options.baseUrl,
   });
@@ -271,9 +271,9 @@ export async function providerConfigUnsetCommand(
   const clearApiKey = options.apiKey ?? false;
   const clearBaseUrl = options.baseUrl ?? false;
   const noSelectors = !clearApiKey && !clearBaseUrl;
-  const next = client.unsetProviderCredential(parsedProvider, {
-    apiKey: noSelectors ? true : clearApiKey,
-    baseUrl: noSelectors ? true : clearBaseUrl,
+  const next = await client.unsetProviderCredential(parsedProvider, {
+    api_key: noSelectors ? true : clearApiKey,
+    base_url: noSelectors ? true : clearBaseUrl,
   });
   if (!next) {
     console.log(`${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`);

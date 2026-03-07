@@ -32,9 +32,41 @@ import {
   type LoreClient,
   type LoreClientOptions,
   type ResolveDangling,
+  type CloseResult,
+  type CloseWorkerRunResult,
+  type CloseJob,
+  type CloseJobDetail,
+  type IngestResult,
+  type RebuildResult,
+  type ScanResult,
 } from "@lore/sdk";
+import {
+  LoreDaemonRpcClient,
+  getLoreDaemonStatus,
+  readLoreDaemonLog,
+  startLoreDaemon,
+  stopLoreDaemon,
+} from "./daemon-client.ts";
+import { getLoreDaemonPaths } from "./daemon-paths.ts";
+import { runLoreDaemonServer } from "./daemon-server.ts";
+import type {
+  LoreDaemonLogSnapshot,
+  LoreDaemonRunResult,
+  LoreDaemonStatus,
+  LoreJob,
+  LoreJobDetail,
+  LoreJobType,
+} from "./daemon-protocol.ts";
 
 export type * from "@lore/sdk";
+export type {
+  LoreDaemonLogSnapshot,
+  LoreDaemonRunResult,
+  LoreDaemonStatus,
+  LoreJob,
+  LoreJobDetail,
+  LoreJobType,
+};
 export {
   LoreError,
   getDeepValue,
@@ -65,8 +97,9 @@ export {
   renderNarrativeWithCitations,
   renderProvenance,
 };
+export { startLoreDaemon, getLoreDaemonStatus, stopLoreDaemon, readLoreDaemonLog };
 
-type WorkerClientDeps = Pick<
+type DirectWorkerClientDeps = Pick<
   LoreClient,
   | "shutdown"
   | "open"
@@ -142,23 +175,138 @@ type WorkerClientDeps = Pick<
   | "unsetProviderCredential"
 >;
 
+type AwaitedReturn<T> = Promise<Awaited<T>>;
+
+const DAEMON_ROUTED_METHODS = new Set<string>([
+  "register",
+  "open",
+  "write",
+  "log",
+  "designateJournalEntry",
+  "ask",
+  "query",
+  "close",
+  "status",
+  "show",
+  "showNarrativeTrail",
+  "recall",
+  "scoreResult",
+  "conceptRename",
+  "conceptArchive",
+  "conceptRestore",
+  "conceptMerge",
+  "conceptSplit",
+  "conceptPatch",
+  "setConceptRelation",
+  "unsetConceptRelation",
+  "tagConcept",
+  "untagConcept",
+  "computeConceptHealth",
+  "explainConceptHealth",
+  "healConcepts",
+  "rebuild",
+  "refreshEmbeddings",
+  "reEmbed",
+  "resetLoreMind",
+  "setLoreMindConfig",
+  "unsetLoreMindConfig",
+  "cloneLoreMindConfig",
+  "bindSymbol",
+  "unbindSymbol",
+  "rebindAll",
+  "rescan",
+  "ingestDoc",
+  "ingestAll",
+  "autoBind",
+  "migrate",
+  "repair",
+  "removeLoreMind",
+  "setProviderCredential",
+  "unsetProviderCredential",
+  "listJobs",
+  "getJobDetail",
+  "waitForJob",
+  "runCloseWorker",
+]);
+
+function toLegacyCloseJob(job: LoreJob): CloseJob {
+  return {
+    id: job.id,
+    narrative_id: job.subject ?? job.id,
+    narrative_name: job.subject ?? "unknown",
+    status: job.status,
+    owner: job.owner,
+    attempt: job.attempt,
+    lease_expires_at: job.lease_expires_at,
+    last_error: job.last_error,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    completed_at: job.completed_at,
+  };
+}
+
+function asCloseResult(detail: LoreJobDetail): CloseResult {
+  if (!detail.result || typeof detail.result !== "object") {
+    throw new Error(`Close job '${detail.job.id}' has no close result`);
+  }
+  return {
+    ...(detail.result as CloseResult),
+    close_job: toLegacyCloseJob(detail.job),
+  };
+}
+
 export interface WorkerClientOptions extends LoreClientOptions {
-  client?: WorkerClientDeps;
+  client?: Partial<DirectWorkerClientDeps>;
+  daemonClient?: LoreDaemonRpcClient;
+  disableDaemon?: boolean;
 }
 
 export class WorkerClient {
-  private readonly client: WorkerClientDeps;
+  private readonly client: Partial<DirectWorkerClientDeps>;
+  private readonly daemon: LoreDaemonRpcClient;
+  private readonly disableDaemon: boolean;
+  private readonly injectedClient: boolean;
 
   constructor(options?: WorkerClientOptions) {
-    const { client, ...clientOptions } = options ?? {};
-    this.client = client ?? createLoreClient(clientOptions);
+    const { client, daemonClient, disableDaemon, ...clientOptions } = options ?? {};
+    this.client = client ?? (createLoreClient(clientOptions) as DirectWorkerClientDeps);
+    this.daemon = daemonClient ?? new LoreDaemonRpcClient(getLoreDaemonPaths());
+    this.disableDaemon = disableDaemon ?? process.env.LORE_DAEMON_DISABLE === "1";
+    this.injectedClient = Boolean(client);
   }
 
   shutdown(): void {
-    this.client.shutdown();
+    this.client.shutdown?.();
   }
 
-  open(
+  private useDaemon(method: string): boolean {
+    return !this.disableDaemon && !this.injectedClient && DAEMON_ROUTED_METHODS.has(method);
+  }
+
+  private async callDirect<K extends keyof DirectWorkerClientDeps>(
+    method: K,
+    args: Parameters<DirectWorkerClientDeps[K]>,
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps[K]>> {
+    const fn = this.client[method] as ((...args: Parameters<DirectWorkerClientDeps[K]>) => unknown) | undefined;
+    if (typeof fn !== "function") {
+      throw new Error(`Worker client method '${String(method)}' is unavailable`);
+    }
+    return (await fn.apply(this.client, args)) as Awaited<ReturnType<DirectWorkerClientDeps[K]>>;
+  }
+
+  private async call<K extends keyof DirectWorkerClientDeps>(
+    method: K,
+    args: Parameters<DirectWorkerClientDeps[K]>,
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps[K]>> {
+    if (!this.useDaemon(String(method))) {
+      return this.callDirect(method, args);
+    }
+    return (await this.daemon.call(String(method), args)) as Awaited<ReturnType<
+      DirectWorkerClientDeps[K]
+    >>;
+  }
+
+  async open(
     narrative: string,
     intent: string,
     opts?: {
@@ -167,407 +315,426 @@ export class WorkerClient {
       targets?: NarrativeTarget[];
       fromResultId?: string;
     },
-  ): ReturnType<WorkerClientDeps["open"]> {
-    return this.client.open(narrative, intent, opts);
-  }
-
-  write(...args: Parameters<WorkerClientDeps["write"]>): ReturnType<WorkerClientDeps["write"]> {
-    return this.client.write(...args);
-  }
-
-  log(...args: Parameters<WorkerClientDeps["log"]>): ReturnType<WorkerClientDeps["log"]> {
-    return this.client.log(...args);
-  }
-
-  designateJournalEntry(
-    ...args: Parameters<WorkerClientDeps["designateJournalEntry"]>
-  ): ReturnType<WorkerClientDeps["designateJournalEntry"]> {
-    return this.client.designateJournalEntry(...args);
-  }
-
-  ask(...args: Parameters<WorkerClientDeps["ask"]>): ReturnType<WorkerClientDeps["ask"]> {
-    return this.client.ask(...args);
-  }
-
-  query(...args: Parameters<WorkerClientDeps["query"]>): ReturnType<WorkerClientDeps["query"]> {
-    return this.client.query(...args);
-  }
-
-  close(...args: Parameters<WorkerClientDeps["close"]>): ReturnType<WorkerClientDeps["close"]> {
-    return this.client.close(...args);
-  }
+  ) {
+    return this.call("open", [narrative, intent, opts]);
+  }
+
+  async write(...args: Parameters<DirectWorkerClientDeps["write"]>) {
+    return this.call("write", args);
+  }
+
+  async log(...args: Parameters<DirectWorkerClientDeps["log"]>) {
+    return this.call("log", args);
+  }
+
+  async designateJournalEntry(...args: Parameters<DirectWorkerClientDeps["designateJournalEntry"]>) {
+    return this.call("designateJournalEntry", args);
+  }
+
+  async ask(...args: Parameters<DirectWorkerClientDeps["ask"]>) {
+    return this.call("ask", args);
+  }
+
+  async query(...args: Parameters<DirectWorkerClientDeps["query"]>) {
+    return this.call("query", args);
+  }
+
+  async close(...args: Parameters<DirectWorkerClientDeps["close"]>) {
+    return this.call("close", args);
+  }
+
+  async listJobs(opts?: { codePath?: string; limit?: number; type?: LoreJobType }) {
+    if (!this.useDaemon("listJobs")) {
+      const closeJobs = await this.callDirect("listCloseJobs", [{ codePath: opts?.codePath, limit: opts?.limit }]);
+      return closeJobs.map((job) => ({
+        id: job.id,
+        code_path: opts?.codePath ?? process.cwd(),
+        type: "close" as LoreJobType,
+        subject: job.narrative_name,
+        status: job.status,
+        owner: job.owner,
+        attempt: job.attempt,
+        lease_expires_at: job.lease_expires_at,
+        last_error: job.last_error,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        completed_at: job.completed_at,
+      }));
+    }
+    return (await this.daemon.listJobs(opts)) as LoreJob[];
+  }
+
+  async getJobDetail(jobId: string, opts?: { codePath?: string }) {
+    if (!this.useDaemon("getJobDetail")) {
+      const detail = await this.callDirect("getCloseJobDetail", [jobId, opts]);
+      return {
+        job: {
+          id: detail.job.id,
+          code_path: opts?.codePath ?? process.cwd(),
+          type: "close" as LoreJobType,
+          subject: detail.job.narrative_name,
+          status: detail.job.status,
+          owner: detail.job.owner,
+          attempt: detail.job.attempt,
+          lease_expires_at: detail.job.lease_expires_at,
+          last_error: detail.job.last_error,
+          created_at: detail.job.created_at,
+          updated_at: detail.job.updated_at,
+          completed_at: detail.job.completed_at,
+        },
+        result: detail.result ?? null,
+      } satisfies LoreJobDetail;
+    }
+    return this.daemon.getJobDetail(jobId, opts);
+  }
+
+  async waitForJob(jobId: string, opts?: { codePath?: string; pollMs?: number }) {
+    if (!this.useDaemon("waitForJob")) {
+      const result = await this.callDirect("waitForCloseJob", [jobId, opts]);
+      return {
+        job: ((result.close_job as unknown as LoreJob) ?? {
+          id: jobId,
+          code_path: opts?.codePath ?? process.cwd(),
+          type: "close",
+          subject: result.close_job?.narrative_name ?? "close",
+          status: "done",
+          owner: null,
+          attempt: 1,
+          lease_expires_at: null,
+          last_error: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+        } as LoreJob),
+        result,
+      } satisfies LoreJobDetail;
+    }
+    return this.daemon.waitForJob(jobId, opts);
+  }
 
-  listCloseJobs(
-    ...args: Parameters<WorkerClientDeps["listCloseJobs"]>
-  ): ReturnType<WorkerClientDeps["listCloseJobs"]> {
-    return this.client.listCloseJobs(...args);
+  async listCloseJobs(opts?: { codePath?: string; limit?: number }): Promise<CloseJob[]> {
+    if (!this.useDaemon("listJobs")) {
+      return this.callDirect("listCloseJobs", [opts]);
+    }
+    const jobs = await this.daemon.listJobs({ ...opts, type: "close" });
+    return jobs.map(toLegacyCloseJob);
   }
 
-  getCloseJobDetail(
-    ...args: Parameters<WorkerClientDeps["getCloseJobDetail"]>
-  ): ReturnType<WorkerClientDeps["getCloseJobDetail"]> {
-    return this.client.getCloseJobDetail(...args);
+  async getCloseJobDetail(jobId: string, opts?: { codePath?: string }): Promise<CloseJobDetail> {
+    if (!this.useDaemon("getJobDetail")) {
+      return this.callDirect("getCloseJobDetail", [jobId, opts]);
+    }
+    const detail = await this.daemon.getJobDetail(jobId, opts);
+    if (detail.job.type !== "close") {
+      throw new Error(`Job '${jobId}' is not a close job`);
+    }
+    return {
+      job: toLegacyCloseJob(detail.job),
+      result: (detail.result as CloseResult | null | undefined) ?? null,
+    };
   }
 
-  waitForCloseJob(
-    ...args: Parameters<WorkerClientDeps["waitForCloseJob"]>
-  ): ReturnType<WorkerClientDeps["waitForCloseJob"]> {
-    return this.client.waitForCloseJob(...args);
+  async waitForCloseJob(
+    jobId: string,
+    opts?: { codePath?: string; pollMs?: number },
+  ): Promise<CloseResult> {
+    if (!this.useDaemon("waitForJob")) {
+      return this.callDirect("waitForCloseJob", [jobId, opts]);
+    }
+    const detail = await this.daemon.waitForJob(jobId, opts);
+    if (detail.job.type !== "close") {
+      throw new Error(`Job '${jobId}' is not a close job`);
+    }
+    return asCloseResult(detail);
   }
 
-  runCloseWorker(
-    ...args: Parameters<WorkerClientDeps["runCloseWorker"]>
-  ): ReturnType<WorkerClientDeps["runCloseWorker"]> {
-    return this.client.runCloseWorker(...args);
+  async runCloseWorker(opts?: {
+    codePath?: string;
+    watch?: boolean;
+    pollMs?: number;
+  }): Promise<CloseWorkerRunResult> {
+    if (!this.useDaemon("runCloseWorker")) {
+      return this.callDirect("runCloseWorker", [opts]);
+    }
+    const result = await this.daemon.runCloseWorker(opts);
+    return {
+      mode: result.mode,
+      close_jobs_processed: result.jobs_processed_by_type.close,
+      close_jobs_failed: result.jobs_failed_by_type.close,
+      maintenance_jobs_processed: 0,
+      maintenance_jobs_failed: 0,
+      idle_polls: result.idle_polls,
+      last_job_id: result.last_job_id,
+    };
   }
 
-  status(...args: Parameters<WorkerClientDeps["status"]>): ReturnType<WorkerClientDeps["status"]> {
-    return this.client.status(...args);
+  async status(...args: Parameters<DirectWorkerClientDeps["status"]>) {
+    return this.call("status", args);
   }
 
-  ls(...args: Parameters<WorkerClientDeps["ls"]>): ReturnType<WorkerClientDeps["ls"]> {
-    return this.client.ls(...args);
+  async ls(...args: Parameters<DirectWorkerClientDeps["ls"]>) {
+    return this.call("ls", args);
   }
 
-  show(...args: Parameters<WorkerClientDeps["show"]>): ReturnType<WorkerClientDeps["show"]> {
-    return this.client.show(...args);
+  async show(...args: Parameters<DirectWorkerClientDeps["show"]>) {
+    return this.call("show", args);
   }
 
-  history(
-    ...args: Parameters<WorkerClientDeps["history"]>
-  ): ReturnType<WorkerClientDeps["history"]> {
-    return this.client.history(...args);
+  async history(...args: Parameters<DirectWorkerClientDeps["history"]>) {
+    return this.call("history", args);
   }
 
-  showNarrativeTrail(
-    ...args: Parameters<WorkerClientDeps["showNarrativeTrail"]>
-  ): ReturnType<WorkerClientDeps["showNarrativeTrail"]> {
-    return this.client.showNarrativeTrail(...args);
+  async showNarrativeTrail(...args: Parameters<DirectWorkerClientDeps["showNarrativeTrail"]>) {
+    return this.call("showNarrativeTrail", args);
   }
 
-  diff(...args: Parameters<WorkerClientDeps["diff"]>): ReturnType<WorkerClientDeps["diff"]> {
-    return this.client.diff(...args);
+  async diff(...args: Parameters<DirectWorkerClientDeps["diff"]>) {
+    return this.call("diff", args);
   }
 
-  diffCommits(
-    ...args: Parameters<WorkerClientDeps["diffCommits"]>
-  ): ReturnType<WorkerClientDeps["diffCommits"]> {
-    return this.client.diffCommits(...args);
+  async diffCommits(...args: Parameters<DirectWorkerClientDeps["diffCommits"]>) {
+    return this.call("diffCommits", args);
   }
 
-  conceptRename(
-    ...args: Parameters<WorkerClientDeps["conceptRename"]>
-  ): ReturnType<WorkerClientDeps["conceptRename"]> {
-    return this.client.conceptRename(...args);
+  async conceptRename(...args: Parameters<DirectWorkerClientDeps["conceptRename"]>) {
+    return this.call("conceptRename", args);
   }
 
-  conceptArchive(
-    ...args: Parameters<WorkerClientDeps["conceptArchive"]>
-  ): ReturnType<WorkerClientDeps["conceptArchive"]> {
-    return this.client.conceptArchive(...args);
+  async conceptArchive(...args: Parameters<DirectWorkerClientDeps["conceptArchive"]>) {
+    return this.call("conceptArchive", args);
   }
 
-  conceptRestore(
-    ...args: Parameters<WorkerClientDeps["conceptRestore"]>
-  ): ReturnType<WorkerClientDeps["conceptRestore"]> {
-    return this.client.conceptRestore(...args);
+  async conceptRestore(...args: Parameters<DirectWorkerClientDeps["conceptRestore"]>) {
+    return this.call("conceptRestore", args);
   }
 
-  conceptMerge(
-    ...args: Parameters<WorkerClientDeps["conceptMerge"]>
-  ): ReturnType<WorkerClientDeps["conceptMerge"]> {
-    return this.client.conceptMerge(...args);
+  async conceptMerge(...args: Parameters<DirectWorkerClientDeps["conceptMerge"]>) {
+    return this.call("conceptMerge", args);
   }
 
-  conceptSplit(
-    ...args: Parameters<WorkerClientDeps["conceptSplit"]>
-  ): ReturnType<WorkerClientDeps["conceptSplit"]> {
-    return this.client.conceptSplit(...args);
+  async conceptSplit(...args: Parameters<DirectWorkerClientDeps["conceptSplit"]>) {
+    return this.call("conceptSplit", args);
   }
 
-  conceptPatch(
-    ...args: Parameters<WorkerClientDeps["conceptPatch"]>
-  ): ReturnType<WorkerClientDeps["conceptPatch"]> {
-    return this.client.conceptPatch(...args);
+  async conceptPatch(...args: Parameters<DirectWorkerClientDeps["conceptPatch"]>) {
+    return this.call("conceptPatch", args);
   }
 
-  setConceptRelation(
-    ...args: Parameters<WorkerClientDeps["setConceptRelation"]>
-  ): ReturnType<WorkerClientDeps["setConceptRelation"]> {
-    return this.client.setConceptRelation(...args);
+  async setConceptRelation(...args: Parameters<DirectWorkerClientDeps["setConceptRelation"]>) {
+    return this.call("setConceptRelation", args);
   }
 
-  unsetConceptRelation(
-    ...args: Parameters<WorkerClientDeps["unsetConceptRelation"]>
-  ): ReturnType<WorkerClientDeps["unsetConceptRelation"]> {
-    return this.client.unsetConceptRelation(...args);
+  async unsetConceptRelation(...args: Parameters<DirectWorkerClientDeps["unsetConceptRelation"]>) {
+    return this.call("unsetConceptRelation", args);
   }
 
-  listConceptRelations(
-    ...args: Parameters<WorkerClientDeps["listConceptRelations"]>
-  ): ReturnType<WorkerClientDeps["listConceptRelations"]> {
-    return this.client.listConceptRelations(...args);
+  async listConceptRelations(...args: Parameters<DirectWorkerClientDeps["listConceptRelations"]>) {
+    return this.call("listConceptRelations", args);
   }
 
-  tagConcept(
-    ...args: Parameters<WorkerClientDeps["tagConcept"]>
-  ): ReturnType<WorkerClientDeps["tagConcept"]> {
-    return this.client.tagConcept(...args);
+  async tagConcept(...args: Parameters<DirectWorkerClientDeps["tagConcept"]>) {
+    return this.call("tagConcept", args);
   }
 
-  untagConcept(
-    ...args: Parameters<WorkerClientDeps["untagConcept"]>
-  ): ReturnType<WorkerClientDeps["untagConcept"]> {
-    return this.client.untagConcept(...args);
+  async untagConcept(...args: Parameters<DirectWorkerClientDeps["untagConcept"]>) {
+    return this.call("untagConcept", args);
   }
 
-  listConceptTags(
-    ...args: Parameters<WorkerClientDeps["listConceptTags"]>
-  ): ReturnType<WorkerClientDeps["listConceptTags"]> {
-    return this.client.listConceptTags(...args);
+  async listConceptTags(...args: Parameters<DirectWorkerClientDeps["listConceptTags"]>) {
+    return this.call("listConceptTags", args);
   }
 
-  computeConceptHealth(
-    ...args: Parameters<WorkerClientDeps["computeConceptHealth"]>
-  ): ReturnType<WorkerClientDeps["computeConceptHealth"]> {
-    return this.client.computeConceptHealth(...args);
+  async computeConceptHealth(...args: Parameters<DirectWorkerClientDeps["computeConceptHealth"]>) {
+    return this.call("computeConceptHealth", args);
   }
 
-  explainConceptHealth(
-    ...args: Parameters<WorkerClientDeps["explainConceptHealth"]>
-  ): ReturnType<WorkerClientDeps["explainConceptHealth"]> {
-    return this.client.explainConceptHealth(...args);
+  async explainConceptHealth(...args: Parameters<DirectWorkerClientDeps["explainConceptHealth"]>) {
+    return this.call("explainConceptHealth", args);
   }
 
-  healConcepts(
-    ...args: Parameters<WorkerClientDeps["healConcepts"]>
-  ): ReturnType<WorkerClientDeps["healConcepts"]> {
-    return this.client.healConcepts(...args);
+  async healConcepts(...args: Parameters<DirectWorkerClientDeps["healConcepts"]>) {
+    return this.call("healConcepts", args);
   }
 
-  rebuild(
-    ...args: Parameters<WorkerClientDeps["rebuild"]>
-  ): ReturnType<WorkerClientDeps["rebuild"]> {
-    return this.client.rebuild(...args);
+  async rebuild(...args: Parameters<DirectWorkerClientDeps["rebuild"]>) {
+    if (this.useDaemon("rebuild")) {
+      return (await this.daemon.call("rebuild", [args[0] ?? {}])) as RebuildResult;
+    }
+    return this.callDirect("rebuild", args);
   }
 
-  refreshEmbeddings(
-    ...args: Parameters<WorkerClientDeps["refreshEmbeddings"]>
-  ): ReturnType<WorkerClientDeps["refreshEmbeddings"]> {
-    return this.client.refreshEmbeddings(...args);
+  async refreshEmbeddings(...args: Parameters<DirectWorkerClientDeps["refreshEmbeddings"]>) {
+    return this.call("refreshEmbeddings", args);
   }
 
-  reEmbed(
-    ...args: Parameters<WorkerClientDeps["reEmbed"]>
-  ): ReturnType<WorkerClientDeps["reEmbed"]> {
-    return this.client.reEmbed(...args);
+  async reEmbed(...args: Parameters<DirectWorkerClientDeps["reEmbed"]>) {
+    return this.call("reEmbed", args);
   }
 
-  dryRunClose(
-    ...args: Parameters<WorkerClientDeps["dryRunClose"]>
-  ): ReturnType<WorkerClientDeps["dryRunClose"]> {
-    return this.client.dryRunClose(...args);
+  async dryRunClose(...args: Parameters<DirectWorkerClientDeps["dryRunClose"]>) {
+    return this.call("dryRunClose", args);
   }
 
-  commitLog(
-    ...args: Parameters<WorkerClientDeps["commitLog"]>
-  ): ReturnType<WorkerClientDeps["commitLog"]> {
-    return this.client.commitLog(...args);
+  async commitLog(...args: Parameters<DirectWorkerClientDeps["commitLog"]>) {
+    return this.call("commitLog", args);
   }
 
-  resetLoreMind(
-    ...args: Parameters<WorkerClientDeps["resetLoreMind"]>
-  ): ReturnType<WorkerClientDeps["resetLoreMind"]> {
-    return this.client.resetLoreMind(...args);
+  async resetLoreMind(...args: Parameters<DirectWorkerClientDeps["resetLoreMind"]>) {
+    return this.call("resetLoreMind", args);
   }
 
-  getLoreMindConfig(
-    ...args: Parameters<WorkerClientDeps["getLoreMindConfig"]>
-  ): ReturnType<WorkerClientDeps["getLoreMindConfig"]> {
-    return this.client.getLoreMindConfig(...args);
+  async getLoreMindConfig(...args: Parameters<DirectWorkerClientDeps["getLoreMindConfig"]>) {
+    return this.call("getLoreMindConfig", args);
   }
 
-  setLoreMindConfig(
-    ...args: Parameters<WorkerClientDeps["setLoreMindConfig"]>
-  ): ReturnType<WorkerClientDeps["setLoreMindConfig"]> {
-    return this.client.setLoreMindConfig(...args);
+  async setLoreMindConfig(...args: Parameters<DirectWorkerClientDeps["setLoreMindConfig"]>) {
+    return this.call("setLoreMindConfig", args);
   }
 
-  unsetLoreMindConfig(
-    ...args: Parameters<WorkerClientDeps["unsetLoreMindConfig"]>
-  ): ReturnType<WorkerClientDeps["unsetLoreMindConfig"]> {
-    return this.client.unsetLoreMindConfig(...args);
+  async unsetLoreMindConfig(...args: Parameters<DirectWorkerClientDeps["unsetLoreMindConfig"]>) {
+    return this.call("unsetLoreMindConfig", args);
   }
 
-  cloneLoreMindConfig(
-    ...args: Parameters<WorkerClientDeps["cloneLoreMindConfig"]>
-  ): ReturnType<WorkerClientDeps["cloneLoreMindConfig"]> {
-    return this.client.cloneLoreMindConfig(...args);
+  async cloneLoreMindConfig(...args: Parameters<DirectWorkerClientDeps["cloneLoreMindConfig"]>) {
+    return this.call("cloneLoreMindConfig", args);
   }
 
-  getPromptPreview(
-    ...args: Parameters<WorkerClientDeps["getPromptPreview"]>
-  ): ReturnType<WorkerClientDeps["getPromptPreview"]> {
-    return this.client.getPromptPreview(...args);
+  async getPromptPreview(...args: Parameters<DirectWorkerClientDeps["getPromptPreview"]>) {
+    return this.call("getPromptPreview", args);
   }
 
-  suggest(
-    ...args: Parameters<WorkerClientDeps["suggest"]>
-  ): ReturnType<WorkerClientDeps["suggest"]> {
-    return this.client.suggest(...args);
+  async suggest(...args: Parameters<DirectWorkerClientDeps["suggest"]>) {
+    return this.call("suggest", args);
   }
 
-  conceptBindings(
-    ...args: Parameters<WorkerClientDeps["conceptBindings"]>
-  ): ReturnType<WorkerClientDeps["conceptBindings"]> {
-    return this.client.conceptBindings(...args);
+  async conceptBindings(...args: Parameters<DirectWorkerClientDeps["conceptBindings"]>) {
+    return this.call("conceptBindings", args);
   }
 
-  bindSymbol(
-    ...args: Parameters<WorkerClientDeps["bindSymbol"]>
-  ): ReturnType<WorkerClientDeps["bindSymbol"]> {
-    return this.client.bindSymbol(...args);
+  async bindSymbol(...args: Parameters<DirectWorkerClientDeps["bindSymbol"]>) {
+    return this.call("bindSymbol", args);
   }
 
-  unbindSymbol(
-    ...args: Parameters<WorkerClientDeps["unbindSymbol"]>
-  ): ReturnType<WorkerClientDeps["unbindSymbol"]> {
-    return this.client.unbindSymbol(...args);
+  async unbindSymbol(...args: Parameters<DirectWorkerClientDeps["unbindSymbol"]>) {
+    return this.call("unbindSymbol", args);
   }
 
-  symbolDrift(
-    ...args: Parameters<WorkerClientDeps["symbolDrift"]>
-  ): ReturnType<WorkerClientDeps["symbolDrift"]> {
-    return this.client.symbolDrift(...args);
+  async symbolDrift(...args: Parameters<DirectWorkerClientDeps["symbolDrift"]>) {
+    return this.call("symbolDrift", args);
   }
 
-  rebindAll(
-    ...args: Parameters<WorkerClientDeps["rebindAll"]>
-  ): ReturnType<WorkerClientDeps["rebindAll"]> {
-    return this.client.rebindAll(...args);
+  async rebindAll(...args: Parameters<DirectWorkerClientDeps["rebindAll"]>) {
+    return this.call("rebindAll", args);
   }
 
-  rescan(...args: Parameters<WorkerClientDeps["rescan"]>): ReturnType<WorkerClientDeps["rescan"]> {
-    return this.client.rescan(...args);
+  async rescan(...args: Parameters<DirectWorkerClientDeps["rescan"]>) {
+    return this.call("rescan", args);
   }
 
-  ingestDoc(
-    ...args: Parameters<WorkerClientDeps["ingestDoc"]>
-  ): ReturnType<WorkerClientDeps["ingestDoc"]> {
-    return this.client.ingestDoc(...args);
+  async ingestDoc(...args: Parameters<DirectWorkerClientDeps["ingestDoc"]>) {
+    if (this.useDaemon("ingestDoc")) {
+      return (await this.daemon.call("ingestDoc", [args[0], { ...(args[1] ?? {}), wait: true }])) as IngestResult;
+    }
+    return this.callDirect("ingestDoc", args);
   }
 
-  ingestAll(
-    ...args: Parameters<WorkerClientDeps["ingestAll"]>
-  ): ReturnType<WorkerClientDeps["ingestAll"]> {
-    return this.client.ingestAll(...args);
+  async ingestAll(...args: Parameters<DirectWorkerClientDeps["ingestAll"]>) {
+    if (this.useDaemon("ingestAll")) {
+      return (await this.daemon.call("ingestAll", [{ ...(args[0] ?? {}), wait: true }])) as {
+        scan: ScanResult;
+        ingest: IngestResult;
+      };
+    }
+    return this.callDirect("ingestAll", args);
   }
 
-  autoBind(
-    ...args: Parameters<WorkerClientDeps["autoBind"]>
-  ): ReturnType<WorkerClientDeps["autoBind"]> {
-    return this.client.autoBind(...args);
+  async autoBind(...args: Parameters<DirectWorkerClientDeps["autoBind"]>) {
+    return this.call("autoBind", args);
   }
 
-  symbolSearch(
-    ...args: Parameters<WorkerClientDeps["symbolSearch"]>
-  ): ReturnType<WorkerClientDeps["symbolSearch"]> {
-    return this.client.symbolSearch(...args);
+  async symbolSearch(...args: Parameters<DirectWorkerClientDeps["symbolSearch"]>) {
+    return this.call("symbolSearch", args);
   }
 
-  fileSymbols(
-    ...args: Parameters<WorkerClientDeps["fileSymbols"]>
-  ): ReturnType<WorkerClientDeps["fileSymbols"]> {
-    return this.client.fileSymbols(...args);
+  async fileSymbols(...args: Parameters<DirectWorkerClientDeps["fileSymbols"]>) {
+    return this.call("fileSymbols", args);
   }
 
-  scanStats(
-    ...args: Parameters<WorkerClientDeps["scanStats"]>
-  ): ReturnType<WorkerClientDeps["scanStats"]> {
-    return this.client.scanStats(...args);
+  async scanStats(...args: Parameters<DirectWorkerClientDeps["scanStats"]>) {
+    return this.call("scanStats", args);
   }
 
-  coverageReport(
-    ...args: Parameters<WorkerClientDeps["coverageReport"]>
-  ): ReturnType<WorkerClientDeps["coverageReport"]> {
-    return this.client.coverageReport(...args);
+  async coverageReport(...args: Parameters<DirectWorkerClientDeps["coverageReport"]>) {
+    return this.call("coverageReport", args);
   }
 
-  bootstrapPlan(
-    ...args: Parameters<WorkerClientDeps["bootstrapPlan"]>
-  ): ReturnType<WorkerClientDeps["bootstrapPlan"]> {
-    return this.client.bootstrapPlan(...args);
+  async bootstrapPlan(...args: Parameters<DirectWorkerClientDeps["bootstrapPlan"]>) {
+    return this.call("bootstrapPlan", args);
   }
 
-  recall(...args: Parameters<WorkerClientDeps["recall"]>): ReturnType<WorkerClientDeps["recall"]> {
-    return this.client.recall(...args);
+  async recall(...args: Parameters<DirectWorkerClientDeps["recall"]>) {
+    return this.call("recall", args);
   }
 
-  scoreResult(
-    ...args: Parameters<WorkerClientDeps["scoreResult"]>
-  ): ReturnType<WorkerClientDeps["scoreResult"]> {
-    return this.client.scoreResult(...args);
+  async scoreResult(...args: Parameters<DirectWorkerClientDeps["scoreResult"]>) {
+    return this.call("scoreResult", args);
   }
 
-  register(
-    ...args: Parameters<WorkerClientDeps["register"]>
-  ): ReturnType<WorkerClientDeps["register"]> {
-    return this.client.register(...args);
+  async register(...args: Parameters<DirectWorkerClientDeps["register"]>) {
+    return this.call("register", args);
   }
 
-  migrate(
-    ...args: Parameters<WorkerClientDeps["migrate"]>
-  ): ReturnType<WorkerClientDeps["migrate"]> {
-    return this.client.migrate(...args);
+  async migrate(...args: Parameters<DirectWorkerClientDeps["migrate"]>) {
+    return this.call("migrate", args);
   }
 
-  migrateStatus(
-    ...args: Parameters<WorkerClientDeps["migrateStatus"]>
-  ): ReturnType<WorkerClientDeps["migrateStatus"]> {
-    return this.client.migrateStatus(...args);
+  async migrateStatus(...args: Parameters<DirectWorkerClientDeps["migrateStatus"]>) {
+    return this.call("migrateStatus", args);
   }
 
-  repair(...args: Parameters<WorkerClientDeps["repair"]>): ReturnType<WorkerClientDeps["repair"]> {
-    return this.client.repair(...args);
+  async repair(...args: Parameters<DirectWorkerClientDeps["repair"]>) {
+    return this.call("repair", args);
   }
 
-  listLoreMinds(
-    ...args: Parameters<WorkerClientDeps["listLoreMinds"]>
-  ): ReturnType<WorkerClientDeps["listLoreMinds"]> {
-    return this.client.listLoreMinds(...args);
+  async listLoreMinds(...args: Parameters<DirectWorkerClientDeps["listLoreMinds"]>) {
+    return this.call("listLoreMinds", args);
   }
 
-  removeLoreMind(
-    ...args: Parameters<WorkerClientDeps["removeLoreMind"]>
-  ): ReturnType<WorkerClientDeps["removeLoreMind"]> {
-    return this.client.removeLoreMind(...args);
+  async removeLoreMind(...args: Parameters<DirectWorkerClientDeps["removeLoreMind"]>) {
+    return this.call("removeLoreMind", args);
   }
 
-  listProviderCredentials(
-    ...args: Parameters<WorkerClientDeps["listProviderCredentials"]>
-  ): ReturnType<WorkerClientDeps["listProviderCredentials"]> {
-    return this.client.listProviderCredentials(...args);
+  async listProviderCredentials(...args: Parameters<DirectWorkerClientDeps["listProviderCredentials"]>) {
+    return this.call("listProviderCredentials", args);
   }
 
-  getProviderCredential(
-    ...args: Parameters<WorkerClientDeps["getProviderCredential"]>
-  ): ReturnType<WorkerClientDeps["getProviderCredential"]> {
-    return this.client.getProviderCredential(...args);
+  async getProviderCredential(...args: Parameters<DirectWorkerClientDeps["getProviderCredential"]>) {
+    return this.call("getProviderCredential", args);
   }
 
-  setProviderCredential(
-    ...args: Parameters<WorkerClientDeps["setProviderCredential"]>
-  ): ReturnType<WorkerClientDeps["setProviderCredential"]> {
-    return this.client.setProviderCredential(...args);
+  async setProviderCredential(...args: Parameters<DirectWorkerClientDeps["setProviderCredential"]>) {
+    return this.call("setProviderCredential", args);
   }
 
-  unsetProviderCredential(
-    ...args: Parameters<WorkerClientDeps["unsetProviderCredential"]>
-  ): ReturnType<WorkerClientDeps["unsetProviderCredential"]> {
-    return this.client.unsetProviderCredential(...args);
+  async unsetProviderCredential(...args: Parameters<DirectWorkerClientDeps["unsetProviderCredential"]>) {
+    return this.call("unsetProviderCredential", args);
   }
 }
 
 export function createWorkerClient(options?: WorkerClientOptions): WorkerClient {
   return new WorkerClient(options);
+}
+
+export async function serveLoreDaemon(opts?: {
+  socket?: string;
+  db?: string;
+  log?: string;
+}): Promise<void> {
+  const paths = getLoreDaemonPaths();
+  await runLoreDaemonServer({
+    ...paths,
+    socketPath: opts?.socket ?? paths.socketPath,
+    dbPath: opts?.db ?? paths.dbPath,
+    logPath: opts?.log ?? paths.logPath,
+  });
 }

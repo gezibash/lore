@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { defineCli, defineCommand } from "boune";
-import { spawn, spawnSync } from "child_process";
-import { createWorkerClient, LoreError, type WorkerClient } from "@lore/worker";
+import { spawnSync } from "child_process";
+import { createWorkerClient, serveLoreDaemon, LoreError, type WorkerClient } from "@lore/worker";
 import { formatError } from "./formatters.ts";
 import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
@@ -60,6 +60,12 @@ import { coverageCommand } from "./commands/scan.ts";
 import { ingestFileCommand, ingestAllCommand } from "./commands/ingest.ts";
 import { closeJobCommand, closeJobsCommand, waitCommand } from "./commands/jobs.ts";
 import { workerCommand } from "./commands/worker.ts";
+import {
+  daemonLogsCommand,
+  daemonStartCommand,
+  daemonStatusCommand,
+  daemonStopCommand,
+} from "./commands/daemon.ts";
 import { isJsonOutput, setJsonOutput } from "./output.ts";
 import pkg from "../package.json";
 
@@ -83,19 +89,6 @@ function getWorker(): WorkerClient {
     workerClient = createWorkerClient();
   }
   return workerClient;
-}
-
-function startDetachedWorker(): void {
-  if (process.env.LORE_DISABLE_AUTOSPAWN === "1") return;
-  try {
-    const child = spawn(process.execPath, [process.argv[1]!, "sys", "worker", "--once"], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-  } catch {
-    // Best effort only.
-  }
 }
 
 const versionString = getVersionString();
@@ -402,24 +395,32 @@ const cli = defineCli({
             pollMs: options["poll-ms"] as number | undefined,
           },
         );
-        if (mode === "merge" && !options.wait && result.close_job) {
-          startDetachedWorker();
-        }
       },
     }),
     jobs: defineCommand({
       name: "jobs",
-      description: "List recent close jobs",
+      description: "List recent daemon jobs",
       options: {
         limit: { type: "number", description: "Maximum jobs to show" },
+        type: {
+          type: "string",
+          description: "Filter to close, ingest, or rebuild jobs",
+        },
       },
       async action({ options }) {
-        await closeJobsCommand(getWorker(), { limit: options.limit as number | undefined });
+        const type = options.type as "close" | "ingest" | "rebuild" | undefined;
+        if (type && type !== "close" && type !== "ingest" && type !== "rebuild") {
+          throw new Error("Job type must be one of: close, ingest, rebuild");
+        }
+        await closeJobsCommand(getWorker(), {
+          limit: options.limit as number | undefined,
+          type,
+        });
       },
     }),
     job: defineCommand({
       name: "job",
-      description: "Inspect one close job",
+      description: "Inspect one daemon job",
       arguments: {
         id: { type: "string", required: true, description: "Job ID" },
       },
@@ -429,7 +430,7 @@ const cli = defineCli({
     }),
     wait: defineCommand({
       name: "wait",
-      description: "Wait for a close job to finish",
+      description: "Wait for a daemon job to finish",
       arguments: {
         id: { type: "string", required: true, description: "Job ID" },
       },
@@ -458,13 +459,66 @@ const cli = defineCli({
         }
       },
     }),
+    daemon: defineCommand({
+      name: "daemon",
+      description: "Manage the local Lore daemon",
+      subcommands: {
+        start: defineCommand({
+          name: "start",
+          description: "Start the local Lore daemon",
+          async action() {
+            await daemonStartCommand();
+          },
+        }),
+        status: defineCommand({
+          name: "status",
+          description: "Show Lore daemon status",
+          async action() {
+            await daemonStatusCommand();
+          },
+        }),
+        stop: defineCommand({
+          name: "stop",
+          description: "Stop the local Lore daemon",
+          async action() {
+            await daemonStopCommand();
+          },
+        }),
+        logs: defineCommand({
+          name: "logs",
+          description: "Show recent Lore daemon logs",
+          options: {
+            lines: { type: "number", description: "Number of lines to show" },
+          },
+          async action({ options }) {
+            await daemonLogsCommand((options.lines as number | undefined) ?? 100);
+          },
+        }),
+        serve: defineCommand({
+          name: "serve",
+          description: "Internal daemon entrypoint",
+          options: {
+            socket: { type: "string", description: "Socket path override" },
+            db: { type: "string", description: "Queue DB path override" },
+            log: { type: "string", description: "Log path override" },
+          },
+          async action({ options }) {
+            await serveLoreDaemon({
+              socket: options.socket as string | undefined,
+              db: options.db as string | undefined,
+              log: options.log as string | undefined,
+            });
+          },
+        }),
+      },
+    }),
     sys: defineCommand({
       name: "sys",
       description: "System administration for the current lore",
       subcommands: {
         worker: defineCommand({
           name: "worker",
-          description: "Drain queued close jobs",
+          description: "Ask the daemon to drain queued close jobs",
           options: {
             once: { type: "boolean", description: "Run until the queue is empty, then exit" },
             watch: { type: "boolean", description: "Keep polling for new jobs" },
@@ -498,8 +552,8 @@ const cli = defineCli({
               description: "Filter to a specific file path",
             },
           },
-          action({ options }) {
-            coverageCommand(getWorker(), {
+          async action({ options }) {
+            await coverageCommand(getWorker(), {
               uncovered: options.uncovered,
               file: options.file as string | undefined,
             });
