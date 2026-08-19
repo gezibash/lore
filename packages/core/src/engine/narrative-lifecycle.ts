@@ -114,6 +114,8 @@ import type { Generator } from "./generator.ts";
 import { rerankResults } from "./reranker.ts";
 import { tracer } from "./tracer.ts";
 import type { AskTracer } from "./tracer.ts";
+import { markLanceDirty } from "./lance-index.ts";
+import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
 import { searchSymbols, getSymbolByQualifiedName } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
@@ -525,12 +527,18 @@ async function buildOpenResult(
   embedder: Embedder,
   intent: string,
 ): Promise<OpenResult> {
-  // Search for relevant context based on intent
-  const { results } = await hybridSearch(db, embedder, intent, config, {
-    sourceType: "chunk",
-    limit: 5,
-    textModel: config.ai.embedding.model,
-  });
+  // Search for relevant context based on intent. Best-effort: an unreachable
+  // embedder must not block opening a narrative — the agent just starts blind.
+  let results: Awaited<ReturnType<typeof hybridSearch>>["results"] = [];
+  try {
+    ({ results } = await hybridSearch(db, embedder, intent, config, {
+      sourceType: "chunk",
+      limit: 5,
+      textModel: config.ai.embedding.model,
+    }));
+  } catch {
+    // context surfacing skipped
+  }
 
   const readNow = results.map((r) => ({
     file: r.concept ?? "unknown",
@@ -734,12 +742,23 @@ export async function queryConcepts(
       reasoning?: ReasoningLevel;
       max_matches: number;
       max_chars: number;
+      source_max_chars?: number;
+      /** Override the full-summary system prompt (prompt experimentation). */
+      system_prompt?: string;
+      /** Override the concise-mode system prompt (prompt experimentation). */
+      concise_system_prompt?: string;
     };
     onProgress?: (message: string) => void;
     /** Code-specialized embedder for a second vector search lane */
     codeEmbedder?: Embedder | null;
     /** "code" injects bound symbol bodies alongside concept prose. "arch" returns prose only. */
     mode?: "arch" | "code";
+    /** Return a concise, short-form answer. */
+    concise?: boolean;
+    /** Co-locate sibling chunks from a selected source chunk's file (default on). */
+    file_aware_siblings?: boolean;
+    /** Max sibling chunks pulled in per selected source file (default 4). */
+    max_file_siblings?: number;
     /** Ask-pipeline trace logger — logs all queryConcepts stages when provided */
     tracer?: AskTracer;
     ask_debt?: {
@@ -1658,6 +1677,7 @@ export async function queryConcepts(
   const summaryReasoning = summaryCfg?.reasoning;
   const summaryMaxMatches = Math.max(1, summaryCfg?.max_matches ?? 6);
   const summaryMaxChars = Math.max(200, summaryCfg?.max_chars ?? 1600);
+  const summarySourceMaxChars = Math.max(summaryMaxChars, summaryCfg?.source_max_chars ?? 6000);
   const maxGroundingHits = Math.max(1, retrievalOptsCfg?.max_grounding_hits ?? 8);
 
   // Score-gated summary input: filter by min_relevance when reranker was applied
@@ -1665,6 +1685,56 @@ export async function queryConcepts(
   const summaryInput = rerankedResults
     .filter((r) => !rerankApplied || r.score >= minRelevance)
     .slice(0, summaryMaxMatches);
+
+  // Representation guarantee: when retrieval surfaced direct code evidence, the
+  // pack must include at least one source chunk. Concept and doc prose are
+  // synthesized from past sessions and can be stale; rerankers reliably score
+  // fluent prose above raw code, so an unguarded top-N can go all-prose — and
+  // then no prompt rule can prefer current code the model never sees.
+  if (summaryInput.length > 0 && !summaryInput.some((r) => r.content.startsWith("[Source:"))) {
+    const bestSource = rerankedResults.find((r) => r.content.startsWith("[Source:"));
+    if (bestSource) {
+      summaryInput[summaryInput.length - 1] = bestSource;
+    }
+  }
+
+  // File-aware expansion: chunking is per-symbol, so a file's meaning is split
+  // across independently-ranked chunks. Retrieval routinely surfaces the chunk
+  // that *uses* a symbol while the chunk that *defines* it — a module-level
+  // constant, a sibling helper — ranks just below the cut, and the model then
+  // reports that the evidence does not contain the answer. When a source chunk
+  // makes the pack, bring its siblings from the same file along.
+  if (opts?.file_aware_siblings !== false) {
+    const selectedSourceFiles = new Map<string, number>();
+    for (const item of summaryInput) {
+      const row = finalChunkMap.get(item.chunkId);
+      if (row?.fl_type === "source" && row.source_file_path) {
+        selectedSourceFiles.set(row.source_file_path, (selectedSourceFiles.get(row.source_file_path) ?? 0) + 1);
+      }
+    }
+    if (selectedSourceFiles.size > 0) {
+      const alreadyIn = new Set(summaryInput.map((r) => r.chunkId));
+      const siblings: typeof summaryInput = [];
+      const perFileCap = Math.max(1, opts?.max_file_siblings ?? 4);
+      for (const filePath of selectedSourceFiles.keys()) {
+        let taken = 0;
+        for (const candidate of rerankedResults) {
+          if (taken >= perFileCap) break;
+          if (alreadyIn.has(candidate.chunkId)) continue;
+          const row = finalChunkMap.get(candidate.chunkId);
+          if (row?.source_file_path !== filePath) continue;
+          siblings.push(candidate);
+          alreadyIn.add(candidate.chunkId);
+          taken++;
+        }
+      }
+      summaryInput.push(...siblings);
+      opts?.tracer?.log("file_aware_siblings", {
+        files: [...selectedSourceFiles.keys()],
+        added: siblings.length,
+      });
+    }
+  }
   pprExpansionMeta.in_summary_input = summaryInput.reduce(
     (count, item) => count + (pprInfluencedChunkIds.has(item.chunkId) ? 1 : 0),
     0,
@@ -1756,13 +1826,19 @@ export async function queryConcepts(
   } else {
     summaryAttempted = true;
     opts?.onProgress?.("generating executive summary");
-    const summarySources: ProvenanceSource[] = results.slice(0, summaryMaxMatches).map((r) => ({
-      concept: r.concept,
-      score: r.meta.score,
-      files: r.meta.files,
-      staleness: r.meta.staleness,
-      last_updated: r.meta.last_updated,
-    }));
+    // Source and doc results carry no concept file metadata on a bootstrap mind,
+    // but their content headers name exactly the file that was read — use it, or
+    // "Key files" points at unrelated concepts while omitting the actual evidence.
+    const summarySources: ProvenanceSource[] = results.slice(0, summaryMaxMatches).map((r) => {
+      const provenance = parseEvidenceProvenance(r.summary ?? "");
+      return {
+        concept: r.concept,
+        score: r.meta.score,
+        files: r.meta.files.length > 0 ? r.meta.files : provenance ? [provenance.file] : [],
+        staleness: r.meta.staleness,
+        last_updated: r.meta.last_updated,
+      };
+    });
     const summaryStartMs = Date.now();
 
     try {
@@ -1772,12 +1848,22 @@ export async function queryConcepts(
         summaryInput.map((r) => ({
           concept: r.concept ?? "unknown",
           score: r.score,
-          content: r.content.slice(0, summaryMaxChars),
+          content: budgetEvidenceContent(
+            db,
+            r.content,
+            summaryMaxChars,
+            summarySourceMaxChars,
+            text,
+          ),
         })),
         rerankedResults.length,
         summaryReasoning,
         summaryTimeoutMs,
         {
+          systemPrompt: opts?.concise
+            ? (summaryCfg?.concise_system_prompt ?? CONCISE_EXECUTIVE_SUMMARY_SYSTEM_PROMPT)
+            : summaryCfg?.system_prompt,
+          concise: opts?.concise,
           codePath: opts?.codePath,
           grounding: summaryGrounding,
           symbolCount: symbolResults.length,
@@ -2081,17 +2167,8 @@ export interface SummaryGroundingReport {
   call_site_hits?: SummaryGroundingHit[];
 }
 
-const SUMMARY_GROUNDING_EXACTNESS_HINTS = [
-  "exact",
-  "file path",
-  "filepath",
-  "function",
-  "method",
-  "where defined",
-  "line",
-  "symbol",
-  "entrypoint",
-];
+const SUMMARY_GROUNDING_EXACTNESS_HINTS_RE =
+  /\b(exact|file\s*path|function|method|where defined|line\b|symbol|entrypoint)\b/i;
 const SUMMARY_GROUNDING_FILE_RE =
   /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|json|md|toml|yaml|yml|sql)\b/g;
 const SUMMARY_GROUNDING_INLINE_REF_RE = /`([^`]{2,120})`/g;
@@ -2116,7 +2193,7 @@ function createEmptySummaryGroundingReport(
 
 function detectExactnessQuery(query: string): boolean {
   const lower = query.toLowerCase();
-  if (SUMMARY_GROUNDING_EXACTNESS_HINTS.some((hint) => lower.includes(hint))) return true;
+  if (SUMMARY_GROUNDING_EXACTNESS_HINTS_RE.test(lower)) return true;
   if (SUMMARY_GROUNDING_FILE_RE.test(query)) return true;
   SUMMARY_GROUNDING_FILE_RE.lastIndex = 0;
   if (SUMMARY_GROUNDING_INLINE_REF_RE.test(query)) return true;
@@ -2402,8 +2479,60 @@ Evidence hierarchy (highest to lowest priority):
 4. Grounding evidence — file:line snippets from code search. Use for inline citations.
 
 Conflict resolution:
+- Evidence whose Source Content begins with "[Source:" is read directly from the current code at ingest time. When it contradicts concept or doc prose on any value, condition, or behavior, the source block wins — prose is synthesized from past sessions and may be stale.
 - If investigation trail entries contain specific numeric values, formulas, or constants that differ from concept content, the investigation trail is more likely correct (it was observed directly from source code).
 - If concept content provides broader context that investigation entries lack, combine both.`;
+
+/**
+ * Where to look next when the indexed evidence can't fully answer.
+ *
+ * Lore's job is to guide the next search, not just answer: an agent that gets
+ * "No information available." is stranded, while one that gets three file:line
+ * candidates keeps moving. Built from what retrieval DID surface — top symbol
+ * hits and grounding locations — so it costs no extra calls.
+ */
+function formatLookNext(
+  symbolResults: SymbolSearchResult[] | undefined,
+  grounding: SummaryGroundingReport | undefined,
+  maxTargets = 4,
+): string | null {
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  for (const sym of symbolResults ?? []) {
+    const key = `${sym.file_path}:${sym.line_start}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(`${sym.file_path}:${sym.line_start} (${sym.name})`);
+    if (targets.length >= maxTargets) break;
+  }
+  for (const hit of grounding?.hits ?? []) {
+    if (targets.length >= maxTargets) break;
+    const key = `${hit.file}:${hit.line}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(`${hit.file}:${hit.line}`);
+  }
+  if (targets.length === 0) return null;
+  return `Look next: ${targets.join(", ")}.`;
+}
+
+export const CONCISE_EXECUTIVE_SUMMARY_SYSTEM_PROMPT = `You answer questions with the shortest correct answer possible.
+Non-negotiable rules:
+- Treat the provided evidence pack as the only source of truth.
+- Answer in 1-2 sentences maximum. Prefer a single phrase or value when the question asks for a specific fact.
+- Answer the question that was actually asked. A "why" or "what is the reason"
+  question wants the purpose, tradeoff, or consequence — naming the mechanism that
+  implements it is a wrong answer to that question. Prefer "so that X" over "it does X".
+- Do not narrate your process, do not list supporting evidence, do not add unrequested background.
+- Do not include bullets, markdown headings, or citations.
+- Code in the evidence is evidence of its own design: state the reason it demonstrates.
+  Claim only what the evidence supports.
+- Evidence beginning with "[Source:" is read directly from the current code. When it
+  contradicts concept or doc prose on any value or behavior, the source block wins —
+  prose comes from past sessions and may be stale.
+- Say "No information available." only when the evidence pack is genuinely silent
+  on the subject — never merely because the reason is shown in code rather than prose.
+- Keep output under 50 words.`;
 
 function parseClaimAttributions(narrative: string): {
   cleaned: string;
@@ -2451,6 +2580,9 @@ export async function generateExecutiveSummary(
   timeoutMs?: number,
   opts?: {
     systemPrompt?: string;
+    /** Concise mode: the answer contract forbids citations, so suppress both
+     *  model-emitted [file:line] refs and the renderer's post-hoc injection. */
+    concise?: boolean;
     codePath?: string;
     grounding?: SummaryGroundingReport;
     symbolCount?: number;
@@ -2489,20 +2621,48 @@ export async function generateExecutiveSummary(
     symbols: symbolCount,
     journal_entries: journalEntryCount,
   };
-  const citations = [
-    ...grounding.hits.map((h) => ({
-      file: h.file,
-      line: h.line,
-      snippet: h.snippet,
-      term: h.term,
-    })),
-    ...(grounding.call_site_hits ?? []).map((h) => ({
-      file: h.file,
-      line: h.line,
-      snippet: h.snippet,
-      term: h.term,
-    })),
-  ];
+  // Concise answers carry no citations: an empty list here also disables the
+  // renderer's post-hoc [file:line] injection (renderNarrativeWithCitations).
+  // Pack provenance first: the files actually read for this answer. Grounding
+  // hits depend on bindings and term matches a bootstrap mind doesn't have yet,
+  // so without this a fresh mind produces answers with no file references at
+  // all — fatal for a tool whose job is telling agents where to look.
+  const packCitations = opts?.concise
+    ? []
+    : matches
+        .map((m) => ({ provenance: parseEvidenceProvenance(m.content), term: m.concept }))
+        .filter(
+          (c): c is { provenance: { file: string; line: number }; term: string } =>
+            c.provenance != null,
+        )
+        .map((c) => ({
+          file: c.provenance.file,
+          line: c.provenance.line,
+          snippet: "",
+          term: c.term,
+        }));
+  const seenCitationFiles = new Set(packCitations.map((c) => c.file));
+  const citations = opts?.concise
+    ? []
+    : [
+        ...packCitations,
+        ...grounding.hits
+          .filter((h) => !seenCitationFiles.has(h.file))
+          .map((h) => ({
+            file: h.file,
+            line: h.line,
+            snippet: h.snippet,
+            term: h.term,
+          })),
+        ...(grounding.call_site_hits ?? [])
+          .filter((h) => !seenCitationFiles.has(h.file))
+          .map((h) => ({
+            file: h.file,
+            line: h.line,
+            snippet: h.snippet,
+            term: h.term,
+          })),
+      ];
 
   const journalEvidenceText = formatJournalEvidenceForPrompt(journalGroups);
   const symbolEvidenceText = formatSymbolEvidenceForPrompt(symbolResultsForPrompt);
@@ -2558,7 +2718,12 @@ ${context}`;
     return {
       narrative: "",
       kind: "uncertain",
-      uncertainty_reason: "Could not find grounded code references for exact path/function claims",
+      uncertainty_reason: [
+        "Could not find grounded code references for exact path/function claims",
+        formatLookNext(opts?.symbolResults, grounding),
+      ]
+        .filter(Boolean)
+        .join(" "),
       sources,
       citations: [],
       counts,
@@ -2569,9 +2734,14 @@ ${context}`;
     return {
       narrative: "",
       kind: "uncertain",
-      uncertainty_reason: grounding.exactness_detected
-        ? "Could not produce a grounded exact summary from the available evidence"
-        : "Could not produce a grounded summary from available evidence",
+      uncertainty_reason: [
+        grounding.exactness_detected
+          ? "Could not produce a grounded exact summary from the available evidence"
+          : "Could not produce a grounded summary from available evidence",
+        formatLookNext(opts?.symbolResults, grounding),
+      ]
+        .filter(Boolean)
+        .join(" "),
       sources,
       citations: [],
       counts,
@@ -2579,11 +2749,21 @@ ${context}`;
     };
   }
   // For non-exactness queries, strip any LLM-generated [file:line] citations
-  // so our controlled per-term placement is the only source of inline refs
-  const cleanedGenerated = !grounding.exactness_detected
-    ? generated.replace(/\s*\[[^\]\s]+:\d+\]/g, "")
-    : generated;
-  const { cleaned: narrativeWithoutMarkers, claims } = parseClaimAttributions(cleanedGenerated);
+  // so our controlled per-term placement is the only source of inline refs.
+  // Concise mode strips unconditionally: its contract is a bare 1-2 sentence
+  // answer, and citation tails measurably read as noise to consumers.
+  const cleanedGenerated =
+    opts?.concise || !grounding.exactness_detected
+      ? generated.replace(/\s*\[[^\]\s]+:\d+\]/g, "")
+      : generated;
+  const refusalRe = /^no information available\.?$/i;
+  const finalGenerated =
+    opts?.concise && refusalRe.test(cleanedGenerated.trim())
+      ? [cleanedGenerated.trim(), formatLookNext(opts?.symbolResults, grounding)]
+          .filter(Boolean)
+          .join(" ")
+      : cleanedGenerated;
+  const { cleaned: narrativeWithoutMarkers, claims } = parseClaimAttributions(finalGenerated);
 
   // Compute per-claim confidence from source metrics
   const claimsWithConfidence = claims.map((claim) => {
@@ -2625,6 +2805,136 @@ ${context}`;
       modelId: genResult.modelId,
     },
   };
+}
+
+/** Header hybridSearch prepends to source-chunk evidence: `[Source: path:start-end]`. */
+const DOC_EVIDENCE_HEADER = /^\[Doc: ([^\]>]+?)(?: > [^\]]*)?\]/;
+
+/** File(:line) provenance carried by a source or doc chunk's own content header. */
+export function parseEvidenceProvenance(
+  content: string,
+): { file: string; line: number } | null {
+  const source = SOURCE_EVIDENCE_HEADER.exec(content);
+  if (source) return { file: source[1]!, line: Number(source[2]) };
+  const doc = DOC_EVIDENCE_HEADER.exec(content);
+  if (doc) return { file: doc[1]!.trim(), line: 1 };
+  return null;
+}
+
+const SOURCE_EVIDENCE_HEADER = /^\[Source: (.+):(\d+)-(\d+)\]/;
+
+/**
+ * Budget one evidence match for the summary prompt.
+ *
+ * Prose is front-loaded, so head-truncation costs little. Code is not: a class puts its
+ * docstring first and its discriminating methods last, so slicing the head silently drops
+ * the implementation the question is usually about — e.g. `URLPattern.__lt__`, which is the
+ * whole answer to "which proxy pattern wins", sits 3.6k chars into a 3.8k class body.
+ * Source chunks therefore get their own larger budget, and a chunk that still overflows
+ * gets an index of the members below the cut so they remain nameable and citable.
+ */
+/**
+ * Choose which slice of an oversized source chunk to keep.
+ *
+ * Head truncation loses the answer whenever it lives deep inside a long
+ * function — the trigger condition three hundred lines into a close routine,
+ * the reset statement after an early return. When the query gives us terms to
+ * look for, center the window on the densest run of matches instead, keeping
+ * some leading context so the reader still sees what they are inside of.
+ */
+function keepRelevantWindow(content: string, maxChars: number, query?: string): string {
+  if (content.length <= maxChars) return content;
+  const terms: string[] = [
+    ...new Set<string>(
+      expandCamelCase(query ?? "")
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/)
+        .filter((t: string) => t.length > 3),
+    ),
+  ];
+  if (terms.length === 0) return content.slice(0, maxChars);
+
+  const lines = content.split("\n");
+  const scores = lines.map((line) => {
+    const lower = line.toLowerCase();
+    return terms.reduce((score, term) => (lower.includes(term) ? score + 1 : score), 0);
+  });
+  if (scores.every((s) => s === 0)) return content.slice(0, maxChars);
+
+  // Slide a line window sized to roughly maxChars and take the densest one.
+  const avgLineLen = Math.max(1, Math.round(content.length / Math.max(1, lines.length)));
+  const windowLines = Math.max(20, Math.floor(maxChars / avgLineLen));
+  let best = 0;
+  let bestScore = -1;
+  for (let start = 0; start + 1 <= lines.length; start += Math.max(1, Math.floor(windowLines / 4))) {
+    let score = 0;
+    for (let i = start; i < Math.min(start + windowLines, lines.length); i++) score += scores[i]!;
+    if (score > bestScore) {
+      bestScore = score;
+      best = start;
+    }
+  }
+  const lead = Math.min(best, 12);
+  const head = lines.slice(0, lead).join("\n");
+  const window = lines.slice(best, best + windowLines).join("\n");
+  const marker = best > lead ? `\n… [${best - lead} lines omitted]\n` : "\n";
+  return `${head}${marker}${window}`.slice(0, maxChars);
+}
+
+export function budgetEvidenceContent(
+  db: Database,
+  content: string,
+  proseMaxChars: number,
+  sourceMaxChars: number,
+  query?: string,
+): string {
+  const header = SOURCE_EVIDENCE_HEADER.exec(content);
+  if (!header) return content.slice(0, proseMaxChars);
+  if (content.length <= sourceMaxChars) return content;
+
+  const filePath = header[1]!;
+  const chunkStart = Number(header[2]);
+  const chunkEnd = Number(header[3]);
+  const kept = keepRelevantWindow(content, sourceMaxChars, query);
+  const omitted = content.length - kept.length;
+
+  // Map the character cut back to a source line: the content carries a `[Source: …]`
+  // header line and an opening fence before the body starts at chunkStart.
+  const lastKeptLine = chunkStart + Math.max(0, kept.split("\n").length - 2) - 1;
+
+  let members: Array<{
+    qualified_name: string;
+    kind: string;
+    line_start: number;
+    signature: string | null;
+  }> = [];
+  try {
+    members = db
+      .query<
+        { qualified_name: string; kind: string; line_start: number; signature: string | null },
+        [string, number, number]
+      >(
+        `SELECT s.qualified_name, s.kind, s.line_start, s.signature
+           FROM symbols s
+           JOIN source_files sf ON s.source_file_id = sf.id
+          WHERE sf.file_path = ? AND s.line_start > ? AND s.line_end <= ?
+          ORDER BY s.line_start
+          LIMIT 40`,
+      )
+      .all(filePath, lastKeptLine, chunkEnd);
+  } catch {
+    // Symbol index unavailable — fall through to the plain truncation marker.
+  }
+
+  const parts = [kept, `\n… [truncated: ${omitted} chars omitted]`];
+  if (members.length > 0) {
+    parts.push(`\n[Members of ${filePath}:${chunkStart}-${chunkEnd} below the cut]`);
+    for (const m of members) {
+      const sig = m.signature ? ` ${m.signature.replace(/\s+/g, " ").trim()}` : "";
+      parts.push(`\n- ${m.qualified_name} (${m.kind}, ${filePath}:${m.line_start})${sig}`);
+    }
+  }
+  return parts.join("");
 }
 
 /**
@@ -3132,6 +3442,7 @@ export async function closeNarrativeOp(
         fields: { active_chunk_id: chunk.chunkId, staleness: 0 },
       })),
     );
+    markLanceDirty(db);
     const treeEntries: Array<{ conceptId: string; chunkId: string; conceptName: string }> = [];
     for (const concept of getConcepts(db)) {
       if (

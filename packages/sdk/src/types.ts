@@ -34,7 +34,8 @@ export type GenerationProvider =
   | "gateway"
   | "openrouter"
   | "moonshotai"
-  | "alibaba";
+  | "alibaba"
+  | "codex";
 
 export type SharedProvider = EmbeddingProvider | GenerationProvider | "cohere";
 
@@ -178,6 +179,8 @@ export interface ChunkRow {
   concept_refs: string | null;
   symbol_refs: string | null;
   file_refs: string | null;
+  /** Set for fl_type 'source' and 'doc': the repo-relative file this chunk came from. */
+  source_file_path: string | null;
 }
 
 export interface ConceptEdgeRow {
@@ -402,6 +405,8 @@ export interface QueryOptions {
   codePath?: string;
   search?: boolean;
   brief?: boolean;
+  /** Return a concise, short-form answer (1-2 sentences, no bullets). */
+  concise?: boolean;
   onProgress?: (message: string) => void;
   /** Controls retrieval mode. "code" injects bound symbol bodies alongside concept prose.
    *  "arch" returns concept prose only. Defaults to "arch". */
@@ -1175,7 +1180,9 @@ export type SymbolKind =
   | "enum"
   | "struct"
   | "trait"
-  | "impl";
+  | "impl"
+  | "module"
+  | "constant";
 
 export interface SourceFileRow {
   id: string;
@@ -1431,6 +1438,12 @@ export interface LoreConfig {
       api_key?: string;
       reasoning?: ReasoningLevel;
       reasoning_overrides?: Partial<Record<GenerationReasoningScope, ReasoningLevel>>;
+      /** codex provider: path to the codex binary (defaults to `codex` on PATH). */
+      codex_bin?: string;
+      /** codex provider: reasoning effort passed to codex exec (defaults to "low"). */
+      codex_reasoning_effort?: string;
+      /** codex provider: service tier (e.g. "fast") passed as service_tier. */
+      codex_service_tier?: string;
       prompts: GenerationPromptsConfig;
     };
     search?: {
@@ -1446,7 +1459,7 @@ export interface LoreConfig {
         executive_summary_ms?: number;
       };
       rerank?: {
-        provider?: "cohere";
+        provider?: "cohere" | "openrouter";
         enabled?: boolean;
         model?: string;
         candidates?: number;

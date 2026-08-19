@@ -44,6 +44,16 @@ import type {
 
 type DirectClient = ReturnType<typeof createLoreClient>;
 
+/** Methods safe to run concurrently against one mind: pure reads plus asks,
+ *  whose only writes are single-statement interaction/cache inserts. */
+const CONCURRENT_READ_METHODS = new Set<string>([
+  "ask",
+  "query",
+  "show",
+  "showNarrativeTrail",
+  "recall",
+]);
+
 interface CloseJobPayload {
   narrative: string;
   opts?: {
@@ -58,6 +68,7 @@ interface CloseJobPayload {
 interface IngestJobPayload {
   filePath?: string;
   wait?: boolean;
+  force?: boolean;
 }
 
 interface RebuildJobPayload {
@@ -364,7 +375,7 @@ export class LoreDaemonServer {
         );
       case "ingestAll":
         return this.handleIngestAll(
-          args[0] as { codePath?: string; wait?: boolean } | undefined,
+          args[0] as { codePath?: string; wait?: boolean; force?: boolean } | undefined,
         );
       case "rebuild":
         return this.handleRebuild(
@@ -375,8 +386,7 @@ export class LoreDaemonServer {
           args[0] as { codePath?: string } | undefined,
         );
       default: {
-        const codePath = getRequestCodePath(request.method, args, request.cwd);
-        return this.runSerialized(routeKeyForCodePath(codePath), async () => {
+        const invoke = async () => {
           const fn = (this.client as unknown as Record<string, (...args: unknown[]) => unknown>)[
             request.method
           ];
@@ -384,7 +394,15 @@ export class LoreDaemonServer {
             throw new Error(`Unknown daemon method '${request.method}'`);
           }
           return await fn.apply(this.client, args);
-        });
+        };
+        // Read-path methods run concurrently — the per-mind chain exists to keep
+        // multi-step mutations (open/write/close/merge/rebuild) from interleaving,
+        // and was serializing every ask behind every other ask.
+        if (CONCURRENT_READ_METHODS.has(request.method)) {
+          return invoke();
+        }
+        const codePath = getRequestCodePath(request.method, args, request.cwd);
+        return this.runSerialized(routeKeyForCodePath(codePath), invoke);
       }
     }
   }
@@ -575,7 +593,7 @@ export class LoreDaemonServer {
   }
 
   private async handleIngestAll(
-    opts?: { codePath?: string; wait?: boolean },
+    opts?: { codePath?: string; wait?: boolean; force?: boolean },
   ): Promise<{ scan: unknown; ingest: IngestResult } | LoreJobDetail> {
     const codePath = routeKeyForCodePath(opts?.codePath);
     const existing = getLatestPendingDaemonJob(this.queueDb, {
@@ -591,6 +609,7 @@ export class LoreDaemonServer {
         subject: "all",
         payload: {
           wait: opts?.wait ?? true,
+          force: opts?.force,
         } satisfies IngestJobPayload,
       });
     this.scheduleProcessing(codePath);
@@ -749,7 +768,10 @@ export class LoreDaemonServer {
           const ingestPayload = payload as IngestJobPayload;
           result = ingestPayload.filePath
             ? await this.client.ingestDoc(ingestPayload.filePath, { codePath: raw.code_path })
-            : await this.client.ingestAll({ codePath: raw.code_path });
+            : await this.client.ingestAll({
+                codePath: raw.code_path,
+                force: ingestPayload.force,
+              });
           break;
         }
         case "rebuild": {

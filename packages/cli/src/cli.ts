@@ -278,6 +278,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       options: {
         search: { type: "boolean", description: "Include external web search results" },
         brief: { type: "boolean", description: "Return targeted excerpts instead of full dumps" },
+        concise: { type: "boolean", description: "Return a short, direct answer (1-2 sentences)" },
         sources: { type: "boolean", description: "Include matched sources in output" },
         mode: {
           type: "string",
@@ -288,6 +289,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
         await queryCommand(getWorker(), args.query, {
           search: options.search,
           brief: options.brief,
+          concise: options.concise,
           sources: options.sources,
           mode: options.mode as "arch" | "code" | undefined,
         });
@@ -512,12 +514,18 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       arguments: {
         file: { type: "string", required: false, description: "Specific file to ingest" },
       },
-      async action({ args }) {
+      options: {
+        force: {
+          type: "boolean",
+          description: "Re-chunk every file, ignoring the unchanged-content check",
+        },
+      },
+      async action({ args, options }) {
         const file = args.file as string | undefined;
         if (file) {
           await ingestFileCommand(getWorker(), file);
         } else {
-          await ingestAllCommand(getWorker());
+          await ingestAllCommand(getWorker(), { force: options.force as boolean | undefined });
         }
       },
     }),

@@ -159,6 +159,7 @@ import { computeLineDiff, isDiffTooLarge, type DiffHunk } from "./line-diff.ts";
 import { Embedder } from "./embedder.ts";
 import { Generator, buildGenerationSystemPrompt } from "./generator.ts";
 import { AskTracer } from "./tracer.ts";
+import { markLanceDirty, rebuildLanceIndex } from "./lance-index.ts";
 import {
   openNarrative,
   logEntry,
@@ -854,6 +855,7 @@ export class LoreEngine {
       summaryCfg?.reasoning ?? config.ai.generation.reasoning_overrides?.executive_summary;
     const summaryMaxMatches = summaryCfg?.max_matches ?? 10;
     const summaryMaxChars = summaryCfg?.max_chars ?? 1600;
+    const summarySourceMaxChars = summaryCfg?.source_max_chars ?? 6000;
     const loreName = this.loreNameFor(entry);
 
     const summaryGeneratorPromise = summaryEnabled
@@ -936,6 +938,7 @@ export class LoreEngine {
     const result = await queryConcepts(db, text, config, embedder, {
       search: internal?.disableWeb ? false : opts?.search,
       brief: opts?.brief,
+      concise: opts?.concise,
       codePath: entry.code_path,
       mode: opts?.mode,
       summary_generator: summaryGenerator,
@@ -945,6 +948,9 @@ export class LoreEngine {
         reasoning: summaryReasoning,
         max_matches: summaryMaxMatches,
         max_chars: summaryMaxChars,
+        source_max_chars: summarySourceMaxChars,
+        system_prompt: summaryCfg?.system_prompt,
+        concise_system_prompt: summaryCfg?.concise_system_prompt,
       },
       onProgress: opts?.onProgress,
       codeEmbedder: effectiveCodeEmbedder,
@@ -3380,7 +3386,9 @@ export class LoreEngine {
   async rebuild(opts?: { codePath?: string }) {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
-    return rebuildFromDisk(db, entry.lore_path, config);
+    const result = await rebuildFromDisk(db, entry.lore_path, config);
+    await rebuildLanceIndex(db);
+    return result;
   }
 
   async reEmbed(opts?: {
@@ -3437,12 +3445,19 @@ export class LoreEngine {
       if (await deleteEmb(embFile)) deleted++;
     }
 
-    // 4. Pre-read all contents concurrently
+    // 4. Pre-read all contents concurrently; drop empty chunks — embedding
+    // providers reject empty strings and there is nothing to retrieve anyway.
     const EMBED_BATCH_SIZE = 96;
     const [proseContents, sourceContents] = await Promise.all([
       Promise.all(proseChunks.map((c) => readChunkFn(c.file_path).then((p) => p.content))),
       Promise.all(sourceChunks.map((c) => readChunkFn(c.file_path).then((p) => p.content))),
     ]);
+    const prosePairs = proseChunks
+      .map((chunk, i) => ({ chunk, content: proseContents[i]! }))
+      .filter((p) => p.content.trim().length > 0);
+    const sourcePairs = sourceChunks
+      .map((chunk, i) => ({ chunk, content: sourceContents[i]! }))
+      .filter((p) => p.content.trim().length > 0);
 
     // 5. Run text and code embedding passes concurrently
     // Both passes call different remote APIs; DB writes are serialized by the event loop.
@@ -3450,17 +3465,16 @@ export class LoreEngine {
     let codeEmbedded = 0;
 
     const textPass = async () => {
-      for (let i = 0; i < proseChunks.length; i += EMBED_BATCH_SIZE) {
-        const batchChunks = proseChunks.slice(i, i + EMBED_BATCH_SIZE);
-        const batchContents = proseContents.slice(i, i + EMBED_BATCH_SIZE);
-        const batchEmbeddings = await embedder.embedBatch(batchContents);
-        for (let j = 0; j < batchChunks.length; j++) {
-          const chunk = batchChunks[j]!;
+      for (let i = 0; i < prosePairs.length; i += EMBED_BATCH_SIZE) {
+        const batch = prosePairs.slice(i, i + EMBED_BATCH_SIZE);
+        const batchEmbeddings = await embedder.embedBatch(batch.map((p) => p.content));
+        for (let j = 0; j < batch.length; j++) {
+          const { chunk } = batch[j]!;
           const embedding = batchEmbeddings[j]!;
           insertEmb(db, chunk.id, embedding, textModel);
           await writeEmb(embPath(chunk.file_path), textModel, embedding);
           reEmbedded++;
-          opts?.onProgress?.("text", reEmbedded, proseChunks.length, textModel);
+          opts?.onProgress?.("text", reEmbedded, prosePairs.length, textModel);
         }
       }
     };
@@ -3504,19 +3518,18 @@ export class LoreEngine {
       }
 
       // Embed source chunks with code model
-      for (let i = 0; i < sourceChunks.length; i += EMBED_BATCH_SIZE) {
-        const batchChunks = sourceChunks.slice(i, i + EMBED_BATCH_SIZE);
-        const batchContents = sourceContents.slice(i, i + EMBED_BATCH_SIZE);
+      for (let i = 0; i < sourcePairs.length; i += EMBED_BATCH_SIZE) {
+        const batch = sourcePairs.slice(i, i + EMBED_BATCH_SIZE);
         try {
-          const batchEmbeddings = await codeEmbedder.embedBatch(batchContents);
-          for (let j = 0; j < batchChunks.length; j++) {
-            insertEmb(db, batchChunks[j]!.id, batchEmbeddings[j]!, resolvedCodeModel);
+          const batchEmbeddings = await codeEmbedder.embedBatch(batch.map((p) => p.content));
+          for (let j = 0; j < batch.length; j++) {
+            insertEmb(db, batch[j]!.chunk.id, batchEmbeddings[j]!, resolvedCodeModel);
             codeEmbedded++;
-            opts?.onProgress?.("code", codeEmbedded, sourceChunks.length, resolvedCodeModel);
+            opts?.onProgress?.("code", codeEmbedded, sourcePairs.length, resolvedCodeModel);
           }
         } catch (err) {
           throw new Error(
-            `Code embedding failed on batch ${Math.floor(i / EMBED_BATCH_SIZE) + 1} (source chunks ${i + 1}-${Math.min(i + EMBED_BATCH_SIZE, sourceChunks.length)}/${sourceChunks.length}): ${err instanceof Error ? err.message : String(err)}`,
+            `Code embedding failed on batch ${Math.floor(i / EMBED_BATCH_SIZE) + 1} (source chunks ${i + 1}-${Math.min(i + EMBED_BATCH_SIZE, sourcePairs.length)}/${sourcePairs.length}): ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
@@ -3532,6 +3545,8 @@ export class LoreEngine {
       await discover(db, generator);
       opts?.onProgress?.("graph", 1, 1);
     }
+
+    await rebuildLanceIndex(db);
 
     return { reEmbedded, codeEmbedded, deleted, textModel, codeModel: resolvedCodeModel };
   }
@@ -4085,6 +4100,7 @@ export class LoreEngine {
     const { resolve } = await import("path");
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
+    markLanceDirty(db);
     return {
       files_ingested: result === "ingested" ? 1 : 0,
       files_skipped: result === "skipped" ? 1 : 0,
@@ -4096,11 +4112,85 @@ export class LoreEngine {
 
   async ingestAll(opts?: {
     codePath?: string;
+    force?: boolean;
   }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    const scan = await rescanProject(db, entry.code_path, entry.lore_path);
-    const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path);
+    const scan = await rescanProject(db, entry.code_path, entry.lore_path, { force: opts?.force });
+    const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path, { force: opts?.force });
+    await this.embedMissingChunks(db, entry);
+    markLanceDirty(db);
     return { scan, ingest };
+  }
+
+  /**
+   * Embed every chunk that lacks an embedding under the currently configured
+   * models. Rescans mint new chunk ids (changed files, or re-chunking after a
+   * scanner change), which orphans prior embeddings — without this, fresh code
+   * is invisible to the vector lanes until a full manual reEmbed. Idempotent
+   * and self-healing: it picks up whatever is missing, however it got missed.
+   * Embedding-provider failures are logged and skipped — ingest must succeed
+   * even when the embedder is down; the next ingest heals the remainder.
+   */
+  private async embedMissingChunks(db: Database, entry: RegistryEntry): Promise<void> {
+    const config = this.configFor(entry);
+    const missing = db
+      .query<{ id: string; file_path: string; fl_type: string }, []>(
+        `SELECT c.id, c.file_path, c.fl_type
+         FROM chunks c LEFT JOIN embeddings e ON e.chunk_id = c.id
+         WHERE e.chunk_id IS NULL`,
+      )
+      .all();
+    if (missing.length === 0) return;
+
+    const loreName = this.loreNameFor(entry);
+    const { readChunk: readChunkFn } = await import("@/storage/chunk-reader.ts");
+    const { insertEmbeddingBatch: insertBatch } = await import("@/db/embeddings.ts");
+
+    const contents = await Promise.all(
+      missing.map((c) =>
+        readChunkFn(c.file_path).then(
+          (p) => p.content,
+          () => "",
+        ),
+      ),
+    );
+    const rows = missing
+      .map((chunk, i) => ({ chunk, content: contents[i]! }))
+      .filter((r) => r.content.trim().length > 0);
+
+    const sourceRows = rows.filter((r) => r.chunk.fl_type === "source");
+    const proseRows = rows.filter((r) => r.chunk.fl_type !== "source");
+    const BATCH = 96;
+
+    const embedRows = async (
+      batchRows: typeof rows,
+      embedderInstance: Embedder,
+      model: string,
+    ) => {
+      for (let i = 0; i < batchRows.length; i += BATCH) {
+        const batch = batchRows.slice(i, i + BATCH);
+        try {
+          const embeddings = await embedderInstance.embedBatch(batch.map((r) => r.content));
+          insertBatch(
+            db,
+            batch.map((r, j) => ({ chunkId: r.chunk.id, embedding: embeddings[j]!, model })),
+          );
+        } catch {
+          return; // provider outage — remaining batches heal on a later ingest
+        }
+      }
+    };
+
+    if (proseRows.length > 0) {
+      const embedder = await this.embedderFor(config, loreName);
+      await embedRows(proseRows, embedder, config.ai.embedding.model);
+    }
+    if (sourceRows.length > 0 && config.ai.embedding.code?.model) {
+      const codeEmbedder = await this.codeEmbedderFor(config, loreName);
+      if (codeEmbedder) {
+        await embedRows(sourceRows, codeEmbedder, config.ai.embedding.code.model);
+      }
+    }
   }
 
   symbolSearch(

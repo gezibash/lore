@@ -21,6 +21,13 @@ const TYPESCRIPT_QUERY = `
   (variable_declarator
     name: (identifier) @name
     value: [(arrow_function) (function_expression)])) @definition.function
+(program
+  (lexical_declaration
+    (variable_declarator name: (identifier) @name)) @definition.constant)
+(program
+  (export_statement
+    (lexical_declaration
+      (variable_declarator name: (identifier) @name)) @definition.constant))
 `;
 
 const JAVASCRIPT_QUERY = `
@@ -31,11 +38,17 @@ const JAVASCRIPT_QUERY = `
   (variable_declarator
     name: (identifier) @name
     value: [(arrow_function) (function_expression)])) @definition.function
+(program
+  (lexical_declaration
+    (variable_declarator name: (identifier) @name)) @definition.constant)
 `;
 
 const PYTHON_QUERY = `
 (function_definition name: (identifier) @name) @definition.function
 (class_definition name: (identifier) @name) @definition.class
+(module
+  (expression_statement
+    (assignment left: (identifier) @name)) @definition.constant)
 `;
 
 const GO_QUERY = `
@@ -149,6 +162,7 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
     "struct",
     "trait",
     "impl",
+    "constant",
   ];
   return valid.includes(kind as SymbolKind) ? (kind as SymbolKind) : null;
 }
@@ -315,11 +329,15 @@ export function extractSymbols(
 
     if (!nameText || !kind || !definitionNode) continue;
 
-    // For Elixir, qualify functions and nested modules with their parent defmodule
-    const needsParent =
-      kind === "method" ||
-      (language === "elixir" && (kind === "function" || kind === "class" || kind === "interface"));
-    const parentClass = needsParent ? findParentClass(definitionNode) : null;
+    // Qualify every nested definition with its enclosing container. This cannot be gated
+    // on `kind === "method"`: only TS/JS/Go emit a distinct method capture. Python methods
+    // are `function_definition` inside a `class_definition` and Rust methods are
+    // `function_item` inside an `impl_item`, so both arrive as kind "function" and would
+    // otherwise be stored as free functions — leaving `URLPattern.__lt__` indistinguishable
+    // from a top-level `__lt__`, and 66 different `__init__`s indistinguishable from each
+    // other. findParentClass returns null at file scope, so top-level definitions are
+    // unaffected in every language.
+    const parentClass = findParentClass(definitionNode);
     const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
 
     symbols.push({

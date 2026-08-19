@@ -1,4 +1,4 @@
-import { join } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import type { Registry, RegistryEntry, ProviderCredential, SharedProvider } from "@/types/index.ts";
 
@@ -41,10 +41,26 @@ export function findLoreMindByCodePath(
   reg: Registry,
   codePath: string,
 ): { name: string; entry: RegistryEntry } | null {
+  const targetPath = resolve(codePath);
+
   for (const [name, entry] of Object.entries(reg.lore_minds)) {
-    if (entry.code_path === codePath) return { name, entry };
+    if (resolve(entry.code_path) === targetPath) return { name, entry };
   }
-  return null;
+
+  let bestMatch: { name: string; entry: RegistryEntry } | null = null;
+  for (const [name, entry] of Object.entries(reg.lore_minds)) {
+    const rootPath = resolve(entry.code_path);
+    const childPath = relative(rootPath, targetPath);
+    const isDescendant =
+      childPath.length > 0 && !childPath.startsWith("..") && !isAbsolute(childPath);
+
+    if (!isDescendant) continue;
+    if (!bestMatch || rootPath.length > resolve(bestMatch.entry.code_path).length) {
+      bestMatch = { name, entry };
+    }
+  }
+
+  return bestMatch;
 }
 
 export function addLoreMind(

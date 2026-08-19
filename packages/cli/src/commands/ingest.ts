@@ -28,15 +28,18 @@ export async function ingestFileCommand(client: WorkerClient, filePath: string):
   }
 }
 
-export async function ingestAllCommand(client: WorkerClient): Promise<void> {
+export async function ingestAllCommand(
+  client: WorkerClient,
+  opts?: { force?: boolean },
+): Promise<void> {
   if (isJsonOutput()) {
-    const { scan, ingest } = await client.ingestAll();
+    const { scan, ingest } = await client.ingestAll({ force: opts?.force });
     emit({ kind: "all", scan, ingest });
     return;
   }
   const spinner = createSpinner("Refreshing code and docs...").start();
   try {
-    const { scan, ingest } = await client.ingestAll();
+    const { scan, ingest } = await client.ingestAll({ force: opts?.force });
     const parts: string[] = [];
     parts.push(`Complete in ${Math.max(scan.duration_ms, ingest.duration_ms)}ms`);
     parts.push(

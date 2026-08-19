@@ -124,9 +124,27 @@ On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Pe
 
 **Embedding providers:** `ollama` · `openai` · `openai-compatible` · `openrouter` · `voyage` · `gateway`
 
-**Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway`
+**Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway` · `codex`
 
 Default (no config needed): local Ollama with `qwen3-embedding:8b` + `qwen3:8b`.
+
+### Codex provider
+
+`codex` runs generation through the locally installed [Codex CLI](https://developers.openai.com/codex/cli), billed to your Codex subscription instead of a metered API key. It needs `codex` on `PATH` and an authenticated session; no `api_key` is used.
+
+```json
+{
+  "ai": {
+    "generation": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "codex_reasoning_effort": "low"
+    }
+  }
+}
+```
+
+`codex exec` is an agent rather than a completion endpoint, so each call carries Codex's own system prompt and tool definitions — roughly 13k input tokens lore never uses, and about 2× the latency of a direct API provider. That is a fine trade for interactive `ask`, but use a metered provider for benchmarks and other bulk or parallel workloads.
 
 Example `~/.lore/config.json`:
 

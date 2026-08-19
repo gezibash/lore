@@ -4,6 +4,15 @@ import type { LoreConfig } from "@/types/index.ts";
 import { createEmbeddingModel, createEmbeddingModelFromProviderConfig } from "./provider.ts";
 import type { EmbeddingProviderConfig } from "./provider.ts";
 
+/** Providers reject inputs past their context limit (e.g. 131,072 chars for
+ *  qwen3-embedding via OpenRouter). Truncate here — the boundary — so every
+ *  embed call path is protected; retrieval on a truncated head beats a 422. */
+const MAX_EMBED_CHARS = 100_000;
+
+function clip(text: string): string {
+  return text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
+}
+
 export class Embedder {
   private model: EmbeddingModel;
 
@@ -36,7 +45,7 @@ export class Embedder {
     try {
       const { embedding } = await embed({
         model: this.model,
-        value: text,
+        value: clip(text),
         ...(timeoutAbort ? { abortSignal: timeoutAbort.signal } : {}),
       });
       return Float32Array.from(embedding);
@@ -61,7 +70,7 @@ export class Embedder {
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     try {
-      const { embeddings } = await embedMany({ model: this.model, values: texts });
+      const { embeddings } = await embedMany({ model: this.model, values: texts.map(clip) });
       return embeddings.map((e) => Float32Array.from(e));
     } catch (error) {
       throw new LoreError(

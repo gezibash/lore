@@ -106,6 +106,14 @@ export async function createGenerationModel(
         headers: { "X-Title": appName ?? "lore" },
       }).chatModel(model);
     }
+    case "codex": {
+      const { createCodexLanguageModel } = await import("./codex-provider.ts");
+      return createCodexLanguageModel(model, {
+        binPath: config.ai.generation.codex_bin,
+        reasoningEffort: config.ai.generation.codex_reasoning_effort ?? "low",
+        serviceTier: config.ai.generation.codex_service_tier,
+      });
+    }
     case "moonshotai": {
       const { createMoonshotAI } = await import("@ai-sdk/moonshotai");
       return createMoonshotAI({

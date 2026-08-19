@@ -47,6 +47,7 @@ export const defaultConfig: LoreConfig = {
         enabled: true,
         max_matches: 6,
         max_chars: 1600,
+        source_max_chars: 6000,
       },
       retrieval_opts: {
         max_grounding_hits: 8,
@@ -155,8 +156,12 @@ export function resolveConfig(
   // Layer 1: hardcoded defaults
   let config = { ...defaultConfig };
 
-  // Layer 2: global config file (~/.lore/config.json)
-  const globalOverrides = loadJsonConfig(GLOBAL_CONFIG_PATH);
+  // Layer 2: global config file (~/.lore/config.json, or <lore_root>/config.json
+  // when a custom root is set — keeps tests hermetic from the user's real home)
+  const globalConfigPath = overrides?.lore_root
+    ? join(overrides.lore_root, "config.json")
+    : GLOBAL_CONFIG_PATH;
+  const globalOverrides = loadJsonConfig(globalConfigPath);
   config = deepMerge(config, globalOverrides);
 
   // Layer 3: per-lore-mind config from registry

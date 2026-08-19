@@ -15,14 +15,68 @@ import {
 
 const DOC_PREPARE_CONCURRENCY = 4;
 
+/** Minimum characters a heading section keeps to stand alone; smaller ones merge forward. */
+const MIN_SECTION_CHARS = 200;
+
+interface DocSection {
+  headingPath: string;
+  content: string;
+}
+
+/**
+ * Split markdown into heading-scoped sections, each carrying its full heading
+ * path (H1 > H2 > H3) as context. One chunk per whole file means one diluted
+ * embedding and a 4k head-truncation at pack time — a 14k transports guide
+ * loses every routing section past its intro. Non-markdown text falls back to
+ * a single section.
+ */
+export function splitDocIntoSections(relPath: string, content: string): DocSection[] {
+  if (!/\.(md|mdx)$/i.test(relPath)) {
+    return [{ headingPath: relPath, content }];
+  }
+  const lines = content.split("\n");
+  const sections: DocSection[] = [];
+  const trail: string[] = [];
+  let current: string[] = [];
+  let currentPath = relPath;
+  let inFence = false;
+
+  const flush = () => {
+    const body = current.join("\n").trim();
+    if (!body) return;
+    const last = sections[sections.length - 1];
+    if (last && last.content.length < MIN_SECTION_CHARS) {
+      last.content = `${last.content}\n\n${body}`;
+      last.headingPath = `${last.headingPath}`;
+    } else {
+      sections.push({ headingPath: currentPath, content: body });
+    }
+  };
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    const heading = !inFence ? /^(#{1,4})\s+(.*)$/.exec(line) : null;
+    if (heading) {
+      flush();
+      current = [];
+      const depth = heading[1]!.length;
+      trail.length = depth - 1;
+      trail[depth - 1] = heading[2]!.trim();
+      currentPath = `${relPath} > ${trail.filter(Boolean).join(" > ")}`;
+    }
+    current.push(line);
+  }
+  flush();
+  return sections.length > 0 ? sections : [{ headingPath: relPath, content }];
+}
+
 type PreparedDocIngest =
   | { kind: "skipped"; relPath: string }
   | { kind: "failed"; relPath: string }
   | {
       kind: "ingest";
       relPath: string;
-      content: string;
-      staged: { id: string; filePath: string };
+      staged: Array<{ id: string; filePath: string; ftsText: string }>;
       existingFilePath: string | null;
     };
 
@@ -41,6 +95,7 @@ async function prepareDocIngest(
   codePath: string,
   lorePath: string,
   absoluteFilePath: string,
+  force?: boolean,
 ): Promise<PreparedDocIngest> {
   const relPath = isAbsolute(absoluteFilePath)
     ? relative(codePath, absoluteFilePath)
@@ -55,7 +110,7 @@ async function prepareDocIngest(
 
   const bodyHash = createHash("sha256").update(content).digest("hex");
   const existing = getDocChunkByPath(db, relPath);
-  if (existing) {
+  if (existing && !force) {
     const storedHash = await readStoredDocBodyHash(existing.file_path);
     if (storedHash === bodyHash) {
       return { kind: "skipped", relPath };
@@ -63,16 +118,23 @@ async function prepareDocIngest(
   }
 
   try {
-    const staged = await writeDocChunk({
-      lorePath,
-      docPath: relPath,
-      bodyHash,
-      content,
-    });
+    const pathTokens = relPath.replace(/[/._-]+/g, " ");
+    const staged = [];
+    for (const section of splitDocIntoSections(relPath, content)) {
+      const written = await writeDocChunk({
+        lorePath,
+        docPath: relPath,
+        bodyHash,
+        content: `[Doc: ${section.headingPath}]\n${section.content}`,
+      });
+      staged.push({
+        ...written,
+        ftsText: `${relPath} ${pathTokens} ${section.headingPath}\n${section.content}`,
+      });
+    }
     return {
       kind: "ingest",
       relPath,
-      content,
       staged,
       existingFilePath: existing?.file_path ?? null,
     };
@@ -90,20 +152,25 @@ async function applyPreparedDocIngest(
     if (prepared.existingFilePath) {
       deleteDocChunksForFile(db, prepared.relPath);
     }
-    insertChunkBatch(db, [
-      {
-        id: prepared.staged.id,
-        filePath: prepared.staged.filePath,
+    const createdAt = new Date().toISOString();
+    insertChunkBatch(
+      db,
+      prepared.staged.map((section) => ({
+        id: section.id,
+        filePath: section.filePath,
         flType: "doc",
-        createdAt: new Date().toISOString(),
+        createdAt,
         sourceFilePath: prepared.relPath,
-      },
-    ]);
-    insertFtsContentBatch(db, [{ content: prepared.content, chunkId: prepared.staged.id }]);
+      })),
+    );
+    insertFtsContentBatch(
+      db,
+      prepared.staged.map((section) => ({ content: section.ftsText, chunkId: section.id })),
+    );
     db.run("COMMIT");
   } catch {
     db.run("ROLLBACK");
-    await deleteSourceChunkFile(prepared.staged.filePath);
+    await Promise.all(prepared.staged.map((s) => deleteSourceChunkFile(s.filePath)));
     return "failed";
   }
 
@@ -134,6 +201,7 @@ export async function ingestTextFiles(
   db: Database,
   codePath: string,
   lorePath: string,
+  opts?: { force?: boolean },
 ): Promise<IngestResult> {
   const start = performance.now();
   const discovered = discoverTextFiles(codePath, lorePath);
@@ -158,7 +226,7 @@ export async function ingestTextFiles(
   const prepared = await mapConcurrent(
     discovered,
     Math.min(DOC_PREPARE_CONCURRENCY, Math.max(1, discovered.length)),
-    (file: DiscoveredTextFile) => prepareDocIngest(db, codePath, lorePath, file.absolutePath),
+    (file: DiscoveredTextFile) => prepareDocIngest(db, codePath, lorePath, file.absolutePath, opts?.force),
   );
 
   let filesIngested = 0;

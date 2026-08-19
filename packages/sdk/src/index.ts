@@ -398,7 +398,7 @@ interface LoreClientEngine {
   }): Promise<{ bound: number; byType: { ref: number; mention: number } }>;
   rescan(opts?: { codePath?: string }): Promise<ScanResult>;
   ingestDoc(filePath: string, opts?: { codePath?: string }): Promise<IngestResult>;
-  ingestAll(opts?: { codePath?: string }): Promise<{ scan: ScanResult; ingest: IngestResult }>;
+  ingestAll(opts?: { codePath?: string; force?: boolean }): Promise<{ scan: ScanResult; ingest: IngestResult }>;
   autoBind(opts?: { codePath?: string }): Promise<AutoBindResult>;
   symbolSearch(
     query: string,
@@ -881,7 +881,7 @@ export class LoreClient {
     return this.engine.ingestDoc(filePath, opts);
   }
 
-  ingestAll(opts?: { codePath?: string }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
+  ingestAll(opts?: { codePath?: string; force?: boolean }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     return this.engine.ingestAll(opts);
   }
 

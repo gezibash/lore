@@ -5,8 +5,8 @@ import type {
   SourceChunkFrontmatter,
   DocChunkFrontmatter,
 } from "@/types/index.ts";
-import { vectorSearch, getChunk, getConcept } from "@/db/index.ts";
-import { bm25Search } from "@/db/fts.ts";
+import { getChunk, getConcept } from "@/db/index.ts";
+import { ensureLanceIndex, lanceVectorSearch, lanceBm25Search } from "./lance-index.ts";
 import { readChunk } from "@/storage/index.ts";
 import { readSymbolContent } from "./git.ts";
 import type { AskTracer } from "./tracer.ts";
@@ -44,13 +44,13 @@ export function reciprocalRankFusion(
 }
 
 /**
- * Distance-priority merge: fuses results from multiple vector lanes by raw
- * cosine distance. Both text (qwen) and code (voyage) produce cosine distances
- * in [0,1] — a texty query will have tight text distances and loose code
- * distances, so the right lane wins naturally without explicit weights.
+ * Distance-priority merge across lanes.
  *
- * Deduplicates by chunkId keeping the best (lowest) distance across lanes.
- * Returns results sorted by similarity (1 − distance) descending.
+ * Deduplicates by chunkId keeping the best (lowest) distance, and returns results
+ * sorted by similarity (1 − distance) descending. Lanes are NOT on a shared scale
+ * — BM25 lanes pass rank-derived pseudo-distances and different embedding models
+ * calibrate differently — which is intentional: it gives exact keyword matches
+ * priority over semantic ones. See the call site for the measurement behind this.
  */
 export function mergeByDistance(
   ...lanes: Array<{ chunkId: string; distance: number }[]>
@@ -117,22 +117,30 @@ export async function hybridSearch(
   const sourceType = opts?.sourceType ?? "chunk";
   const limit = Math.max(1, opts?.limit ?? 10);
   const vectorLimit = Math.max(1, opts?.vectorLimit ?? 20);
+  // "arch" is the documented default: concept prose only. Callers opt into raw
+  // source chunks with mode "code". Resolving the default here (rather than
+  // testing `mode !== "arch"`) keeps an omitted mode from silently enabling the
+  // code lane, which floods the evidence pack with implementation over rationale.
+  const mode = opts?.mode ?? "arch";
 
-  // Embed query with text model (skip if pre-computed)
-  const queryEmbedding = opts?.queryEmbedding ?? (await embedder.embed(query));
+  // Open the Lance index (self-heals from SQLite if drifted) and embed the query in parallel.
+  const [lance, queryEmbedding] = await Promise.all([
+    ensureLanceIndex(db),
+    opts?.queryEmbedding ?? embedder.embed(query),
+  ]);
 
   const codeLanePromise =
-    opts?.codeEmbedder && opts?.codeModel && opts?.mode !== "arch"
+    opts?.codeEmbedder && opts?.codeModel && mode !== "arch"
       ? opts.codeEmbedder
           .embed(query)
-          .then((codeQueryEmbedding) => {
-            const results = vectorSearch(
-              db,
-              codeQueryEmbedding,
-              "source",
-              vectorLimit,
-              opts.codeModel,
-            );
+          .then((codeQueryEmbedding) =>
+            lanceVectorSearch(lance, codeQueryEmbedding, {
+              flType: "source",
+              model: opts.codeModel,
+              limit: vectorLimit,
+            }),
+          )
+          .then((results) => {
             opts?.tracer?.log("lane.code", {
               source_type: "source",
               candidates: results.length,
@@ -153,13 +161,11 @@ export async function hybridSearch(
       : null;
 
   // Lane 1: text vector search (qwen — prose space)
-  const vectorResultsText = vectorSearch(
-    db,
-    queryEmbedding,
-    sourceType,
-    vectorLimit,
-    opts?.textModel,
-  );
+  const vectorResultsText = await lanceVectorSearch(lance, queryEmbedding, {
+    flType: sourceType,
+    model: opts?.textModel,
+    limit: vectorLimit,
+  });
   opts?.tracer?.log("lane.text", {
     source_type: sourceType,
     candidates: vectorResultsText.length,
@@ -179,7 +185,7 @@ export async function hybridSearch(
     opts?.tracer?.log("lane.code", {
       source_type: "source",
       skipped: true,
-      reason: opts?.mode === "arch" ? "arch mode" : "no code embedder",
+      reason: mode === "arch" ? "arch mode" : "no code embedder",
     });
   }
 
@@ -188,7 +194,7 @@ export async function hybridSearch(
   // Normalized: FTS5 rank is negative (more negative = better); convert to distance in (0,1).
   let bm25SourceResults: { chunkId: string; distance: number }[] = [];
   if (sourceType === "chunk") {
-    const bm25Hits = bm25Search(db, query, "source", vectorLimit);
+    const bm25Hits = await lanceBm25Search(lance, query, { flType: "source", limit: vectorLimit });
     bm25SourceResults = bm25Hits.map((h, index) => ({
       chunkId: h.chunkId,
       distance: index / (index + 30),
@@ -213,7 +219,10 @@ export async function hybridSearch(
   // Active only for concept chunk searches, not journal or source-only searches.
   let bm25ChunkResults: { chunkId: string; distance: number }[] = [];
   if (sourceType === "chunk") {
-    const bm25ChunkHits = bm25Search(db, query, "chunk", vectorLimit);
+    const bm25ChunkHits = await lanceBm25Search(lance, query, {
+      flType: "chunk",
+      limit: vectorLimit,
+    });
     bm25ChunkResults = bm25ChunkHits.map((h, index) => ({
       chunkId: h.chunkId,
       distance: index / (index + 30),
@@ -237,7 +246,11 @@ export async function hybridSearch(
   // Active only for concept chunk searches (not journal mode).
   let vectorResultsDoc: { chunkId: string; distance: number }[] = [];
   if (sourceType === "chunk") {
-    vectorResultsDoc = vectorSearch(db, queryEmbedding, "doc", vectorLimit, opts?.textModel);
+    vectorResultsDoc = await lanceVectorSearch(lance, queryEmbedding, {
+      flType: "doc",
+      model: opts?.textModel,
+      limit: vectorLimit,
+    });
     opts?.tracer?.log("lane.doc_vector", {
       source_type: "doc",
       candidates: vectorResultsDoc.length,
@@ -256,7 +269,7 @@ export async function hybridSearch(
   // Lane 6: BM25 doc search — exact keyword matches in doc content.
   let bm25DocResults: { chunkId: string; distance: number }[] = [];
   if (sourceType === "chunk") {
-    const bm25DocHits = bm25Search(db, query, "doc", vectorLimit);
+    const bm25DocHits = await lanceBm25Search(lance, query, { flType: "doc", limit: vectorLimit });
     bm25DocResults = bm25DocHits.map((h, index) => ({
       chunkId: h.chunkId,
       distance: index / (index + 30),
@@ -274,10 +287,12 @@ export async function hybridSearch(
     });
   }
 
-  // Merge lanes by raw distance — tight distances win naturally.
-  // Vector distances (cosine) are in [0,1]. BM25 distances use rank-position normalization
-  // index/(index+30): rank-0 → 0.0, rank-9 → 0.23, rank-29 → 0.49, keeping BM25 competitive
-  // with vector distances for strong keyword matches.
+  // Merge lanes by raw distance. This is deliberately NOT rank fusion: BM25 lanes
+  // encode rank as a distance of index/(index+30), so a rank-0 keyword hit lands at
+  // distance 0.0 and outranks every vector hit (which sit around 0.5-0.6). That
+  // implicit exact-match prior is load-bearing for symbol and constant questions —
+  // swapping this for RRF flattens it and measurably lowers answer quality
+  // (httpx big-bench: 96% -> 84% overall).
   const fused = mergeByDistance(
     vectorResultsText,
     vectorResultsCode,
@@ -311,7 +326,8 @@ export async function hybridSearch(
     } else if (fm.fl_type === "doc") {
       const dfm = fm as DocChunkFrontmatter;
       const truncated = parsed.content.slice(0, 4000);
-      content = `[Doc: ${dfm.fl_doc_path}]\n${truncated}`;
+      // Section chunks already carry their own "[Doc: path > headings]" header.
+      content = truncated.startsWith("[Doc:") ? truncated : `[Doc: ${dfm.fl_doc_path}]\n${truncated}`;
       concept = dfm.fl_doc_path;
     } else {
       if ("fl_residual" in fm && fm.fl_residual != null && fm.fl_residual > 0.5) {

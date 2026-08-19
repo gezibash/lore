@@ -15,6 +15,7 @@ import { discoverFiles, isTsxFile } from "./file-discovery.ts";
 import { mapConcurrent } from "./async.ts";
 import { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
+import { expandCamelCase } from "@/db/symbols.ts";
 import {
   upsertSourceFile,
   getSourceFileByPath,
@@ -40,8 +41,16 @@ const SCAN_PREPARE_CONCURRENCY = 4;
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-/** Snapshot all binding associations for a source file, keyed by qualified_name.
- *  Call before deleting old symbol rows so bindings can be rematched after re-insert. */
+/** Positional key for a symbol — stable across a re-qualification, unlike qualified_name. */
+function symbolPositionKey(name: string, lineStart: number | null): string {
+  return `${name}@${lineStart ?? -1}`;
+}
+
+/** Snapshot all binding associations for a source file, keyed by qualified_name *and* by
+ *  (name, line_start). Call before deleting old symbol rows so bindings can be rematched
+ *  after re-insert. The positional key is the fallback for the case where a symbol keeps its
+ *  identity but changes qualified_name — e.g. when a scanner change starts qualifying Python
+ *  methods as `Class.method` — which would otherwise drop every binding on a method. */
 function saveBindingsForSourceFile(
   db: Database,
   sourceFileId: string,
@@ -54,14 +63,13 @@ function saveBindingsForSourceFile(
   for (const sym of oldSymbols) {
     const bindings = getBindingsForSymbol(db, sym.id);
     if (bindings.length > 0) {
-      saved.set(
-        sym.qualified_name,
-        bindings.map((b) => ({
-          concept_id: b.concept_id,
-          binding_type: b.binding_type,
-          confidence: b.confidence,
-        })),
-      );
+      const entry = bindings.map((b) => ({
+        concept_id: b.concept_id,
+        binding_type: b.binding_type,
+        confidence: b.confidence,
+      }));
+      saved.set(sym.qualified_name, entry);
+      saved.set(symbolPositionKey(sym.name, sym.line_start), entry);
     }
   }
   return saved;
@@ -78,7 +86,8 @@ function rematchBindings(
   const newSymbols = getSymbolsForSourceFile(db, newSourceFileId);
   const contentLines = fileContent ? fileContent.split("\n") : null;
   for (const sym of newSymbols) {
-    const oldBindings = saved.get(sym.qualified_name);
+    const oldBindings =
+      saved.get(sym.qualified_name) ?? saved.get(symbolPositionKey(sym.name, sym.line_start));
     if (!oldBindings) continue;
     const boundBody =
       contentLines && sym.line_start != null && sym.line_end != null
@@ -105,17 +114,51 @@ interface SymbolForChunk {
   body_hash: string | null;
 }
 
+/** "packages/core/src/engine/scanner.ts" -> "packages core src engine scanner ts" */
+function pathWords(sourceFile: string): string {
+  return sourceFile.replace(/[/._-]+/g, " ");
+}
+
 interface WrittenSourceChunk {
   id: string;
   filePath: string;
   body: string;
+  symbol: string;
 }
 
 async function cleanupChunkFiles(filePaths: string[]): Promise<void> {
   await Promise.all(filePaths.map((filePath) => deleteSourceChunkFile(filePath)));
 }
 
-/** Write one source chunk file per symbol. Returns the staged files for later DB insertion. */
+/** Contiguous line ranges of the file not covered by any extracted symbol.
+ *  Module-level code lives here: constants, top-level config, bare statements.
+ *  Without these, a value like `DEFAULT_LIMITS = Limits(max_connections=100)`
+ *  sitting below the last class is invisible to retrieval entirely. */
+function uncoveredRanges(
+  symbols: SymbolForChunk[],
+  totalLines: number,
+): Array<{ start: number; end: number }> {
+  const covered = new Uint8Array(totalLines + 1);
+  for (const sym of symbols) {
+    for (let line = sym.line_start; line <= Math.min(sym.line_end, totalLines); line++) {
+      covered[line] = 1;
+    }
+  }
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = 0;
+  for (let line = 1; line <= totalLines + 1; line++) {
+    const isCovered = line > totalLines || covered[line] === 1;
+    if (!isCovered && start === 0) start = line;
+    if (isCovered && start !== 0) {
+      ranges.push({ start, end: line - 1 });
+      start = 0;
+    }
+  }
+  return ranges;
+}
+
+/** Write one source chunk file per symbol, plus one per uncovered module-level
+ *  region. Returns the staged files for later DB insertion. */
 async function writeSourceChunkFilesForSymbols(
   lorePath: string,
   sourceFile: string,
@@ -123,7 +166,6 @@ async function writeSourceChunkFilesForSymbols(
   symbols: SymbolForChunk[],
   content: string,
 ): Promise<WrittenSourceChunk[]> {
-  if (symbols.length === 0) return [];
   const written: WrittenSourceChunk[] = [];
   const contentLines = content.split("\n");
   try {
@@ -140,7 +182,27 @@ async function writeSourceChunkFilesForSymbols(
         bodyHash: sym.body_hash,
         body,
       });
-      written.push({ id, filePath, body });
+      written.push({ id, filePath, body, symbol: sym.qualified_name });
+    }
+
+    for (const range of uncoveredRanges(symbols, contentLines.length)) {
+      const body = contentLines
+        .slice(range.start - 1, range.end)
+        .join("\n")
+        .trim();
+      if (body.length === 0) continue;
+      const { id, filePath } = await writeSourceChunk({
+        lorePath,
+        sourceFile,
+        lineStart: range.start,
+        lineEnd: range.end,
+        symbol: `__module__:${range.start}`,
+        kind: "module",
+        language,
+        bodyHash: null,
+        body,
+      });
+      written.push({ id, filePath, body, symbol: `${sourceFile} module scope` });
     }
   } catch (error) {
     await cleanupChunkFiles(written.map((chunk) => chunk.filePath));
@@ -166,9 +228,17 @@ function insertSourceChunks(
       sourceFilePath: sourceFile,
     })),
   );
+  // Index the file path and symbol name alongside the body. A code body rarely
+  // contains the words a person searches by — nothing in scanner.ts says
+  // "scanner" — so without this header the most natural query for a file cannot
+  // reach it by keyword at all. camelCase is split so "file discovery" matches
+  // fileDiscovery.
   insertFtsContentBatch(
     db,
-    chunks.map((chunk) => ({ content: chunk.body, chunkId: chunk.id })),
+    chunks.map((chunk) => ({
+      content: `${sourceFile} ${expandCamelCase(pathWords(sourceFile))} ${chunk.symbol} ${expandCamelCase(chunk.symbol)}\n${chunk.body}`,
+      chunkId: chunk.id,
+    })),
   );
   return chunks.length;
 }
@@ -332,6 +402,7 @@ async function applyPreparedUpdatedSourceFile(
           qualifiedName: symbol.qualified_name,
           kind: symbol.kind as SymbolKind,
           parentId: null as string | null,
+          parentName: symbol.parent_name,
           lineStart: symbol.line_start,
           lineEnd: symbol.line_end,
           signature: symbol.signature,
@@ -384,11 +455,17 @@ export async function scanProject(
   db: Database,
   codePath: string,
   lorePath?: string,
+  opts?: { force?: boolean },
 ): Promise<ScanResult> {
   const start = performance.now();
   const files = discoverFiles(codePath);
   const currentPaths = new Set(files.map((file) => file.relativePath));
-  const existingByPath = new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
+  // force: ignore the content-hash gate so every file re-chunks. Needed after a
+  // change to how chunks are produced or indexed, which unchanged files would
+  // otherwise never pick up.
+  const existingByPath = opts?.force
+    ? new Map<string, SourceFileRow>()
+    : new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
 
   const pool = new TreeSitterPool();
   await pool.init();
@@ -608,6 +685,7 @@ export async function rescanFiles(
           qualifiedName: s.qualified_name,
           kind: s.kind as SymbolKind,
           parentId: null as string | null,
+          parentName: s.parent_name,
           lineStart: s.line_start,
           lineEnd: s.line_end,
           signature: s.signature,
@@ -656,8 +734,9 @@ export async function rescanProject(
   db: Database,
   codePath: string,
   lorePath?: string,
+  opts?: { force?: boolean },
 ): Promise<ScanResult> {
   // rescanProject is the same as scanProject — incremental by design
-  // (it skips files whose content_hash hasn't changed)
-  return scanProject(db, codePath, lorePath);
+  // (it skips files whose content_hash hasn't changed) unless force is set.
+  return scanProject(db, codePath, lorePath, opts);
 }

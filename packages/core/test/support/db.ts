@@ -7,7 +7,10 @@ import { runMigrations } from "@/db/migrations.ts";
 import { openDb } from "@/db/connection.ts";
 
 export function createTestDb(): Database {
-  const db = openDb(":memory:");
+  // File-backed (not :memory:) so the Lance-derived search index — which lives
+  // alongside the SQLite file — is exercised for real in tests.
+  const dir = mkdtempSync(join(tmpdir(), "lore-testdb-"));
+  const db = openDb(join(dir, "lore.db"));
   runMigrations(db);
   return db;
 }

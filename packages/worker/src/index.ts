@@ -186,7 +186,6 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "ask",
   "query",
   "close",
-  "status",
   "show",
   "showNarrativeTrail",
   "recall",

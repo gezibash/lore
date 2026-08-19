@@ -2,12 +2,17 @@ import type { Database } from "bun:sqlite";
 import type { SymbolRow, SymbolKind, SymbolSearchResult } from "@/types/index.ts";
 import { ulid } from "ulid";
 
+/** Symbol kinds that can enclose other definitions. */
+const CONTAINER_KINDS = new Set<SymbolKind>(["class", "struct", "trait", "impl", "interface"]);
+
 export interface InsertSymbolOpts {
   sourceFileId: string;
   name: string;
   qualifiedName: string;
   kind: SymbolKind;
   parentId: string | null;
+  /** Enclosing class/impl/module name. Resolved to `parentId` within the batch. */
+  parentName?: string | null;
   lineStart: number;
   lineEnd: number;
   signature: string | null;
@@ -68,15 +73,34 @@ export function insertSymbolBatch(
      VALUES (?, ?, ?, ?, ?)`,
   );
 
-  for (const s of symbols) {
-    const id = ulid();
+  // Assign ids up front so a child can point at a parent declared later in the file.
+  const ids = symbols.map(() => ulid());
+  const containerIds = new Map<string, string>();
+  for (let i = 0; i < symbols.length; i++) {
+    const s = symbols[i]!;
+    // Containers are keyed by their own qualified name, so a nested class resolves too.
+    if (CONTAINER_KINDS.has(s.kind)) containerIds.set(s.qualifiedName, ids[i]!);
+  }
+
+  for (let i = 0; i < symbols.length; i++) {
+    const s = symbols[i]!;
+    const id = ids[i]!;
+    // qualifiedName is `<parentName>.<name>`, so the container key is the qualified name
+    // minus the trailing segment — this resolves nested containers, not just top-level ones.
+    const parentId =
+      s.parentId ??
+      (s.parentName != null
+        ? (containerIds.get(s.qualifiedName.slice(0, -(s.name.length + 1))) ??
+          containerIds.get(s.parentName) ??
+          null)
+        : null);
     insertSym.run(
       id,
       sourceFileId,
       s.name,
       s.qualifiedName,
       s.kind,
-      s.parentId,
+      parentId,
       s.lineStart,
       s.lineEnd,
       s.signature,
@@ -92,6 +116,14 @@ export function deleteSymbolsForSourceFile(db: Database, sourceFileId: string): 
   // FTS entries must be deleted first (before cascade removes symbols)
   db.run(
     `DELETE FROM symbol_fts WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
+    [sourceFileId],
+  );
+  // concept_symbols has no FK to symbols, so its rows must be dropped explicitly or they
+  // survive as orphans pointing at deleted symbol ids — inflating binding counts on every
+  // rescan. Callers that intend to keep bindings snapshot them first (saveBindingsForSourceFile)
+  // and re-attach after re-insert (rematchBindings).
+  db.run(
+    `DELETE FROM concept_symbols WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
     [sourceFileId],
   );
   db.run(`DELETE FROM symbols WHERE source_file_id = ?`, [sourceFileId]);

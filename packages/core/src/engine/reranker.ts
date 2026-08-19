@@ -29,36 +29,59 @@ export async function rerankResults<T>(
     };
   }
 
-  const modelName = rr.model ?? "rerank-v3.5";
   const provider = rr.provider ?? "cohere";
-  if (provider !== "cohere") {
-    return {
-      ordered: candidates,
-      scores: Array.from({ length: candidates.length }, () => 0),
-      failed: true,
-      error: `unsupported rerank provider: ${provider}`,
-    };
-  }
+  const modelName =
+    rr.model ?? (provider === "openrouter" ? "voyageai/rerank-2.5-lite" : "rerank-v3.5");
   const maxChars = rr.max_chars ?? 4000;
   const topN = Math.min(rr.candidates ?? 20, candidates.length);
   const timeoutMs = opts?.timeoutMs;
   const timeoutAbort = timeoutMs && timeoutMs > 0 ? new AbortController() : null;
   const timeoutId = timeoutAbort ? setTimeout(() => timeoutAbort.abort(), timeoutMs) : null;
+  const documents = candidates.map((c) =>
+    c.content.length > maxChars ? c.content.slice(0, maxChars) : c.content,
+  );
 
   try {
-    const client = createCohere({
-      apiKey: rr.api_key,
-      baseURL: rr.base_url,
-    });
-    const { ranking } = await rerank({
-      model: client.rerankingModel(modelName),
-      query,
-      documents: candidates.map((c) =>
-        c.content.length > maxChars ? c.content.slice(0, maxChars) : c.content,
-      ),
-      topN,
-      ...(timeoutAbort ? { abortSignal: timeoutAbort.signal } : {}),
-    });
+    let ranking: Array<{ originalIndex: number; score: number }>;
+
+    if (provider === "openrouter") {
+      const baseUrl = (rr.base_url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+      const response = await fetch(`${baseUrl}/rerank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${rr.api_key}`,
+        },
+        body: JSON.stringify({ model: modelName, query, documents, top_n: topN }),
+        ...(timeoutAbort ? { signal: timeoutAbort.signal } : {}),
+      });
+      if (!response.ok) {
+        throw new Error(`openrouter rerank HTTP ${response.status}: ${await response.text()}`);
+      }
+      const body = (await response.json()) as {
+        results?: Array<{ index: number; relevance_score: number }>;
+      };
+      ranking = (body.results ?? []).map((item) => ({
+        originalIndex: item.index,
+        score: item.relevance_score,
+      }));
+    } else {
+      const client = createCohere({
+        apiKey: rr.api_key,
+        baseURL: rr.base_url,
+      });
+      const result = await rerank({
+        model: client.rerankingModel(modelName),
+        query,
+        documents,
+        topN,
+        ...(timeoutAbort ? { abortSignal: timeoutAbort.signal } : {}),
+      });
+      ranking = result.ranking.map((item) => ({
+        originalIndex: item.originalIndex,
+        score: item.score,
+      }));
+    }
 
     const ordered: RerankCandidate<T>[] = [];
     const scores: number[] = [];

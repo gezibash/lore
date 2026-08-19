@@ -34,7 +34,8 @@ export type GenerationProvider =
   | "gateway"
   | "openrouter"
   | "moonshotai"
-  | "alibaba";
+  | "alibaba"
+  | "codex";
 
 export type SharedProvider = EmbeddingProvider | GenerationProvider | "cohere";
 
@@ -190,6 +191,8 @@ export interface ChunkRow {
   concept_refs: string | null;
   symbol_refs: string | null;
   file_refs: string | null;
+  /** Set for fl_type 'source' and 'doc': the repo-relative file this chunk came from. */
+  source_file_path: string | null;
 }
 
 export type CloseMaintenanceJobStatus = "queued" | "leased" | "done" | "failed";
@@ -465,6 +468,8 @@ export interface QueryOptions {
   codePath?: string;
   search?: boolean;
   brief?: boolean;
+  /** Return a concise, short-form answer (1-2 sentences, no bullets). */
+  concise?: boolean;
   onProgress?: (message: string) => void;
   /** "code" injects bound symbol bodies alongside concept prose. "arch" (default) returns prose only. */
   mode?: "arch" | "code";
@@ -1127,7 +1132,9 @@ export type SymbolKind =
   | "enum"
   | "struct"
   | "trait"
-  | "impl";
+  | "impl"
+  | "module"
+  | "constant";
 
 export interface SourceFileRow {
   id: string;
@@ -1384,7 +1391,8 @@ export type LoreErrorCode =
   | "ASK_SEARCH_FAILED"
   | "ASK_RERANK_FAILED"
   | "ASK_EXEC_SUMMARY_FAILED"
-  | "CODE_MODEL_NOT_CONFIGURED";
+  | "CODE_MODEL_NOT_CONFIGURED"
+  | "LANCE_INDEX_UNAVAILABLE";
 
 export class LoreError extends Error {
   constructor(
@@ -1421,6 +1429,12 @@ export interface LoreConfig {
       api_key?: string;
       reasoning?: ReasoningLevel;
       reasoning_overrides?: Partial<Record<GenerationReasoningScope, ReasoningLevel>>;
+      /** codex provider: path to the codex binary (defaults to `codex` on PATH). */
+      codex_bin?: string;
+      /** codex provider: reasoning effort passed to codex exec (defaults to "low"). */
+      codex_reasoning_effort?: string;
+      /** codex provider: service tier (e.g. "fast") passed as service_tier. */
+      codex_service_tier?: string;
       prompts: {
         name_cluster: {
           guidance: string;
@@ -1454,7 +1468,7 @@ export interface LoreConfig {
         executive_summary_ms?: number;
       };
       rerank?: {
-        provider?: "cohere";
+        provider?: "cohere" | "openrouter";
         enabled?: boolean;
         model?: string;
         candidates?: number;
@@ -1472,6 +1486,13 @@ export interface LoreConfig {
         reasoning?: ReasoningLevel;
         max_matches?: number;
         max_chars?: number;
+        /** Budget for source-code evidence. Code is not front-loaded like prose —
+         *  head-truncating a class drops its methods — so it gets its own larger budget. */
+        source_max_chars?: number;
+        /** Override the full-summary system prompt (prompt experimentation). */
+        system_prompt?: string;
+        /** Override the concise-mode system prompt (prompt experimentation). */
+        concise_system_prompt?: string;
       };
       retrieval_opts?: {
         max_grounding_hits?: number;

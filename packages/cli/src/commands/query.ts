@@ -9,6 +9,7 @@ export async function queryCommand(
   opts?: {
     search?: boolean;
     brief?: boolean;
+    concise?: boolean;
     sources?: boolean;
     mode?: "arch" | "code";
   },
@@ -62,6 +63,7 @@ export async function queryCommand(
     const result = await client.query(text, {
       search: opts?.search,
       brief: opts?.brief,
+      concise: opts?.concise,
       mode: opts?.mode,
       onProgress: updateSpinner,
     });
