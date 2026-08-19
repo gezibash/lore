@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { spawn } from "child_process";
+import { rmSync, statSync, writeFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { connect } from "net";
 import { LoreError } from "@lore/sdk";
@@ -19,6 +20,8 @@ import type {
   LoreJobDetail,
   LoreJobType,
 } from "./daemon-protocol.ts";
+
+const SPAWN_TIMEOUT_MS = 5_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,33 +91,72 @@ export class LoreDaemonRpcClient {
     }
     const current = await this.status();
     if (current.running) return current;
-    const entry = daemonEntryScript();
-    const child = spawn(
-      process.execPath,
-      [
-        entry,
-        "daemon",
-        "serve",
-        "--socket",
-        this.paths.socketPath,
-        "--db",
-        this.paths.dbPath,
-        "--log",
-        this.paths.logPath,
-      ],
-      {
-        detached: true,
-        stdio: "ignore",
-      },
-    );
-    child.unref();
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      await sleep(100);
-      const status = await this.status();
-      if (status.running) return status;
+
+    // Concurrent CLI invocations all see "not running" at once and each spawn a
+    // daemon — a benchmark at 10-way parallelism left seven of them competing
+    // for one socket, degrading every request. The winner of an atomic
+    // exclusive-create spawns; the losers wait for the socket it opens.
+    const lockPath = `${this.paths.socketPath}.spawn.lock`;
+    let holdsLock = false;
+    try {
+      writeFileSync(lockPath, `${process.pid}`, { flag: "wx" });
+      holdsLock = true;
+    } catch {
+      // A stale lock (holder died before unlinking) must not wedge the CLI:
+      // treat one older than the start deadline as abandoned and take it.
+      try {
+        const age = Date.now() - statSync(lockPath).mtimeMs;
+        if (age > SPAWN_TIMEOUT_MS) {
+          rmSync(lockPath, { force: true });
+          writeFileSync(lockPath, `${process.pid}`, { flag: "wx" });
+          holdsLock = true;
+        }
+      } catch {
+        // someone else just took it — fall through and wait
+      }
     }
-    throw new Error("Lore daemon did not start within 5 seconds");
+
+    if (!holdsLock) {
+      const waitUntil = Date.now() + SPAWN_TIMEOUT_MS;
+      while (Date.now() < waitUntil) {
+        await sleep(100);
+        const status = await this.status();
+        if (status.running) return status;
+      }
+      throw new Error("Lore daemon did not start within 5 seconds");
+    }
+
+    try {
+      const entry = daemonEntryScript();
+      const child = spawn(
+        process.execPath,
+        [
+          entry,
+          "daemon",
+          "serve",
+          "--socket",
+          this.paths.socketPath,
+          "--db",
+          this.paths.dbPath,
+          "--log",
+          this.paths.logPath,
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      child.unref();
+      const deadline = Date.now() + SPAWN_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await sleep(100);
+        const status = await this.status();
+        if (status.running) return status;
+      }
+      throw new Error("Lore daemon did not start within 5 seconds");
+    } finally {
+      rmSync(lockPath, { force: true });
+    }
   }
 
   async call(method: string, args: unknown[]): Promise<unknown> {

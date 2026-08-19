@@ -2298,6 +2298,13 @@ Non-negotiable rules:
 - After each bullet, append the source concept name(s) in double brackets: [[concept-name]].
 - If a bullet draws from multiple concepts: [[concept-a, concept-b]].
 - Every factual bullet must have at least one [[source]].
+- Before asserting a value or behavior, read the relevant evidence line by line and follow
+  the order statements execute in. A later line can overwrite what an earlier line set, and
+  a slice or comparison expression may not do what its surrounding code implies.
+- Reproduce identifiers, literal values, and error messages exactly as they appear in the
+  evidence rather than paraphrasing them.
+- Answer every part of the question, including negative or contrastive parts such as which
+  case does not apply.
 
 Evidence hierarchy (highest to lowest priority):
 1. Investigation trail — recent agent observations from closed narratives. These contain specific discoveries, exact formulas, code references, and rationale. When investigation findings contain explicit values (constants, formulas, weights), prefer them over paraphrased concept content.
