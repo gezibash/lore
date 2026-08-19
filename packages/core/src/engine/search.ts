@@ -69,6 +69,14 @@ export function mergeByDistance(
     .map(([chunkId, distance]) => ({ chunkId, score: 1 - distance }));
 }
 
+/** Test files exercise a subject, so retrieval loves them — they mention the
+ *  query terms constantly. As *pointers* they are almost always second-best to
+ *  the implementation they test. Used for tie-breaking, never exclusion:
+ *  ground truths legitimately cite tests as behavior anchors. */
+export function isTestFilePath(path: string): boolean {
+  return /(^|\/)tests?\/|\.test\.|\.spec\.|_test\.|(^|\/)conftest\.py$|(^|\/)test_[^/]+$/.test(path);
+}
+
 export interface HybridSearchResult {
   chunkId: string;
   score: number;
@@ -293,7 +301,7 @@ export async function hybridSearch(
   // implicit exact-match prior is load-bearing for symbol and constant questions —
   // swapping this for RRF flattens it and measurably lowers answer quality
   // (httpx big-bench: 96% -> 84% overall).
-  const fused = mergeByDistance(
+  const fusedRaw = mergeByDistance(
     vectorResultsText,
     vectorResultsCode,
     bm25SourceResults,
@@ -301,6 +309,28 @@ export async function hybridSearch(
     vectorResultsDoc,
     bm25DocResults,
   );
+  // Test-file tie-break: a small score penalty so an implementation chunk beats
+  // a test chunk at equal relevance (BM25 rank-ties are common), while a test
+  // that genuinely matches better still wins. 0.02 is well under real gaps.
+  const fused = (() => {
+    const ids = fusedRaw.map((r) => r.chunkId);
+    if (ids.length === 0) return fusedRaw;
+    const placeholders = ids.map(() => "?").join(", ");
+    const pathRows = db
+      .query<{ id: string; source_file_path: string | null }, string[]>(
+        `SELECT id, source_file_path FROM chunks WHERE id IN (${placeholders})`,
+      )
+      .all(...ids);
+    const testIds = new Set(
+      pathRows
+        .filter((row) => row.source_file_path && isTestFilePath(row.source_file_path))
+        .map((row) => row.id),
+    );
+    if (testIds.size === 0) return fusedRaw;
+    return fusedRaw
+      .map((r) => (testIds.has(r.chunkId) ? { ...r, score: r.score - 0.02 } : r))
+      .sort((a, b) => b.score - a.score);
+  })();
   opts?.tracer?.log("fusion", {
     source_type: sourceType,
     candidates: fused.length,

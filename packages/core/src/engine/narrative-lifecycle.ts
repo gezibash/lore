@@ -115,6 +115,7 @@ import { rerankResults } from "./reranker.ts";
 import { tracer } from "./tracer.ts";
 import type { AskTracer } from "./tracer.ts";
 import { markLanceDirty } from "./lance-index.ts";
+import { isTestFilePath } from "./search.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
 import { searchSymbols, getSymbolByQualifiedName } from "@/db/symbols.ts";
@@ -2641,6 +2642,8 @@ export async function generateExecutiveSummary(
           snippet: "",
           term: c.term,
         }));
+  // Implementation files point first; tests keep their slot but never lead.
+  packCitations.sort((a, b) => Number(isTestFilePath(a.file)) - Number(isTestFilePath(b.file)));
   const seenCitationFiles = new Set(packCitations.map((c) => c.file));
   const citations = opts?.concise
     ? []
