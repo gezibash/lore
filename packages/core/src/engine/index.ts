@@ -137,6 +137,7 @@ import { getEdges } from "@/db/edges.ts";
 import {
   loadRegistry,
   findLoreMindByCodePath,
+  findLoreMindByExactPath,
   addLoreMind,
   listLoreMinds,
   removeLoreMind as removeLoreMindFromRegistry,
@@ -752,8 +753,9 @@ export class LoreEngine {
     const loreMindName = name ?? basename(absPath);
     const flPath = makeLoreMindPath(loreMindName, config.lore_root);
 
-    // Check if already registered
-    const existing = findLoreMindByCodePath(this.registry, absPath);
+    // Exact match only: an ancestor match here would silently alias a nested
+    // project to its parent mind instead of registering it.
+    const existing = findLoreMindByExactPath(this.registry, absPath);
     if (existing) {
       return { lore_path: existing.entry.lore_path, ready: true };
     }

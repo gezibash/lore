@@ -11,6 +11,8 @@ const TEXT_EXTENSIONS = new Set([
   ".json",
   ".toml",
   ".adoc",
+  // Binary document formats, converted to text at ingest time.
+  ".docx",
 ]);
 
 const SKIP_DIRS = new Set([

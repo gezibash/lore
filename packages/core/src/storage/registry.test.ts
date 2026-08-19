@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   addLoreMind,
   findLoreMindByCodePath,
+  findLoreMindByExactPath,
   getProviderConfig,
   listProviderConfigs,
   loadRegistry,
@@ -117,5 +118,26 @@ test("findLoreMindByCodePath prefers the nearest registered parent for nested lo
   expect(findLoreMindByCodePath(reg, "/tmp/project/packages/core/src")).toEqual({
     name: "child",
     entry: reg.lore_minds.child,
+  });
+});
+
+test("findLoreMindByExactPath does not resolve a child to its registered parent", () => {
+  const reg = {
+    lore_minds: {
+      parent: {
+        code_path: "/tmp/project",
+        lore_path: "/tmp/.lore/project",
+        registered_at: "2026-08-19T00:00:00.000Z",
+      },
+    },
+  };
+
+  // ancestor matching is right for resolving a cwd...
+  expect(findLoreMindByCodePath(reg, "/tmp/project/fixture/nested")).not.toBeNull();
+  // ...and wrong for deciding whether a path is already registered
+  expect(findLoreMindByExactPath(reg, "/tmp/project/fixture/nested")).toBeNull();
+  expect(findLoreMindByExactPath(reg, "/tmp/project")).toEqual({
+    name: "parent",
+    entry: reg.lore_minds.parent,
   });
 });

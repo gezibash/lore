@@ -5,6 +5,7 @@ import type { IngestResult } from "@/types/index.ts";
 import { discoverTextFiles, type DiscoveredTextFile } from "./file-discovery-text.ts";
 import { mapConcurrent } from "./async.ts";
 import { writeDocChunk, deleteSourceChunkFile } from "@/storage/chunk-writer.ts";
+import { extractDocxMarkdown } from "./docx.ts";
 import {
   insertChunkBatch,
   insertFtsContentBatch,
@@ -31,7 +32,7 @@ interface DocSection {
  * a single section.
  */
 export function splitDocIntoSections(relPath: string, content: string): DocSection[] {
-  if (!/\.(md|mdx)$/i.test(relPath)) {
+  if (!/\.(md|mdx|docx)$/i.test(relPath)) {
     return [{ headingPath: relPath, content }];
   }
   const lines = content.split("\n");
@@ -103,7 +104,17 @@ async function prepareDocIngest(
 
   let content: string;
   try {
-    content = await Bun.file(absoluteFilePath).text();
+    if (/\.docx$/i.test(relPath)) {
+      // Word packages are binary: convert to markdown so the heading-aware
+      // section chunker treats them like any other doc.
+      const extracted = extractDocxMarkdown(
+        new Uint8Array(await Bun.file(absoluteFilePath).arrayBuffer()),
+      );
+      if (!extracted) return { kind: "failed", relPath };
+      content = extracted;
+    } else {
+      content = await Bun.file(absoluteFilePath).text();
+    }
   } catch {
     return { kind: "skipped", relPath };
   }

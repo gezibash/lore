@@ -37,6 +37,20 @@ export function saveRegistry(root: string, reg: Registry): void {
   writeFileSync(registryPath(root), JSON.stringify(reg, null, 2) + "\n");
 }
 
+/** Exact-path lookup. Registration must use this, not findLoreMindByCodePath:
+ *  that one resolves a cwd to its nearest registered ancestor, which would make
+ *  `lore init <subdir>` silently return the parent mind instead of creating one. */
+export function findLoreMindByExactPath(
+  reg: Registry,
+  codePath: string,
+): { name: string; entry: RegistryEntry } | null {
+  const targetPath = resolve(codePath);
+  for (const [name, entry] of Object.entries(reg.lore_minds)) {
+    if (resolve(entry.code_path) === targetPath) return { name, entry };
+  }
+  return null;
+}
+
 export function findLoreMindByCodePath(
   reg: Registry,
   codePath: string,
