@@ -122,7 +122,6 @@ import { searchSymbols, getSymbolByQualifiedName } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
-import { buildCallGraphAdjacency, personalizedPageRank } from "./graph-expansion.ts";
 
 function isNarrativeWritable(status: NarrativeRow["status"]): boolean {
   return status === "open" || status === "close_failed";
@@ -572,27 +571,6 @@ function inferStatusHeuristic(text: string): "finding" | "dead-end" | "confirmed
   return "finding";
 }
 
-/**
- * Deterministic deep-research heuristic for observability only.
- * This does not alter retrieval behavior; it labels path/chain style queries.
- */
-function isLikelyDeepResearchQuery(text: string): boolean {
-  const q = text.toLowerCase();
-  if (
-    /\b(call graph|call chain|callchain|multi[- ]hop|upstream|downstream|end[- ]to[- ]end|e2e)\b/.test(
-      q,
-    )
-  ) {
-    return true;
-  }
-  if (/\b(path|chain|through|across|between|bridge|flow)\b/.test(q)) {
-    return true;
-  }
-  if (/\b(how|why)\b[\s\S]{0,80}\b(from|to|reach|lead|propagate)\b/.test(q)) {
-    return true;
-  }
-  return false;
-}
 
 export interface LogEntryOpts {
   topics?: string[];
@@ -1306,160 +1284,6 @@ export async function queryConcepts(
     rerankedResults = deduped;
   }
 
-  // Graph fusion strength for always-on PPR score blending.
-  // final_score = base_score + alpha * ppr_signal
-  const configuredPprAlpha = retrievalOptsCfg?.ppr_fusion_alpha;
-  const PPR_FUSION_ALPHA =
-    typeof configuredPprAlpha === "number" && Number.isFinite(configuredPprAlpha)
-      ? Math.max(0, Math.min(1, configuredPprAlpha))
-      : 0.2;
-  // Limit symbol->concept projection work to strongest graph nodes.
-  const PPR_SYMBOL_PROJECTION_LIMIT = 40;
-  const pprInfluencedChunkIds = new Set<string>();
-  const pprExpansionMeta = {
-    fusion_alpha: PPR_FUSION_ALPHA,
-    deep_research_query: isLikelyDeepResearchQuery(text),
-    seeds: 0,
-    adjacency_nodes: 0,
-    expansion_candidates: 0,
-    injected: 0,
-    in_summary_input: 0,
-  };
-
-  // ── PPR graph expansion (J10: deep research) ──────────────────────────────
-  // After concept dedup, expand the result set via the call graph to surface
-  // bridge nodes that connect the query's direct hits. Uses Personalized PageRank
-  // seeded from bound symbols of the top results.
-  try {
-    const pprSeedSymbols: string[] = [];
-    const existingConceptNames = new Set(
-      rerankedResults.map((r) => r.concept).filter((n): n is string => n != null),
-    );
-
-    // Collect bound symbol qualified names from top 5 results
-    for (const r of rerankedResults.slice(0, 5)) {
-      const chunk = getChunk(db, r.chunkId);
-      if (!chunk?.concept_id) continue;
-      const bindings = getBindingSummariesForConcept(db, chunk.concept_id);
-      for (const b of bindings.slice(0, 3)) {
-        pprSeedSymbols.push(b.symbol_qualified_name);
-      }
-    }
-    pprExpansionMeta.seeds = pprSeedSymbols.length;
-
-    if (pprSeedSymbols.length > 0) {
-      const adjacency = buildCallGraphAdjacency(db, pprSeedSymbols, 2);
-      pprExpansionMeta.adjacency_nodes = adjacency.size;
-      const pprScores = personalizedPageRank(adjacency, pprSeedSymbols);
-
-      // Work only with non-seed nodes (potential bridges/connectors).
-      const seedSet = new Set(pprSeedSymbols);
-      const nonSeedScores = Array.from(pprScores.entries())
-        .filter(([sym]) => !seedSet.has(sym))
-        .sort(([, a], [, b]) => b - a);
-
-      // Normalize PPR scores so top bridge node has signal 1.0.
-      const topNonSeedScore = nonSeedScores[0]?.[1] ?? 0;
-      const conceptPprSignal = new Map<string, number>();
-      for (const [symName, pprScore] of nonSeedScores.slice(0, PPR_SYMBOL_PROJECTION_LIMIT)) {
-        const sym = getSymbolByQualifiedName(db, symName);
-        if (!sym) continue;
-        const conceptMatches = getConceptsForSymbols(db, [sym.id]);
-        if (conceptMatches.length === 0) continue;
-
-        const normalizedPpr = topNonSeedScore > 0 ? pprScore / topNonSeedScore : 0;
-        for (const match of conceptMatches) {
-          const signal = normalizedPpr * match.confidence;
-          const prev = conceptPprSignal.get(match.concept_name) ?? 0;
-          if (signal > prev) conceptPprSignal.set(match.concept_name, signal);
-        }
-      }
-
-      // Always-on fusion: boost existing candidates using graph signal.
-      for (const result of rerankedResults) {
-        if (!result.concept) continue;
-        const pprSignal = conceptPprSignal.get(result.concept);
-        if (!pprSignal || pprSignal <= 0) continue;
-        result.score += PPR_FUSION_ALPHA * pprSignal;
-        pprInfluencedChunkIds.add(result.chunkId);
-      }
-
-      // Inject top unseen graph-linked concepts.
-      const expansionCandidates = Array.from(conceptPprSignal.entries())
-        .filter(([conceptName]) => !existingConceptNames.has(conceptName))
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5);
-      pprExpansionMeta.expansion_candidates = expansionCandidates.length;
-
-      if (expansionCandidates.length > 0) {
-        const allActiveConcepts = getActiveConcepts(db);
-        const activeConceptsByName = new Map(allActiveConcepts.map((c) => [c.name, c]));
-
-        // Sync phase: resolve DB lookups for each candidate
-        type ReadTarget = {
-          filePath: string;
-          chunkId: string;
-          conceptName: string;
-          injectScore: number;
-        };
-        const toRead: ReadTarget[] = [];
-        for (const [conceptName, pprSignal] of expansionCandidates) {
-          const conceptRow = activeConceptsByName.get(conceptName);
-          if (!conceptRow?.active_chunk_id) continue;
-          const chunkRow = getChunk(db, conceptRow.active_chunk_id);
-          if (!chunkRow) continue;
-
-          // Reserve the slot now to prevent duplicates across concurrent reads
-          existingConceptNames.add(conceptName);
-          toRead.push({
-            filePath: chunkRow.file_path,
-            chunkId: conceptRow.active_chunk_id,
-            conceptName,
-            injectScore: PPR_FUSION_ALPHA * pprSignal,
-          });
-        }
-
-        // Async phase: fan out file reads concurrently
-        const reads = await Promise.all(
-          toRead.map(async (c) => {
-            try {
-              const parsed = await readChunk(c.filePath);
-              return { ...c, content: parsed.content };
-            } catch {
-              return null;
-            }
-          }),
-        );
-
-        let injected = 0;
-        for (const r of reads) {
-          if (!r) continue;
-          rerankedResults.push({
-            chunkId: r.chunkId,
-            score: r.injectScore,
-            content: r.content,
-            concept: r.conceptName,
-            warning: undefined,
-          });
-          pprInfluencedChunkIds.add(r.chunkId);
-          injected++;
-        }
-        pprExpansionMeta.injected = injected;
-      }
-
-      // Re-sort after graph fusion/injection.
-      if (conceptPprSignal.size > 0 || pprExpansionMeta.injected > 0) {
-        rerankedResults.sort((a, b) => b.score - a.score);
-      }
-    }
-    opts?.tracer?.log("ppr_expansion", pprExpansionMeta);
-  } catch {
-    // PPR expansion is non-fatal — if call_sites table or symbols are missing, continue
-    opts?.tracer?.log("ppr_expansion", {
-      ...pprExpansionMeta,
-      error: "non-fatal expansion failure",
-    });
-  }
 
   // Build concept ID→name map for relation resolution
   const finalChunkMap = batchLoadChunksByIds(
@@ -1736,15 +1560,6 @@ export async function queryConcepts(
       });
     }
   }
-  pprExpansionMeta.in_summary_input = summaryInput.reduce(
-    (count, item) => count + (pprInfluencedChunkIds.has(item.chunkId) ? 1 : 0),
-    0,
-  );
-  opts?.tracer?.log("ppr_summary_input", {
-    in_summary_input: pprExpansionMeta.in_summary_input,
-    summary_input_size: summaryInput.length,
-    injected_total: pprExpansionMeta.injected,
-  });
 
   opts?.onProgress?.("grounding code evidence");
 
@@ -1967,7 +1782,6 @@ export async function queryConcepts(
         concepts_boosted: structuralConceptsBoosted,
         boost_map: structuralBoostMap,
       },
-      ppr_expansion: pprExpansionMeta,
       ...(opts?.ask_debt
         ? {
             ask_debt: {

@@ -52,7 +52,6 @@ export const defaultConfig: LoreConfig = {
       retrieval_opts: {
         max_grounding_hits: 8,
         freshness_decay_days: 7,
-        ppr_fusion_alpha: 0.2,
       },
     },
   },

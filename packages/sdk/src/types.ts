@@ -486,15 +486,6 @@ export interface QueryRunMeta {
     concepts_boosted: number;
     boost_map: Record<string, { boost: number; symbols: string[] }>;
   };
-  ppr_expansion?: {
-    fusion_alpha: number;
-    deep_research_query: boolean;
-    seeds: number;
-    adjacency_nodes: number;
-    expansion_candidates: number;
-    injected: number;
-    in_summary_input: number;
-  };
   ask_debt?: {
     score: number;
     confidence: number;
@@ -1480,7 +1471,6 @@ export interface LoreConfig {
       retrieval_opts?: {
         max_grounding_hits?: number;
         freshness_decay_days?: number;
-        ppr_fusion_alpha?: number;
       };
     };
   };
