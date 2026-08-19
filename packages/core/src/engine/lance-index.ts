@@ -18,6 +18,29 @@ import { expandCamelCase } from "@/db/symbols.ts";
  *   vec_<model-slug>    — { id, fl_type, vector } per embedding model
  */
 
+/**
+ * Identifiers that a word tokenizer would destroy.
+ *
+ * BM25 indexes tokens, and the standard tokenizer treats every non-alphanumeric
+ * character as a separator — so `__module__` is indexed as the token "module",
+ * which appears in 760 chunks of the httpx corpus and carries no signal, and
+ * `not_found` becomes "not" + "found". The more distinctive an identifier looks
+ * to a person, the more completely it dissolves. We collect those identifiers
+ * verbatim into their own column, indexed with a whitespace tokenizer that
+ * leaves them whole, so an exact-identifier query has something rare to match.
+ */
+export function extractVerbatimIdentifiers(text: string, limit = 400): string {
+  const found = new Set<string>();
+  for (const match of text.matchAll(/[A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_*|__[A-Za-z0-9]+__/g)) {
+    const token = match[0];
+    // Single-underscore-free words are already safe; only keep what would split.
+    if (token.length < 3 || !token.includes("_")) continue;
+    found.add(token);
+    if (found.size >= limit) break;
+  }
+  return [...found].join(" ");
+}
+
 const SYNC_TTL_MS = 5_000;
 const lastSyncedAt = new Map<string, number>();
 const inflightSync = new Map<string, Promise<LanceIndex>>();
@@ -105,15 +128,29 @@ async function syncTextTable(db: Database, connection: lancedb.Connection): Prom
 
   const toAdd = rows
     .filter((r) => !existing.has(r.chunk_id))
-    .map((r) => ({ id: r.chunk_id, fl_type: r.fl_type, text: r.content }));
+    .map((r) => ({
+      id: r.chunk_id,
+      fl_type: r.fl_type,
+      text: r.content,
+      identifiers: extractVerbatimIdentifiers(r.content),
+    }));
   const toRemove = [...existing].filter((id) => !wanted.has(id));
 
   if (!table) {
     const created = await connection.createTable(
       "text_index",
-      rows.map((r) => ({ id: r.chunk_id, fl_type: r.fl_type, text: r.content })),
+      rows.map((r) => ({
+        id: r.chunk_id,
+        fl_type: r.fl_type,
+        text: r.content,
+        identifiers: extractVerbatimIdentifiers(r.content),
+      })),
     );
     await created.createIndex("text", { config: lancedb.Index.fts() });
+    // Whitespace tokenizer, no stemming: identifiers must survive whole.
+    await created.createIndex("identifiers", {
+      config: lancedb.Index.fts({ baseTokenizer: "whitespace", stem: false, removeStopWords: false }),
+    });
     return;
   }
 
@@ -299,15 +336,33 @@ export async function lanceBm25Search(
   const table = await openTableOrNull(index.connection, "text_index");
   if (!table) return [];
   const expanded = expandCamelCase(query);
-  try {
-    const rows = await table
-      .query()
-      .fullTextSearch(expanded)
-      .where(`fl_type = '${opts.flType}'`)
-      .limit(opts.limit)
-      .toArray();
-    return rows.map((r) => ({ chunkId: r.id as string }));
-  } catch {
-    return [];
-  }
+
+  const search = async (text: string, column?: string) => {
+    try {
+      const builder = table
+        .query()
+        .fullTextSearch(text, column ? { columns: column } : undefined)
+        .where(`fl_type = '${opts.flType}'`)
+        .limit(opts.limit);
+      const rows = await builder.toArray();
+      return rows.map((r) => ({ chunkId: r.id as string }));
+    } catch {
+      return [];
+    }
+  };
+
+  const wordHits = await search(expanded);
+
+  // Verbatim lane: when the query names an identifier a word tokenizer would
+  // shred (__module__, not_found), also search the whitespace-tokenized
+  // identifiers column, where it is still one rare term. Those hits lead —
+  // an exact identifier match is the strongest signal there is.
+  const queryIdentifiers = extractVerbatimIdentifiers(query, 8);
+  if (!queryIdentifiers) return wordHits;
+
+  const identifierHits = await search(queryIdentifiers, "identifiers");
+  if (identifierHits.length === 0) return wordHits;
+
+  const seen = new Set(identifierHits.map((h) => h.chunkId));
+  return [...identifierHits, ...wordHits.filter((h) => !seen.has(h.chunkId))].slice(0, opts.limit);
 }
