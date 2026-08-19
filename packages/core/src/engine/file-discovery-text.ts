@@ -11,6 +11,11 @@ const TEXT_EXTENSIONS = new Set([
   ".json",
   ".toml",
   ".adoc",
+  // Markup formats. Ingested as raw text for now — see docs on structured
+  // extraction; measured raw first so the extractor's value is attributable.
+  ".html",
+  ".htm",
+  ".xml",
   // Binary document formats, converted to text at ingest time.
   ".docx",
 ]);

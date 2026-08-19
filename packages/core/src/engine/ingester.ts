@@ -6,6 +6,7 @@ import { discoverTextFiles, type DiscoveredTextFile } from "./file-discovery-tex
 import { mapConcurrent } from "./async.ts";
 import { writeDocChunk, deleteSourceChunkFile } from "@/storage/chunk-writer.ts";
 import { extractDocxMarkdown } from "./docx.ts";
+import { extractMarkupMarkdown } from "./markup.ts";
 import {
   insertChunkBatch,
   insertFtsContentBatch,
@@ -32,7 +33,7 @@ interface DocSection {
  * a single section.
  */
 export function splitDocIntoSections(relPath: string, content: string): DocSection[] {
-  if (!/\.(md|mdx|docx)$/i.test(relPath)) {
+  if (!/\.(md|mdx|docx|html?|xml)$/i.test(relPath)) {
     return [{ headingPath: relPath, content }];
   }
   const lines = content.split("\n");
@@ -110,6 +111,13 @@ async function prepareDocIngest(
       const extracted = extractDocxMarkdown(
         new Uint8Array(await Bun.file(absoluteFilePath).arrayBuffer()),
       );
+      if (!extracted) return { kind: "failed", relPath };
+      content = extracted;
+    } else if (/\.(html?|xml)$/i.test(relPath)) {
+      // Markup ingested raw is one chunk of angle brackets; extract to markdown
+      // so the heading-aware chunker can section it like any other document.
+      const raw = await Bun.file(absoluteFilePath).text();
+      const extracted = extractMarkupMarkdown(raw, /\.xml$/i.test(relPath) ? "xml" : "html");
       if (!extracted) return { kind: "failed", relPath };
       content = extracted;
     } else {
