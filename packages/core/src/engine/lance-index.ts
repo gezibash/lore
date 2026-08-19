@@ -116,11 +116,24 @@ async function openTableOrNull(
 
 async function syncTextTable(db: Database, connection: lancedb.Connection): Promise<void> {
   const rows = db.query<EligibleTextRow, []>(ELIGIBLE_TEXT_SQL).all();
-  const table = await openTableOrNull(connection, "text_index");
+  let table = await openTableOrNull(connection, "text_index");
 
   if (rows.length === 0) {
     if (table) await connection.dropTable("text_index");
     return;
+  }
+
+  // Schema drift: a table created by an older lore lacks columns this version
+  // writes (the identifiers lane, say), and mergeInsert rejects the extra field
+  // with "Found field not in schema" — breaking search on every existing mind
+  // after an upgrade. The index is derived and disposable, so rebuild it.
+  if (table) {
+    const columns = (await table.schema()).fields.map((field) => field.name);
+    const missing = ["identifiers"].filter((name) => !columns.includes(name));
+    if (missing.length > 0) {
+      await connection.dropTable("text_index");
+      table = null;
+    }
   }
 
   const wanted = new Map(rows.map((r) => [r.chunk_id, r]));

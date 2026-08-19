@@ -130,16 +130,37 @@ export function getOpenNarrativeByName(db: Database, name: string): NarrativeRow
   return (
     db
       .query<NarrativeRow, [string]>(
-        "SELECT * FROM current_narratives WHERE name = ? AND status = 'open'",
+        `SELECT * FROM current_narratives WHERE name = ? AND status = 'open'
+         ORDER BY version_id DESC`,
       )
       .get(name) ?? null
   );
 }
 
+/**
+ * Look up a narrative by name, preferring one that can still be acted on.
+ *
+ * current_narratives is keyed by id, not name, so re-using a name produces
+ * several current rows. Callers use this to find "the narrative to act on", and
+ * an unordered pick returned whichever row sorted first — so an abandoned twin
+ * could shadow a live narrative, leaving it permanently stuck: status counted it
+ * as dangling while close reported it did not exist, and that blocks `lore open`
+ * for the whole mind.
+ */
 export function getNarrativeByName(db: Database, name: string): NarrativeRow | null {
   return (
-    db.query<NarrativeRow, [string]>("SELECT * FROM current_narratives WHERE name = ?").get(name) ??
-    null
+    db
+      .query<NarrativeRow, [string]>(
+        `SELECT * FROM current_narratives WHERE name = ?
+         ORDER BY CASE status
+                    WHEN 'open' THEN 0
+                    WHEN 'closing' THEN 1
+                    WHEN 'close_failed' THEN 2
+                    ELSE 3
+                  END,
+                  version_id DESC`,
+      )
+      .get(name) ?? null
   );
 }
 
