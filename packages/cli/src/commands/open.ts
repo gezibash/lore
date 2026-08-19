@@ -58,13 +58,13 @@ export async function openCommand(
   client: WorkerClient,
   narrative: string,
   intent: string,
-  resolve?: string,
+  resolve?: string | string[],
   targetSpecs?: string[],
   fromResultId?: string,
 ): Promise<void> {
-  let resolveDangling: ResolveDangling | undefined;
-  if (resolve) {
-    const [name, action] = resolve.split(":");
+  const resolveDangling: ResolveDangling[] = [];
+  for (const spec of resolve ? (Array.isArray(resolve) ? resolve : [resolve]) : []) {
+    const [name, action] = spec.split(":");
     if (!name || !action) {
       throw new Error("Invalid --resolve syntax. Use name:resume or name:abandon.");
     }
@@ -73,12 +73,16 @@ export async function openCommand(
         `Invalid --resolve action '${action}'. Use resume or abandon. Close is a separate command.`,
       );
     }
-    resolveDangling = { narrative: name, action: action as DanglingAction };
+    resolveDangling.push({ narrative: name, action: action as DanglingAction });
   }
 
   const targets: NarrativeTarget[] | undefined =
     targetSpecs && targetSpecs.length > 0 ? targetSpecs.map(parseTargetSpec) : undefined;
 
-  const result = await client.open(narrative, intent, { resolveDangling, targets, fromResultId });
+  const result = await client.open(narrative, intent, {
+    resolveDangling: resolveDangling.length > 0 ? resolveDangling : undefined,
+    targets,
+    fromResultId,
+  });
   emit(result, formatOpen);
 }

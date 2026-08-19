@@ -310,7 +310,7 @@ export class WorkerClient {
     intent: string,
     opts?: {
       codePath?: string;
-      resolveDangling?: ResolveDangling;
+      resolveDangling?: ResolveDangling | ResolveDangling[];
       targets?: NarrativeTarget[];
       fromResultId?: string;
     },

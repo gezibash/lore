@@ -402,7 +402,7 @@ export async function openNarrative(
   intent: string,
   config: LoreConfig,
   embedder: Embedder,
-  resolveDangling?: ResolveDangling,
+  resolveDangling?: ResolveDangling | ResolveDangling[],
   targets?: NarrativeTarget[],
 ): Promise<OpenResult> {
   const existing = getNarrativeByName(db, narrativeName);
@@ -421,39 +421,51 @@ export async function openNarrative(
   // Check for dangling narratives
   const dangling = getDanglingNarratives(db, config.thresholds.dangling_days);
   if (dangling.length > 0 && !resolveDangling) {
-    throw new LoreError("DANGLING_NARRATIVE", `Dangling narrative(s) detected`, {
-      narratives: dangling.map((d) => ({
-        name: d.name,
-        age_days: Math.floor(
-          (Date.now() - new Date(d.opened_at).getTime()) / (24 * 60 * 60 * 1000),
-        ),
-      })),
-    });
+    const described = dangling.map((d) => ({
+      name: d.name,
+      age_days: Math.floor(
+        (Date.now() - new Date(d.opened_at).getTime()) / (24 * 60 * 60 * 1000),
+      ),
+    }));
+    // Name them and state the remedy in the message: details ride on the error
+    // object but no surface renders them, so the bare "dangling detected" left
+    // the user to go find the names themselves before they could proceed.
+    const list = described.map((d) => `${d.name} (${d.age_days}d)`).join(", ");
+    throw new LoreError(
+      "DANGLING_NARRATIVE",
+      `Dangling narrative(s) detected: ${list}. Resolve each with --resolve <name>:resume|abandon, or close them first.`,
+      { narratives: described },
+    );
   }
 
-  // Handle dangling resolution
-  if (resolveDangling) {
-    const danglingNarrative = getNarrativeByNameWithStatuses(db, resolveDangling.narrative, [
+  // Handle dangling resolution. A mind can have several dangling narratives, so
+  // this accepts a list — resolving them one per invocation was impossible when
+  // any unresolved one blocks the open.
+  for (const resolution of resolveDangling
+    ? Array.isArray(resolveDangling)
+      ? resolveDangling
+      : [resolveDangling]
+    : []) {
+    const danglingNarrative = getNarrativeByNameWithStatuses(db, resolution.narrative, [
       "open",
       "close_failed",
     ]);
-    if (danglingNarrative) {
-      switch (resolveDangling.action) {
-        case "abandon":
-          abandonDbNarrative(db, danglingNarrative.id);
-          break;
-        case "resume":
-          if (danglingNarrative.status === "close_failed") {
-            reopenNarrative(db, danglingNarrative.id);
-          }
-          // Return context for the existing narrative instead
-          return buildOpenResult(db, config, embedder, intent);
-        default:
-          throw new LoreError(
-            "DANGLING_NARRATIVE",
-            `Unsupported dangling narrative action '${String(resolveDangling.action)}'`,
-          );
-      }
+    if (!danglingNarrative) continue;
+    switch (resolution.action) {
+      case "abandon":
+        abandonDbNarrative(db, danglingNarrative.id);
+        break;
+      case "resume":
+        if (danglingNarrative.status === "close_failed") {
+          reopenNarrative(db, danglingNarrative.id);
+        }
+        // Return context for the existing narrative instead
+        return buildOpenResult(db, config, embedder, intent);
+      default:
+        throw new LoreError(
+          "DANGLING_NARRATIVE",
+          `Unsupported dangling narrative action '${String(resolution.action)}'`,
+        );
     }
   }
 

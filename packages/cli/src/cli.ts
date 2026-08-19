@@ -175,7 +175,9 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       options: {
         resolve: {
           type: "string",
-          description: "Resolve dangling narrative (name:resume|abandon)",
+          repeatable: true,
+          description:
+            "Resolve a dangling narrative (repeatable): name:resume|abandon. Repeat it once per dangling narrative — any unresolved one blocks the open.",
         },
         "from-result": {
           type: "string",
@@ -200,7 +202,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           getWorker(),
           args.narrative,
           args.intent,
-          options.resolve as string | undefined,
+          options.resolve as string | string[] | undefined,
           targetSpecs,
           options["from-result"] as string | undefined,
         );
