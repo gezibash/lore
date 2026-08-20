@@ -9,6 +9,10 @@ const TEXT_EXTENSIONS = new Set([
   ".yaml",
   ".yml",
   ".json",
+  // JSON with comments. Wrangler, tsconfig and biome all use it, and on a
+  // Cloudflare Workers stack wrangler.jsonc is where env vars, bindings and
+  // routes are declared — the evidence most config questions need.
+  ".jsonc",
   ".toml",
   ".adoc",
   // Markup formats. Ingested as raw text for now — see docs on structured
