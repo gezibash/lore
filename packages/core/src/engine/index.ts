@@ -270,7 +270,7 @@ interface CloseJobPayload {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+  return new Promise((_resolve) => setTimeout(_resolve, ms));
 }
 
 interface PromptPreviewResult {

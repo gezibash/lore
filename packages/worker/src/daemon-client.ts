@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "fs";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { connect } from "net";
-import { LoreError } from "@lore/sdk";
 import {
   acquireLoreLock,
   ensureLoreDaemonDir,

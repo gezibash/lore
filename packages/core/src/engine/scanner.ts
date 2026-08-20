@@ -713,7 +713,7 @@ export async function rescanFiles(
       }
 
       db.run("COMMIT");
-    } catch (err) {
+    } catch {
       db.run("ROLLBACK");
       await cleanupChunkFiles(writtenChunks.map((chunk) => chunk.filePath));
       continue;
