@@ -174,7 +174,8 @@ import {
 import type { CloseMaintenancePayload } from "./narrative-lifecycle.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import { resolveJournalConceptDesignations } from "./journal-routing.ts";
-import { computeTotalDebt, cosineDistance } from "./residuals.ts";
+import { cosineDistance } from "./residuals.ts";
+import { computeExpectedDebt } from "./measurement.ts";
 import { computeDebtTrend } from "./residuals.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
 import { recomputeGraph } from "./graph.ts";
@@ -990,6 +991,9 @@ export class LoreEngine {
         meta: {
           primary_action: result.next_actions[0]?.kind,
           stale_warning: hasStaleSignals(result),
+          // Consult set for the debt distribution p(c) (spec §8): each pack
+          // concept is consulted at weight 1/|pack|.
+          pack_concepts: result.executive_summary?.pack_concepts,
         },
       });
     }
@@ -2221,7 +2225,7 @@ export class LoreEngine {
     const manifest = getManifest(db);
     const fiedlerValue = manifest?.fiedler_value ?? 0;
     const concepts = getActiveConcepts(db);
-    const debtAfter = computeTotalDebt(concepts, fiedlerValue);
+    const debtAfter = computeExpectedDebt(db, concepts).debt ?? 0;
     upsertManifest(db, {
       chunk_count: getChunkCount(db),
       concept_count: getActiveConceptCount(db),
@@ -2894,7 +2898,7 @@ export class LoreEngine {
     const healed: HealConceptsResult["healed"] = [];
     const manifest = getManifest(db);
     const fiedlerValue = manifest?.fiedler_value ?? 0;
-    const preDebt = computeTotalDebt(getActiveConcepts(db), fiedlerValue);
+    const preDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
     let postDebt = preDebt;
     let retried = 0;
     let batchesProcessed = 0;
@@ -3043,7 +3047,7 @@ export class LoreEngine {
         });
         await Promise.all(lanes);
 
-        postDebt = computeTotalDebt(getActiveConcepts(db), fiedlerValue);
+        postDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
         if (postDebt > preDebt + stopLossDelta) {
           partial = true;
           haltedAtBatch = batchesProcessed;
@@ -3055,7 +3059,7 @@ export class LoreEngine {
         }
       }
 
-      postDebt = computeTotalDebt(getActiveConcepts(db), fiedlerValue);
+      postDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
       upsertManifest(db, {
         debt: postDebt,
         debt_trend: computeDebtTrend(postDebt, preDebt),

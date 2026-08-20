@@ -87,12 +87,12 @@ import { cosineDistance, averageVectors, weightedAverageVectors } from "./residu
 import { discoverConcepts } from "./concept-discovery.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import {
-  computeTotalDebt,
   computeDebtTrend,
   recordResiduals,
   computeStaleness,
   conceptPressureBase,
 } from "./residuals.ts";
+import { computeExpectedDebt } from "./measurement.ts";
 import { readSymbolContent } from "./git.ts";
 import {
   getDriftedBindings,
@@ -1836,6 +1836,15 @@ export async function queryConcepts(
       summaryUsage = summary._usage;
       const { _usage: _, ...cleanSummary } = summary;
       executiveSummary = cleanSummary;
+      // The consult set for p(c): what the model was actually shown, minus
+      // synthetic call-site groups (not concepts).
+      (executiveSummary as { pack_concepts?: string[] }).pack_concepts = [
+        ...new Set(
+          summaryInput
+            .filter((r) => !String(r.chunkId).startsWith("callsites:") && r.concept)
+            .map((r) => r.concept as string),
+        ),
+      ];
       summaryGenerated = true;
       summaryReason = "ok";
       opts?.tracer?.log("summary.done", {
@@ -3879,66 +3888,17 @@ export async function runCloseMaintenanceJob(
     );
   }
 
-  const scopedChunkRows = batchLoadChunksByIds(
-    db,
-    concepts
-      .filter((concept) => scopedConcepts.has(concept.id) && concept.active_chunk_id)
-      .map((concept) => concept.active_chunk_id!),
-  );
-  const driftConceptUpdates: Array<{
-    id: string;
-    fields: { staleness: number; ground_residual: number; residual: number };
-  }> = [];
-  const conceptsById = new Map(concepts.map((concept) => [concept.id, concept]));
-  for (const concept of concepts) {
-    if (!scopedConcepts.has(concept.id)) continue;
-    const chunkId = concept.active_chunk_id;
-    if (!chunkId) continue;
-    const chunkRow = scopedChunkRows.get(chunkId);
-    if (!chunkRow) continue;
-
-    const baseStaleness = computeStaleness(chunkRow.created_at, config);
-    let newStaleness = baseStaleness;
-    let newGroundResidual = concept.ground_residual ?? concept.churn ?? 0;
-    const driftCount = closeDriftByConceptId.get(concept.id) ?? 0;
-    if (driftCount > 0) {
-      let driftScore: number;
-      if (driftCount >= 5) driftScore = 1.0;
-      else if (driftCount >= 3) driftScore = 0.85;
-      else if (driftCount >= 2) driftScore = 0.7;
-      else driftScore = 0.5;
-      newStaleness = Math.max(baseStaleness, driftScore);
-      newGroundResidual = Math.min(1, Math.max(newGroundResidual, driftScore * 0.8));
-    }
-
-    const currentStaleness = concept.staleness ?? 0;
-    const currentGroundResidual = concept.ground_residual ?? concept.churn ?? 0;
-    if (
-      Math.abs(newStaleness - currentStaleness) > 1e-6 ||
-      Math.abs(newGroundResidual - currentGroundResidual) > 1e-6
-    ) {
-      const newResidual = Math.max(newGroundResidual, concept.lore_residual ?? 0);
-      driftConceptUpdates.push({
-        id: concept.id,
-        fields: {
-          staleness: newStaleness,
-          ground_residual: newGroundResidual,
-          residual: newResidual,
-        },
-      });
-      mergeFrontmatterUpdates(frontmatterUpdatesByPath, chunkRow.file_path, {
-        fl_staleness: newStaleness,
-        fl_residual: newResidual,
-      });
-    }
-  }
-  insertConceptVersionBatch(db, driftConceptUpdates, conceptsById);
+  // Drift is NOT ratcheted into staleness or ground_residual here any more
+  // (knowledge-model spec rule 3: a composite is never stored into a
+  // component). Drift lives in exactly one place — the drifted-binding rows —
+  // and debt/staleness read it as the e_drift ratio at read time. The old
+  // ratchet double-counted every drift event (staleness, ground_residual and
+  // residual all moved) and could never be un-ratcheted when the drift healed.
 
   const conceptsPost = getConcepts(db);
   const activeConceptsPost = getActiveConcepts(db);
-  const postDiscoveryManifest = getManifest(db);
-  const fiedlerAfter = postDiscoveryManifest?.fiedler_value ?? 0;
-  recordResiduals(db, activeConceptsPost, fiedlerAfter);
+  const debtAfter = computeExpectedDebt(db, activeConceptsPost).debt ?? 0;
+  recordResiduals(db, activeConceptsPost, debtAfter);
 
   const conceptsPostChunkRows = batchLoadChunksByIds(
     db,
@@ -3966,7 +3926,6 @@ export async function runCloseMaintenanceJob(
     }
   });
 
-  const debtAfter = computeTotalDebt(activeConceptsPost, fiedlerAfter);
   const debtTrend = computeDebtTrend(debtAfter, debtBefore);
   upsertManifest(db, {
     chunk_count: getChunkCount(db),

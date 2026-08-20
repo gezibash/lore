@@ -1,9 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { ConceptRow, ManifestRow, RegistryEntry, SymbolDriftResult } from "@/types/index.ts";
 import { getDriftedBindings } from "@/db/concept-symbols.ts";
-import { computeTotalDebt, conceptPressureBase } from "./residuals.ts";
-
-const SYMBOL_DRIFT_RESIDUAL_WEIGHT = 0.85;
+import { conceptPressureBase } from "./residuals.ts";
+import { computeExpectedDebt } from "./measurement.ts";
 
 export interface DebtSnapshot {
   debt: number;
@@ -19,11 +18,11 @@ export function conceptPressure(
   concept: ConceptRow,
   refDriftScoreByConcept: Map<string, number>,
 ): number {
-  // Base pressure from ground_residual + lore_residual (falls back to churn if not yet computed)
+  // R(c) shape: max of evidence — embedding residual and the drift ratio.
+  // (lore_residual and age-based staleness are no longer evidence: cluster
+  // cohesion is a graph property, wall-clock age punishes stable code.)
   const base = conceptPressureBase(concept);
-  const symbolDriftPressure =
-    (refDriftScoreByConcept.get(concept.id) ?? 0) * SYMBOL_DRIFT_RESIDUAL_WEIGHT;
-  return Math.max(base, conceptLiveStaleness(concept, refDriftScoreByConcept), symbolDriftPressure);
+  return Math.max(base, refDriftScoreByConcept.get(concept.id) ?? 0);
 }
 
 export function conceptLiveStaleness(
@@ -39,58 +38,38 @@ export async function computeDebtSnapshot(
   concepts: ConceptRow[],
   manifest: ManifestRow | null,
 ): Promise<DebtSnapshot> {
-  const fiedlerValue = manifest?.fiedler_value ?? 0;
-  const persistedDebt = manifest?.debt ?? computeTotalDebt(concepts, fiedlerValue);
+  // Expected consulted error: debt = Σ p(c)·R(c) ∈ [0,1], recomputed at read
+  // time from the axes (knowledge-model spec §4.2). manifest.debt is a cache
+  // of the last computed value, never a competing source — the old
+  // max(persisted, live) rule let a stale cache pin debt high forever.
+  const expected = computeExpectedDebt(db, concepts);
 
-  // Compute symbol drift scores (replaces legacy ref drift)
-  const symbolDriftScoreByConcept = new Map<string, number>();
+  // Drifted-binding details, kept for warnings; the per-concept score is the
+  // drift RATIO from the same computation that feeds debt (one signal, one
+  // term — the 0.5/0.7/0.85/1.0 count steps scored 1 drifted of 40 bindings
+  // like 1 of 2).
   const symbolDriftWarnings = new Map<string, SymbolDriftResult[]>();
   try {
-    const driftedBindings = getDriftedBindings(db);
-    for (const drift of driftedBindings) {
+    for (const drift of getDriftedBindings(db)) {
       const existing = symbolDriftWarnings.get(drift.concept_id);
-      if (existing) {
-        existing.push(drift);
-      } else {
-        symbolDriftWarnings.set(drift.concept_id, [drift]);
-      }
-    }
-    // Score: based on fraction of drifted bindings. More drifted = higher score.
-    for (const [conceptId, drifts] of symbolDriftWarnings) {
-      // Normalize: 1 drift = 0.5, 2 = 0.7, 3+ = 0.85, 5+ = 1.0
-      const count = drifts.length;
-      let score: number;
-      if (count >= 5) score = 1.0;
-      else if (count >= 3) score = 0.85;
-      else if (count >= 2) score = 0.7;
-      else score = 0.5;
-      symbolDriftScoreByConcept.set(conceptId, score);
+      if (existing) existing.push(drift);
+      else symbolDriftWarnings.set(drift.concept_id, [drift]);
     }
   } catch {
     // Table may not exist yet (pre-migration) — silently skip
   }
+  const refDriftScoreByConcept = new Map<string, number>();
+  for (const [conceptId, g] of expected.residuals) {
+    if (g.eDrift > 0) refDriftScoreByConcept.set(conceptId, g.eDrift);
+  }
 
-  // Use symbol drift as the single drift signal (replaces legacy ref drift)
-  const refDriftScoreByConcept = symbolDriftScoreByConcept;
-  const refWarnings = new Map<string, string[]>();
-
-  // Compute live debt: sum of full pressure (including symbol drift) / (1 + fiedler)
-  const rawLiveDebt = concepts.reduce(
-    (sum, c) => sum + conceptPressure(c, refDriftScoreByConcept),
-    0,
-  );
-  const liveDebt = rawLiveDebt / (1 + fiedlerValue);
-  const debt = Math.max(persistedDebt, liveDebt);
-  const debtTrendBase = manifest?.debt_trend ?? "stable";
-  const driftNote = symbolDriftScoreByConcept.size > 0 ? ", live symbol drift" : "";
-  const debt_trend = debt > persistedDebt + 1e-9 ? `${debtTrendBase}${driftNote}` : debtTrendBase;
-
+  const debt = expected.debt ?? 0;
   return {
     debt,
-    debt_trend,
-    persisted_debt: persistedDebt,
-    live_debt: liveDebt,
-    refWarnings,
+    debt_trend: manifest?.debt_trend ?? "stable",
+    persisted_debt: manifest?.debt ?? debt,
+    live_debt: debt,
+    refWarnings: new Map(),
     refDriftScoreByConcept,
     symbolDriftWarnings,
   };

@@ -680,6 +680,10 @@ export interface ExecutiveSummary {
     confidence: number;
     max_staleness?: number;
   }>;
+  /** Concept names in the evidence pack shown to the model — the consult set
+   *  recorded on ask events for the debt distribution p(c). Synthetic pack
+   *  entries (call-site groups) are excluded. */
+  pack_concepts?: string[];
   /** Symbols whose source bodies were used as authoritative grounding but have no concept binding.
    *  Agent should bind these to improve future retrieval quality. */
   unbound_source_symbols?: string[];

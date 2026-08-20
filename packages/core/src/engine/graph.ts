@@ -13,7 +13,8 @@ import { insertEdge } from "@/db/edges.ts";
 import { upsertLaplacianCache } from "@/db/laplacian.ts";
 import { getManifest, upsertManifest } from "@/db/manifest.ts";
 import { getChunkCount } from "@/db/chunks.ts";
-import { computeTotalDebt, computeComponentDebt, computeDebtTrend } from "./residuals.ts";
+import { computeDebtTrend } from "./residuals.ts";
+import { computeExpectedDebt } from "./measurement.ts";
 import type { ConceptRow } from "@/types/index.ts";
 
 /**
@@ -558,31 +559,11 @@ export function recomputeGraph(db: Database): RecomputeGraphResult | null {
   const previousDebt = getManifest(db)?.debt ?? 0;
   const freshConcepts = getActiveConcepts(db);
 
-  // Build per-cluster concept lists for component-level debt computation
-  const conceptsByCluster = new Map<number, ConceptRow[]>();
-  const unclusteredConcepts: ConceptRow[] = [];
-  for (const concept of freshConcepts) {
-    if (concept.active_chunk_id) {
-      const clusterIdx = chunkCluster.get(concept.active_chunk_id);
-      if (clusterIdx !== undefined) {
-        if (!conceptsByCluster.has(clusterIdx)) conceptsByCluster.set(clusterIdx, []);
-        conceptsByCluster.get(clusterIdx)!.push(concept);
-        continue;
-      }
-    }
-    unclusteredConcepts.push(concept);
-  }
-  const componentData: Array<{ concepts: ConceptRow[]; fiedlerValue: number }> = [];
-  for (const [clusterIdx, concepts] of conceptsByCluster) {
-    componentData.push({ concepts, fiedlerValue: clusterFiedlerValues.get(clusterIdx) ?? 0 });
-  }
-  if (unclusteredConcepts.length > 0) {
-    componentData.push({ concepts: unclusteredConcepts, fiedlerValue: 0 });
-  }
-  const newDebt =
-    componentData.length > 0
-      ? computeComponentDebt(componentData)
-      : computeTotalDebt(freshConcepts, fiedler.fiedlerValue);
+  // Debt is expected consulted error over the axes (knowledge-model spec
+  // §4.2). Connectivity no longer discounts it: the /(1+fiedler) divisor
+  // asserted that a connected similarity graph makes stale prose matter less,
+  // which mostly measured semantic homogeneity — graph health is its own axis.
+  const newDebt = computeExpectedDebt(db, freshConcepts).debt ?? 0;
 
   // Update manifest with fresh graph data + debt
   upsertManifest(db, {

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { LoreConfig, ConceptRow } from "@/types/index.ts";
 import { insertResidualHistory } from "@/db/residuals.ts";
-import { getFileCoverage } from "@/db/concept-symbols.ts";
+import { computeStateDistanceSpec } from "./measurement.ts";
 
 /**
  * Compute residual for a concept as version-to-version drift.
@@ -40,18 +40,14 @@ export function computeStaleness(lastUpdated: string, config: LoreConfig): numbe
   return Math.min(1, ageDays / config.thresholds.staleness_days);
 }
 
-const GROUND_WEIGHT = 0.6;
-const LORE_WEIGHT = 0.4;
-
 /**
- * Compute the accuracy pressure for a single concept.
- * Driven by ground_residual (concept vs source) and lore_residual (concept vs cluster peers).
- * Falls back to churn when ground_residual is not yet populated.
+ * e_embed: the concept-vs-bound-code embedding residual, falling back to churn
+ * when not yet populated. lore_residual (cluster cohesion) is a graph
+ * property, not error evidence — as pressure it punished semantic
+ * distinctiveness with a penalty no maintenance action could heal.
  */
 export function conceptPressureBase(concept: ConceptRow): number {
-  const gr = concept.ground_residual ?? concept.churn ?? 0;
-  const hr = concept.lore_residual ?? 0;
-  return GROUND_WEIGHT * gr + LORE_WEIGHT * hr;
+  return concept.ground_residual ?? concept.churn ?? 0;
 }
 
 /**
@@ -101,41 +97,17 @@ export function weightedAverageVectors(vecs: Float32Array[], weights: number[]):
 }
 
 /**
- * Total debt = sum(pressure) / (1 + fiedler_value).
- * Pressure is driven by ground_residual and lore_residual, not churn.
- * High Fiedler (connected graph) → divisor grows → debt shrinks.
- * Low Fiedler (scattered) → divisor ≈ 1 → raw pressure sum.
- * Fiedler = 0 (disconnected) → debt unchanged.
- */
-export function computeTotalDebt(concepts: ConceptRow[], fiedlerValue: number = 0): number {
-  const rawDebt = concepts.reduce((sum, c) => sum + conceptPressureBase(c), 0);
-  return rawDebt / (1 + fiedlerValue);
-}
-
-/**
- * Per-component debt: sum each cluster's raw pressure divided by its own Fiedler value.
- * Prevents a well-connected cluster from discounting debt in isolated clusters.
- * Each component provides its own concepts and local Fiedler connectivity measure.
- */
-export function computeComponentDebt(
-  components: Array<{ concepts: ConceptRow[]; fiedlerValue: number }>,
-): number {
-  return components.reduce((total, comp) => {
-    const rawDebt = comp.concepts.reduce((sum, c) => sum + conceptPressureBase(c), 0);
-    return total + rawDebt / (1 + comp.fiedlerValue);
-  }, 0);
-}
-
-/**
- * Determine debt trend based on recent residual history.
+ * Determine debt trend from relative change (knowledge-model spec §8): the old
+ * ±0.5 absolute delta was meaningless once debt became a [0,1] expectation.
  */
 export function computeDebtTrend(
   currentDebt: number,
   previousDebt: number,
 ): "improving" | "stable" | "degrading" {
-  const delta = currentDebt - previousDebt;
-  if (delta < -0.5) return "improving";
-  if (delta > 0.5) return "degrading";
+  if (previousDebt <= 0) return currentDebt > 0 ? "degrading" : "stable";
+  const relative = (currentDebt - previousDebt) / previousDebt;
+  if (relative < -0.1) return "improving";
+  if (relative > 0.1) return "degrading";
   return "stable";
 }
 
@@ -153,57 +125,16 @@ export function computeDebtTrend(
  * Unlike debt (a maintenance score), state distance is an epistemological gap.
  */
 export function computeStateDistance(db: Database, concepts: ConceptRow[]): number {
-  if (concepts.length === 0) return 1.0;
-
-  const fileCoverage = getFileCoverage(db);
-
-  // Build per-concept bound-symbol counts from file coverage aggregation.
-  // We use a per-concept aggregation query-free approach: sum file bound_count
-  // for files bound to each concept. Since getFileCoverage is file-level,
-  // build a concept→files lookup via concept ground_residual and symbol counts.
-  // Simpler: use per-concept ground_residual weighted by their share of total symbols.
-
-  // Total symbols across all files (denominator baseline)
-  const totalSymbols = fileCoverage.reduce((s, f) => s + f.symbol_count, 0);
-  if (totalSymbols === 0) return concepts.length > 0 ? 0 : 1.0;
-
-  // Covered symbols (at least one concept binding)
-  const coveredSymbols = fileCoverage.reduce((s, f) => s + f.bound_count, 0);
-
-  // Weighted sum over concepts using ground_residual and bound_count approximation.
-  // Weight each concept by: coveredSymbols / totalSymbols (shared weight).
-  // Plus uncovered fraction contributes residual=1.0.
-  let weightedResidualSum = 0;
-  let totalWeight = 0;
-
-  for (const concept of concepts) {
-    const gr = concept.ground_residual ?? 0;
-    // Weight = concept's share of covered symbols (proxy: equal share of coveredSymbols)
-    // Better: each concept gets weight proportional to bound_count / totalSymbols.
-    // We don't have per-concept bound_count here cheaply, so use equal share.
-    const w = coveredSymbols / totalSymbols / concepts.length;
-    weightedResidualSum += gr * w;
-    totalWeight += w;
-  }
-
-  // Uncovered fraction contributes residual=1.0
-  const uncoveredFraction = Math.max(0, 1 - coveredSymbols / totalSymbols);
-  weightedResidualSum += 1.0 * uncoveredFraction;
-  totalWeight += uncoveredFraction;
-
-  if (totalWeight <= 0) return 0;
-  return Math.min(1, weightedResidualSum / totalWeight);
+  // Real per-concept bound-symbol masses, ungrounded concepts included at
+  // residual 1 with floor mass ε — the equal-share/exclude-ungrounded
+  // shortcut this replaces contradicted the formula above.
+  return computeStateDistanceSpec(db, concepts);
 }
 
 /**
- * Record residuals for all concepts.
+ * Record residuals for all concepts alongside the current total debt value.
  */
-export function recordResiduals(
-  db: Database,
-  concepts: ConceptRow[],
-  fiedlerValue: number = 0,
-): void {
-  const totalDebt = computeTotalDebt(concepts, fiedlerValue);
+export function recordResiduals(db: Database, concepts: ConceptRow[], totalDebt: number): void {
   for (const concept of concepts) {
     if (concept.residual != null) {
       insertResidualHistory(db, concept.id, concept.residual, totalDebt);

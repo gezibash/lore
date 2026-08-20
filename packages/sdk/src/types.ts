@@ -616,6 +616,8 @@ export interface ExecutiveSummary {
     confidence: number;
     max_staleness?: number;
   }>;
+  /** Concept names in the evidence pack shown to the model (consult set for p(c)). */
+  pack_concepts?: string[];
   unbound_source_symbols?: string[];
 }
 

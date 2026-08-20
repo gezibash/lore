@@ -4,7 +4,7 @@ import type {
   ConceptRelationRow,
   ConceptRow,
 } from "@/types/index.ts";
-import { computeTotalDebt, conceptPressureBase } from "./residuals.ts";
+import { conceptPressureBase } from "./residuals.ts";
 
 export interface ComputedConceptHealthSignal {
   concept_id: string;
@@ -170,7 +170,13 @@ export function computeConceptHealthSignals(
     };
   });
 
-  const debtAfterAdjust = computeTotalDebt(adjustedConcepts, input.fiedlerValue);
+  // What-if signal with no consult context: uniform prior, so expected debt
+  // reduces to the mean adjusted residual (spec cold-start behavior).
+  const debtAfterAdjust =
+    adjustedConcepts.length === 0
+      ? 0
+      : adjustedConcepts.reduce((sum, c) => sum + conceptPressureBase(c), 0) /
+        adjustedConcepts.length;
 
   const signals: ComputedConceptHealthSignal[] = interimSignals
     .map((signal) => {
