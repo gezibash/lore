@@ -4171,22 +4171,45 @@ export class LoreEngine {
     const proseRows = rows.filter((r) => r.chunk.fl_type !== "source");
     const BATCH = 96;
 
+    // Cap what goes to the embedder: one giant single-section doc (a postman
+    // collection, a lockfile) otherwise 400s its whole batch. A vector of the
+    // first 8k chars is still a useful retrieval key for such a file.
+    const EMBED_INPUT_MAX = 8_000;
     const embedRows = async (
       batchRows: typeof rows,
       embedderInstance: Embedder,
       model: string,
     ) => {
+      let failed = 0;
       for (let i = 0; i < batchRows.length; i += BATCH) {
         const batch = batchRows.slice(i, i + BATCH);
+        const inputs = batch.map((r) => r.content.slice(0, EMBED_INPUT_MAX));
         try {
-          const embeddings = await embedderInstance.embedBatch(batch.map((r) => r.content));
+          const embeddings = await embedderInstance.embedBatch(inputs);
           insertBatch(
             db,
             batch.map((r, j) => ({ chunkId: r.chunk.id, embedding: embeddings[j]!, model })),
           );
         } catch {
-          return; // provider outage — remaining batches heal on a later ingest
+          // One poison item must not abandon the batch, and one failed batch
+          // must not abandon the rest of the run (it used to `return` here,
+          // which left minds with zero prose embeddings — deterministically,
+          // since the same batch failed first on every ingest). Isolate items;
+          // skip only what genuinely will not embed.
+          for (let j = 0; j < batch.length; j++) {
+            try {
+              const [embedding] = await embedderInstance.embedBatch([inputs[j]!]);
+              insertBatch(db, [{ chunkId: batch[j]!.chunk.id, embedding: embedding!, model }]);
+            } catch {
+              failed++;
+            }
+          }
         }
+      }
+      if (failed > 0) {
+        console.error(
+          `lore: ${failed} chunk(s) failed to embed under ${model} and were skipped; a later ingest will retry them`,
+        );
       }
     };
 
