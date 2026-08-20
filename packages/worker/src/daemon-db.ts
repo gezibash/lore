@@ -79,8 +79,11 @@ function ensureDaemonSqlite(): void {
 export function openDaemonQueueDb(path: string): Database {
   ensureDaemonSqlite();
   const db = new Database(path);
-  db.exec("PRAGMA journal_mode = WAL");
+  // busy_timeout first: switching to WAL takes an exclusive lock, so a
+  // concurrent opener throws SQLITE_BUSY instead of waiting if the timeout
+  // is not already armed.
   db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS daemon_jobs (
       id TEXT PRIMARY KEY,

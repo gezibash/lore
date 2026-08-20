@@ -25,7 +25,10 @@ import {
   queueDaemonJob,
 } from "./daemon-db.ts";
 import {
+  acquireLoreLock,
   ensureLoreDaemonDir,
+  loreDaemonLockPath,
+  releaseLoreLock,
   removeLoreDaemonState,
   writeLoreDaemonState,
   type LoreDaemonPaths,
@@ -206,9 +209,9 @@ function getRequestCodePath(method: string, args: unknown[], fallbackCwd?: strin
 }
 
 export class LoreDaemonServer {
-  private readonly client: DirectClient;
+  private client!: DirectClient;
   private readonly paths: LoreDaemonPaths;
-  private readonly queueDb;
+  private queueDb!: ReturnType<typeof openDaemonQueueDb>;
   private readonly chains = new Map<string, Promise<void>>();
   private readonly activeProcessors = new Set<string>();
   private readonly startedAt = new Date().toISOString();
@@ -219,22 +222,32 @@ export class LoreDaemonServer {
 
   constructor(paths: LoreDaemonPaths) {
     this.paths = ensureLoreDaemonDir(paths);
-    this.queueDb = openDaemonQueueDb(this.paths.dbPath);
-    this.client = createLoreClient();
   }
 
   async run(): Promise<void> {
     ensureLoreDaemonDir(this.paths);
+    // The queue DB, the socket unlink, and the bind all happen under this lock.
+    // A second daemon reaching here would otherwise unlink a *live* daemon's
+    // socket and bind its own, orphaning every client already connected.
+    if (!acquireLoreLock(loreDaemonLockPath(this.paths))) {
+      this.log("another daemon holds the lock; exiting without binding");
+      return;
+    }
     try {
+      this.queueDb = openDaemonQueueDb(this.paths.dbPath);
+      this.client = createLoreClient();
       rmSync(this.paths.socketPath, { force: true });
-    } catch {}
-    await new Promise<void>((resolve, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(this.paths.socketPath, () => {
-        this.server.off("error", reject);
-        resolve();
+      await new Promise<void>((resolve, reject) => {
+        this.server.once("error", reject);
+        this.server.listen(this.paths.socketPath, () => {
+          this.server.off("error", reject);
+          resolve();
+        });
       });
-    });
+    } catch (error) {
+      releaseLoreLock(loreDaemonLockPath(this.paths));
+      throw error;
+    }
     try {
       chmodSync(this.paths.socketPath, 0o600);
     } catch {}
@@ -274,6 +287,7 @@ export class LoreDaemonServer {
       rmSync(this.paths.socketPath, { force: true });
     } catch {}
     removeLoreDaemonState(this.paths);
+    releaseLoreLock(loreDaemonLockPath(this.paths));
     this.queueDb.close();
     this.client.shutdown();
   }

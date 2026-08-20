@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from "fs";
 import { spawn } from "child_process";
-import { rmSync, statSync, writeFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { connect } from "net";
 import { LoreError } from "@lore/sdk";
 import {
+  acquireLoreLock,
   ensureLoreDaemonDir,
   getLoreDaemonPaths,
+  loreSpawnLockPath,
   readLoreDaemonState,
+  releaseLoreLock,
   type LoreDaemonPaths,
 } from "./daemon-paths.ts";
 import type {
@@ -94,29 +96,11 @@ export class LoreDaemonRpcClient {
 
     // Concurrent CLI invocations all see "not running" at once and each spawn a
     // daemon — a benchmark at 10-way parallelism left seven of them competing
-    // for one socket, degrading every request. The winner of an atomic
-    // exclusive-create spawns; the losers wait for the socket it opens.
-    const lockPath = `${this.paths.socketPath}.spawn.lock`;
-    let holdsLock = false;
-    try {
-      writeFileSync(lockPath, `${process.pid}`, { flag: "wx" });
-      holdsLock = true;
-    } catch {
-      // A stale lock (holder died before unlinking) must not wedge the CLI:
-      // treat one older than the start deadline as abandoned and take it.
-      try {
-        const age = Date.now() - statSync(lockPath).mtimeMs;
-        if (age > SPAWN_TIMEOUT_MS) {
-          rmSync(lockPath, { force: true });
-          writeFileSync(lockPath, `${process.pid}`, { flag: "wx" });
-          holdsLock = true;
-        }
-      } catch {
-        // someone else just took it — fall through and wait
-      }
-    }
-
-    if (!holdsLock) {
+    // for one socket, degrading every request. The lock winner spawns; the
+    // losers wait for the socket it opens rather than starting children the
+    // daemon-side lock would only make exit again.
+    const lockPath = loreSpawnLockPath(this.paths);
+    if (!acquireLoreLock(lockPath)) {
       const waitUntil = Date.now() + SPAWN_TIMEOUT_MS;
       while (Date.now() < waitUntil) {
         await sleep(100);
@@ -155,7 +139,7 @@ export class LoreDaemonRpcClient {
       }
       throw new Error("Lore daemon did not start within 5 seconds");
     } finally {
-      rmSync(lockPath, { force: true });
+      releaseLoreLock(lockPath);
     }
   }
 
