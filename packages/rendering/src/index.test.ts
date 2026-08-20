@@ -10,9 +10,9 @@ function sampleStatus(): StatusResult {
   return {
     lore_name: "flowlake",
     health: "degrading",
-    summary: "81 concepts, debt 12.3%",
+    summary: "81 concepts, debt 12%",
     debt_band: "caution",
-    debt: 12.3,
+    debt: 0.12,
     priorities: [
       {
         concept: "performance-parallelization",
@@ -52,7 +52,7 @@ function sampleLs(): LsResult {
     concepts: [],
     manifest: null,
     openNarratives: [],
-    debt: 12.3,
+    debt: 0.12,
     debt_trend: "caution",
   };
 }
@@ -72,11 +72,11 @@ test("renderStatus uses route defaults", () => {
 
   const cliDetails = renderStatus(status, { route: "cli", details: true });
   expect(cliDetails).toContain("Health:");
-  expect(cliDetails).toContain("debt 12.3%");
+  expect(cliDetails).toContain("debt 12%");
 
   const http = renderStatus(status, { route: "http" });
   const parsed = JSON.parse(http) as StatusResult;
-  expect(parsed.debt).toBe(12.3);
+  expect(parsed.debt).toBe(0.12);
 });
 
 test("renderLs uses route defaults", () => {
@@ -84,7 +84,7 @@ test("renderLs uses route defaults", () => {
 
   const cli = renderLs(ls, { route: "cli" });
   expect(cli).toContain("flowlake");
-  expect(cli).toContain("debt 12.3%");
+  expect(cli).toContain("debt 12%");
 
   const http = renderLs(ls, { route: "http" });
   const parsed = JSON.parse(http) as LsResult;

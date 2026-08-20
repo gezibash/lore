@@ -719,7 +719,7 @@ function renderLsPlain(
   concepts: ConceptRow[],
   openNarratives: NarrativeRow[],
   opts: {
-    debt: number;
+    debt: number | null;
     trend: string;
     debtDelta?: number | null;
     conceptTrends?: Array<{
@@ -733,7 +733,7 @@ function renderLsPlain(
 ): string {
   const lines: string[] = [];
 
-  const debt = `${opts.debt.toFixed(1)}%`;
+  const debt = opts.debt == null ? "n/a" : `${(opts.debt * 100).toFixed(0)}%`;
   lines.push(
     `${BOLD}${loreMind.name}${RESET}  ·  ${compactCount(concepts.length)} concepts  ·  debt ${debt}`,
   );

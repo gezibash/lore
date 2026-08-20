@@ -231,12 +231,12 @@ test("formatLs renders provided debt snapshot values", () => {
 
   const rendered = stripAnsi(
     formatLs(loreMind, [], [], {
-      debt: 79,
+      debt: 0.79,
       trend: "stable, live ref drift",
     }),
   );
 
-  expect(rendered).toContain("debt 79.0%");
+  expect(rendered).toContain("debt 79%");
 });
 
 test("formatLs sorts by residual then staleness and shows trend arrows", () => {
@@ -288,7 +288,7 @@ test("formatLs sorts by residual then staleness and shows trend arrows", () => {
 
   const rendered = stripAnsi(
     formatLs(loreMind, concepts, [], {
-      debt: 50,
+      debt: 0.5,
       trend: "stable",
       debtDelta: 0.02,
       conceptTrends: [
@@ -311,7 +311,7 @@ test("formatLs sorts by residual then staleness and shows trend arrows", () => {
   expect(highIndex).toBeGreaterThan(-1);
   expect(lowIndex).toBeGreaterThan(-1);
   expect(highIndex).toBeLessThan(lowIndex);
-  expect(rendered).toContain("debt 50.0%");
+  expect(rendered).toContain("debt 50%");
   expect(rendered).toContain("45% ↑");
   expect(rendered).toContain("5% ↓");
   expect(rendered).not.toContain("0.90 ↑");

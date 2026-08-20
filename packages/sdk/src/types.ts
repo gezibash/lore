@@ -486,8 +486,8 @@ export interface QueryRunMeta {
     boost_map: Record<string, { boost: number; symbols: string[] }>;
   };
   ask_debt?: {
-    score: number;
-    confidence: number;
+    /** Expected consulted error ∈ [0,1]; null for a concept-less mind. */
+    score: number | null;
     band: "healthy" | "caution" | "high" | "critical";
     retrieval_multiplier: number;
     staleness_penalty_multiplier: number;
@@ -728,10 +728,9 @@ export interface StatusResult {
   lore_name: string;
   health: HealthStatus;
   summary: string;
-  /** User-facing ask-quality debt score (0-100, lower is better). */
-  debt?: number;
-  /** User-facing ask-quality confidence score (0-100, higher is better). */
-  confidence?: number;
+  /** Expected consulted error ∈ [0,1] (rendered as a percentage); null for a
+   *  concept-less mind — unmeasured, not healthy. */
+  debt?: number | null;
   debt_band?: "healthy" | "caution" | "high" | "critical";
   /** Internal residual/graph debt for advanced diagnostics. */
   raw_debt?: number;
@@ -747,15 +746,12 @@ export interface StatusResult {
     display: number;
   };
   debt_components?: {
-    staleness: number;
     symbol_drift: number;
     code_freshness: number;
     doc_freshness: number;
     coverage_gap: number;
     embedding_mismatch: number;
     active_narrative_hygiene: number;
-    priority_pressure: number;
-    ask_debt_base: number;
     write_activity_72h: {
       journal_entries: number;
       closed_narratives: number;
@@ -965,7 +961,8 @@ export interface LsResult {
   concepts: ConceptRow[];
   manifest: ManifestRow | null;
   openNarratives: NarrativeRow[];
-  debt: number;
+  /** Expected consulted error ∈ [0,1]; null for a concept-less mind. */
+  debt: number | null;
   debt_previous?: number | null;
   debt_delta?: number | null;
   debt_trend: string;

@@ -966,7 +966,6 @@ export class LoreEngine {
       tracer: askTracer,
       ask_debt: {
         score: askDebtSnapshot.debt,
-        confidence: askDebtSnapshot.confidence,
         band: askDebtSnapshot.band,
       },
     });
@@ -1929,14 +1928,21 @@ export class LoreEngine {
         : null,
     });
 
+    // Health follows the config-owned band; an unmeasured mind is not "good".
     const health: StatusResult["health"] =
-      askDebtSnapshot.debt <= 25 ? "good" : askDebtSnapshot.debt <= 50 ? "degrading" : "critical";
+      askDebtSnapshot.band === "healthy"
+        ? "good"
+        : askDebtSnapshot.band === "critical"
+          ? "critical"
+          : "degrading";
     return {
       lore_name: name,
       health,
-      summary: `${concepts.length} concepts, debt ${askDebtSnapshot.debt.toFixed(1)}%`,
+      summary:
+        askDebtSnapshot.debt == null
+          ? `${concepts.length} concepts, debt n/a`
+          : `${concepts.length} concepts, debt ${(askDebtSnapshot.debt * 100).toFixed(0)}%`,
       debt: askDebtSnapshot.debt,
-      confidence: askDebtSnapshot.confidence,
       debt_band: askDebtSnapshot.band,
       raw_debt: rawDebt,
       raw_debt_breakdown: askDebtSnapshot.raw_debt_breakdown,
@@ -1946,15 +1952,12 @@ export class LoreEngine {
         display: askDebtSnapshot.raw_debt_breakdown.display,
       },
       debt_components: {
-        staleness: askDebtSnapshot.components.staleness,
         symbol_drift: askDebtSnapshot.components.symbol_drift,
         code_freshness: askDebtSnapshot.components.code_freshness,
         doc_freshness: askDebtSnapshot.components.doc_freshness,
         coverage_gap: askDebtSnapshot.components.coverage_gap,
         embedding_mismatch: askDebtSnapshot.components.embedding_mismatch,
         active_narrative_hygiene: askDebtSnapshot.components.active_narrative_hygiene,
-        priority_pressure: askDebtSnapshot.components.priority_pressure,
-        ask_debt_base: askDebtSnapshot.base_debt,
         write_activity_72h: {
           journal_entries: askDebtSnapshot.components.write_activity_72h.journal_entries,
           closed_narratives: askDebtSnapshot.components.write_activity_72h.closed_narratives,

@@ -6,35 +6,20 @@ import { computeStateDistance } from "./residuals.ts";
 import { getLastDocIndexedAt } from "@/db/chunks.ts";
 import { getLastScannedAt } from "@/db/source-files.ts";
 import type { DebtSnapshot } from "./debt.ts";
-import { conceptPressure } from "./debt.ts";
 import { discoverFiles } from "./file-discovery.ts";
 import { discoverTextFiles } from "./file-discovery-text.ts";
 
-const HOT_CONCEPT_LIMIT = 20;
 const WRITE_WINDOW_HOURS = 72;
-
-const WEIGHTS = {
-  staleness: 0.27,
-  symbol_drift: 0.23,
-  code_freshness: 0.18,
-  doc_freshness: 0.08,
-  coverage_gap: 0.1,
-  embedding_mismatch: 0.04,
-  active_narrative_hygiene: 0.05,
-  priority_pressure: 0.05,
-} as const;
 
 export type AskDebtBand = "healthy" | "caution" | "high" | "critical";
 
 export interface AskDebtComponents {
-  staleness: number;
   symbol_drift: number;
   code_freshness: number;
   doc_freshness: number;
   coverage_gap: number;
   embedding_mismatch: number;
   active_narrative_hygiene: number;
-  priority_pressure: number;
   write_activity_72h: {
     journal_entries: number;
     closed_narratives: number;
@@ -47,10 +32,10 @@ export interface AskDebtComponents {
 }
 
 export interface AskDebtSnapshot {
-  debt: number;
-  confidence: number;
+  /** Expected consulted error ∈ [0,1]; null for a concept-less mind ("no
+   *  concepts" is not "no debt" — retrieval runs uncalibrated there). */
+  debt: number | null;
   band: AskDebtBand;
-  base_debt: number;
   components: AskDebtComponents;
   raw_debt: number;
   raw_debt_breakdown: {
@@ -90,44 +75,14 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function clamp100(value: number): number {
-  return Math.max(0, Math.min(100, value));
-}
-
-function toBand(debt: number): AskDebtBand {
-  if (debt <= 25) return "healthy";
-  if (debt <= 50) return "caution";
-  if (debt <= 75) return "high";
+function toBand(debt: number | null, config: LoreConfig): AskDebtBand {
+  // A mind with no concepts is unmeasured, not healthy: retrieve wide.
+  if (debt == null) return "caution";
+  const bands = config.thresholds.debt_bands ?? { healthy: 0.15, caution: 0.3, high: 0.5 };
+  if (debt <= bands.healthy) return "healthy";
+  if (debt <= bands.caution) return "caution";
+  if (debt <= bands.high) return "high";
   return "critical";
-}
-
-function weightedAverage(values: Array<{ value: number; weight: number }>): number {
-  if (values.length === 0) return 0;
-  const sumWeight = values.reduce((sum, item) => sum + item.weight, 0);
-  if (sumWeight <= 1e-9) {
-    const mean = values.reduce((sum, item) => sum + item.value, 0) / values.length;
-    return clamp01(mean);
-  }
-  const mean = values.reduce((sum, item) => sum + item.value * item.weight, 0) / sumWeight;
-  return clamp01(mean);
-}
-
-function computeHotStaleness(
-  concepts: ConceptRow[],
-  refDriftScoreByConcept: Map<string, number>,
-): number {
-  if (concepts.length === 0) return 0;
-  const top = [...concepts]
-    .sort(
-      (a, b) =>
-        conceptPressure(b, refDriftScoreByConcept) - conceptPressure(a, refDriftScoreByConcept),
-    )
-    .slice(0, HOT_CONCEPT_LIMIT);
-  const weighted = top.map((concept) => ({
-    value: concept.staleness ?? 0,
-    weight: Math.max(0.001, conceptPressure(concept, refDriftScoreByConcept)),
-  }));
-  return weightedAverage(weighted);
 }
 
 function computeSymbolDriftRatio(db: Database): number {
@@ -150,29 +105,6 @@ function computeCoverageGap(db: Database, precomputed?: { ratio: number } | null
   } catch {
     return 0;
   }
-}
-
-function computePriorityPressure(
-  concepts: ConceptRow[],
-  refDriftScoreByConcept: Map<string, number>,
-): number {
-  if (concepts.length === 0) return 0;
-  const pressures = concepts
-    .map((concept) => conceptPressure(concept, refDriftScoreByConcept))
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => b - a);
-  if (pressures.length === 0) return 0;
-
-  const topCount = Math.min(5, pressures.length);
-  const topMean = pressures.slice(0, topCount).reduce((sum, value) => sum + value, 0) / topCount;
-  const overallMean = pressures.reduce((sum, value) => sum + value, 0) / pressures.length;
-  const hotRatio = pressures.filter((value) => value >= 0.4).length / pressures.length;
-  const skew =
-    overallMean > 0
-      ? clamp01((topMean - overallMean) / Math.max(0.1, 1 - overallMean))
-      : clamp01(topMean);
-
-  return clamp01(topMean * 0.65 + hotRatio * 0.2 + skew * 0.15);
 }
 
 function computeEmbeddingMismatchRatio(
@@ -354,9 +286,15 @@ export function askDebtBandWarning(band: AskDebtBand): string | undefined {
 
 export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnapshot {
   const now = input.now ?? new Date();
-  const staleness = computeHotStaleness(input.concepts, input.debtSnapshot.refDriftScoreByConcept);
-  const symbolDrift = computeSymbolDriftRatio(input.db);
 
+  // §4.3: ask keys off (debt band, coverage, freshness). Debt is the ONE debt
+  // — expected consulted error, computed upstream — not a second blend. The
+  // eight-weight blend this replaces produced a number no one could attribute;
+  // the axes below are reported for display and diagnosis, never mixed.
+  const debt = input.concepts.length === 0 ? null : input.debtSnapshot.debt;
+  const band = toBand(debt, input.config);
+
+  const symbolDrift = computeSymbolDriftRatio(input.db);
   const freshness = input.lake
     ? computeFreshnessSnapshotFromLake(input.lake)
     : computeFreshnessSnapshotFromFs(input.db, input.entry);
@@ -366,34 +304,14 @@ export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnap
     freshness.doc_files_or_proxy > 0
       ? clamp01(freshness.stale_doc_files / freshness.doc_files_or_proxy)
       : 0;
-
   const coverageGap = computeCoverageGap(input.db, input.coverage);
   const embeddingMismatch = computeEmbeddingMismatchRatio(
     input.db,
     input.config,
     input.embeddingStatus,
   );
-  const priorityPressure = computePriorityPressure(
-    input.concepts,
-    input.debtSnapshot.refDriftScoreByConcept,
-  );
   const narrativeHygiene = computeNarrativeHygiene(input.db, input.config, now);
   const writeActivity = computeWriteActivity(input.db, now);
-
-  const baseDebt =
-    100 *
-    (WEIGHTS.staleness * staleness +
-      WEIGHTS.symbol_drift * symbolDrift +
-      WEIGHTS.code_freshness * codeFreshness +
-      WEIGHTS.doc_freshness * docFreshness +
-      WEIGHTS.coverage_gap * coverageGap +
-      WEIGHTS.embedding_mismatch * embeddingMismatch +
-      WEIGHTS.active_narrative_hygiene * narrativeHygiene.risk +
-      WEIGHTS.priority_pressure * priorityPressure);
-
-  const debt = clamp100(baseDebt);
-  const confidence = clamp100(100 - debt);
-  const band = toBand(debt);
 
   let stateDistance: number | undefined;
   try {
@@ -404,18 +322,14 @@ export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnap
 
   return {
     debt,
-    confidence,
     band,
-    base_debt: baseDebt,
     components: {
-      staleness,
       symbol_drift: symbolDrift,
       code_freshness: codeFreshness,
       doc_freshness: docFreshness,
       coverage_gap: coverageGap,
       embedding_mismatch: embeddingMismatch,
       active_narrative_hygiene: narrativeHygiene.risk,
-      priority_pressure: priorityPressure,
       write_activity_72h: {
         journal_entries: writeActivity.journalEntries,
         closed_narratives: writeActivity.closedNarratives,

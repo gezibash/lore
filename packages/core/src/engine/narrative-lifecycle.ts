@@ -92,7 +92,7 @@ import {
   computeStaleness,
   conceptPressureBase,
 } from "./residuals.ts";
-import { computeExpectedDebt } from "./measurement.ts";
+import { computeExpectedDebt, getConceptBindingStats } from "./measurement.ts";
 import { readSymbolContent } from "./git.ts";
 import {
   getDriftedBindings,
@@ -750,8 +750,7 @@ export async function queryConcepts(
     /** Ask-pipeline trace logger — logs all queryConcepts stages when provided */
     tracer?: AskTracer;
     ask_debt?: {
-      score: number;
-      confidence: number;
+      score: number | null;
       band: AskDebtBand;
     };
   },
@@ -1248,24 +1247,31 @@ export async function queryConcepts(
     driftedByConceptId.set(drift.concept_id, (driftedByConceptId.get(drift.concept_id) ?? 0) + 1);
   }
 
-  // Staleness penalty: old concepts lose up to 10% relevance, fresh ones lose nothing.
-  // This rewards recently closed narratives and penalizes concepts that haven't been
-  // revisited — the opposite of the old logic which penalized new concepts.
-  // Uses config.thresholds.staleness_days as the full-staleness horizon (same as computeStaleness).
+  // Ranking staleness penalty uses σ(c) (knowledge-model spec §4.3): for
+  // bound concepts, the drifted-binding RATIO — evidence that the code moved —
+  // never wall-clock age, which punishes stable code. Age survives only as
+  // the weak prior for unbound concepts, where no evidence exists.
   const stalenessDecayDays = config.thresholds?.staleness_days ?? 90;
   if (stalenessDecayDays > 0) {
+    const sigmaBindingStats = getConceptBindingStats(db);
     for (const r of rerankedResults) {
       const chunk = getChunk(db, r.chunkId);
       const concept = chunk?.concept_id ? getConcept(db, chunk.concept_id) : null;
-      if (concept?.inserted_at) {
-        const ageMs = Date.now() - new Date(concept.inserted_at).getTime();
-        const ageDays = ageMs / 86_400_000;
-        const staleness = Math.min(1, ageDays / stalenessDecayDays);
-        // Max 10% penalty at full staleness for healthy debt bands.
-        // Higher debt bands increase this penalty to favor fresher concepts.
-        const penalty = Math.min(0.3, 0.1 * staleness * stalenessPenaltyMultiplier);
-        r.score = Math.max(0.01, r.score * (1 - penalty));
+      if (!concept) continue;
+      const stats = sigmaBindingStats.get(concept.id);
+      let sigma: number;
+      if (stats && stats.total > 0) {
+        sigma = stats.drifted / stats.total;
+      } else if (concept.inserted_at) {
+        const ageDays = (Date.now() - new Date(concept.inserted_at).getTime()) / 86_400_000;
+        sigma = Math.min(1, ageDays / stalenessDecayDays);
+      } else {
+        continue;
       }
+      // Max 10% penalty at full σ for healthy debt bands; higher bands
+      // increase it (capped at 30%) to favor verified-fresh concepts.
+      const penalty = Math.min(0.3, 0.1 * sigma * stalenessPenaltyMultiplier);
+      r.score = Math.max(0.01, r.score * (1 - penalty));
     }
   }
 
@@ -1937,7 +1943,6 @@ export async function queryConcepts(
         ? {
             ask_debt: {
               score: opts.ask_debt.score,
-              confidence: opts.ask_debt.confidence,
               band: opts.ask_debt.band,
               retrieval_multiplier: retrievalMultiplier,
               staleness_penalty_multiplier: stalenessPenaltyMultiplier,

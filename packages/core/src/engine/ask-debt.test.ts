@@ -73,171 +73,80 @@ test("ask-debt helpers map bands to multipliers and warnings", () => {
   expect(askDebtBandWarning("critical")).toContain("critical");
 });
 
-test("computeAskDebtSnapshot returns healthy debt when freshness and coverage are clean", () => {
+test("snapshot debt IS the expected-error debt, banded by config", () => {
+  const db = createTestDb();
+  const snapshot = computeAskDebtSnapshot({
+    db,
+    entry: makeEntry(),
+    config: defaultConfig,
+    concepts: [makeConcept()],
+    debtSnapshot: makeDebtSnapshot({ debt: 0.42, persisted_debt: 0.42, live_debt: 0.42 }),
+    coverage: { ratio: 1 },
+    lake: { stale_source_files: 0, source_files: 10, stale_doc_files: 0, doc_chunks: 5 },
+    embeddingStatus: { total: 10, stale: 0 },
+  });
+  // No second blend: the ask-time number is the one debt, passed through.
+  expect(snapshot.debt).toBe(0.42);
+  // 0.42 is above caution (0.30) and at/below high (0.50) → "high" band.
+  expect(snapshot.band).toBe("high");
+  db.close();
+});
+
+test("band cutoffs follow config.thresholds.debt_bands", () => {
+  const db = createTestDb();
+  const mk = (debt: number) =>
+    computeAskDebtSnapshot({
+      db,
+      entry: makeEntry(),
+      config: defaultConfig,
+      concepts: [makeConcept()],
+      debtSnapshot: makeDebtSnapshot({ debt, persisted_debt: debt, live_debt: debt }),
+      coverage: { ratio: 1 },
+      lake: { stale_source_files: 0, source_files: 1, stale_doc_files: 0, doc_chunks: 1 },
+      embeddingStatus: { total: 1, stale: 0 },
+    }).band;
+  expect(mk(0.1)).toBe("healthy");
+  expect(mk(0.2)).toBe("caution");
+  expect(mk(0.45)).toBe("high");
+  expect(mk(0.8)).toBe("critical");
+  db.close();
+});
+
+test("a concept-less mind is unmeasured: null debt, caution band", () => {
   const db = createTestDb();
   const snapshot = computeAskDebtSnapshot({
     db,
     entry: makeEntry(),
     config: defaultConfig,
     concepts: [],
-    debtSnapshot: makeDebtSnapshot(),
-    coverage: { ratio: 1 },
-    lake: {
-      stale_source_files: 0,
-      source_files: 10,
-      stale_doc_files: 0,
-      doc_chunks: 10,
-    },
-    embeddingStatus: { total: 10, stale: 0 },
-    now: new Date("2026-03-03T00:00:00.000Z"),
-  });
-
-  expect(snapshot.debt).toBe(0);
-  expect(snapshot.confidence).toBe(100);
-  expect(snapshot.band).toBe("healthy");
-  expect(snapshot.base_debt).toBe(0);
-  expect(snapshot.raw_debt).toBe(0);
-
-  db.close();
-});
-
-test("computeAskDebtSnapshot keeps debt signal independent from write activity", () => {
-  const db = createTestDb();
-  const entry = makeEntry();
-  const concept = makeConcept();
-  const debtSnapshot = makeDebtSnapshot({
-    debt: 2.5,
-    persisted_debt: 2.2,
-    live_debt: 2.5,
-    refDriftScoreByConcept: new Map([[concept.id, 0]]),
-  });
-
-  const sharedInput = {
-    db,
-    entry,
-    config: defaultConfig,
-    concepts: [concept],
-    debtSnapshot,
+    debtSnapshot: makeDebtSnapshot({ debt: 0 }),
     coverage: { ratio: 0 },
-    lake: {
-      stale_source_files: 10,
-      source_files: 10,
-      stale_doc_files: 10,
-      doc_chunks: 10,
-    },
+    lake: { stale_source_files: 0, source_files: 0, stale_doc_files: 0, doc_chunks: 0 },
+    embeddingStatus: { total: 0, stale: 0 },
+  });
+  expect(snapshot.debt).toBeNull();
+  expect(snapshot.band).toBe("caution"); // retrieve wide, warn mildly — not "healthy"
+  db.close();
+});
+
+test("freshness and coverage are reported as axes, never blended into debt", () => {
+  const db = createTestDb();
+  const dirty = computeAskDebtSnapshot({
+    db,
+    entry: makeEntry(),
+    config: defaultConfig,
+    concepts: [makeConcept()],
+    debtSnapshot: makeDebtSnapshot({ debt: 0.1, persisted_debt: 0.1, live_debt: 0.1 }),
+    coverage: { ratio: 0 }, // 100% coverage gap
+    lake: { stale_source_files: 9, source_files: 10, stale_doc_files: 5, doc_chunks: 5 },
     embeddingStatus: { total: 10, stale: 10 },
-  };
-
-  const baseline = computeAskDebtSnapshot({
-    ...sharedInput,
-    now: new Date("2026-03-03T00:00:00.000Z"),
   });
-
-  const nowIso = new Date("2026-03-03T00:30:00.000Z").toISOString();
-  for (let i = 0; i < 20; i++) {
-    insertChunk(db, {
-      id: `j-${i}`,
-      filePath: `.lore/chunks/j-${i}.md`,
-      flType: "journal",
-      createdAt: nowIso,
-    });
-  }
-  for (let i = 0; i < 5; i++) {
-    const narrative = insertNarrative(db, `narrative-${i}`, "test");
-    closeNarrative(db, narrative.id);
-  }
-
-  const withWrites = computeAskDebtSnapshot({
-    ...sharedInput,
-    now: new Date("2026-03-03T01:00:00.000Z"),
-  });
-
-  expect(withWrites.components.write_activity_72h.journal_entries).toBe(20);
-  expect(withWrites.components.write_activity_72h.closed_narratives).toBe(5);
-  expect(withWrites.debt).toBeCloseTo(baseline.debt, 8);
-  expect(withWrites.base_debt).toBeCloseTo(baseline.base_debt, 8);
-
-  db.close();
-});
-
-test("computeAskDebtSnapshot penalizes empty active narratives", () => {
-  const db = createTestDb();
-  const input = {
-    db,
-    entry: makeEntry(),
-    config: defaultConfig,
-    concepts: [] as ConceptRow[],
-    debtSnapshot: makeDebtSnapshot(),
-    coverage: { ratio: 1 },
-    lake: {
-      stale_source_files: 0,
-      source_files: 10,
-      stale_doc_files: 0,
-      doc_chunks: 10,
-    },
-    embeddingStatus: { total: 10, stale: 0 },
-    now: new Date("2026-03-03T00:00:00.000Z"),
-  };
-
-  const baseline = computeAskDebtSnapshot(input);
-  expect(baseline.debt).toBe(0);
-
-  insertNarrative(db, "open-a", "a");
-  insertNarrative(db, "open-b", "b");
-  insertNarrative(db, "open-c", "c");
-
-  const withEmptyNarratives = computeAskDebtSnapshot(input);
-  expect(withEmptyNarratives.debt).toBeGreaterThan(0);
-  expect(withEmptyNarratives.components.active_narrative_hygiene).toBeGreaterThan(0);
-  expect(withEmptyNarratives.components.narrative_hygiene_72h.open_narratives).toBe(3);
-  expect(withEmptyNarratives.components.narrative_hygiene_72h.empty_open_narratives).toBe(3);
-  expect(withEmptyNarratives.components.narrative_hygiene_72h.dangling_narratives).toBe(0);
-
-  db.close();
-});
-
-test("computeAskDebtSnapshot includes priority pressure when top concepts dominate", () => {
-  const db = createTestDb();
-  const top = makeConcept({
-    id: "c-top",
-    name: "top",
-    staleness: 0,
-    residual: 1,
-    churn: 1,
-    ground_residual: 1,
-    lore_residual: 1,
-  });
-  const peers = [1, 2, 3, 4].map((i) =>
-    makeConcept({
-      id: `c-${i}`,
-      name: `c-${i}`,
-      staleness: 0,
-      residual: 0.05,
-      churn: 0.05,
-      ground_residual: 0.05,
-      lore_residual: 0.05,
-    }),
-  );
-
-  const snapshot = computeAskDebtSnapshot({
-    db,
-    entry: makeEntry(),
-    config: defaultConfig,
-    concepts: [top, ...peers],
-    debtSnapshot: makeDebtSnapshot(),
-    coverage: { ratio: 1 },
-    lake: {
-      stale_source_files: 0,
-      source_files: 10,
-      stale_doc_files: 0,
-      doc_chunks: 10,
-    },
-    embeddingStatus: { total: 10, stale: 0 },
-    now: new Date("2026-03-03T00:00:00.000Z"),
-  });
-
-  expect(snapshot.components.priority_pressure).toBeGreaterThan(0);
-  expect(snapshot.debt).toBeGreaterThan(0);
-
+  // Axes report the degradation…
+  expect(dirty.components.coverage_gap).toBeCloseTo(1);
+  expect(dirty.components.code_freshness).toBeCloseTo(0.9);
+  expect(dirty.components.embedding_mismatch).toBeCloseTo(1);
+  // …but debt is untouched by them (it has its own definition).
+  expect(dirty.debt).toBe(0.1);
+  expect(dirty.band).toBe("healthy");
   db.close();
 });

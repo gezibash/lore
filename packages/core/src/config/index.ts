@@ -69,6 +69,13 @@ export const defaultConfig: LoreConfig = {
     theta_critical: 70,
     fiedler_drop: 0.1,
     max_log_n: 9,
+    // healthy ≤ .15, caution ≤ .30, high ≤ .50, critical above (spec §8).
+    debt_bands: {
+      healthy: 0.15,
+      caution: 0.3,
+      high: 0.5,
+      calibrated_for: "qwen/qwen3-embedding-8b",
+    },
   },
   rrf: {
     k: 60,

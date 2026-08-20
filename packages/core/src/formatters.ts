@@ -148,8 +148,9 @@ export function formatQuery(result: QueryResult): string {
   lines.push(`  concepts_boosted: ${compactCount(result.meta.structural_boost.concepts_boosted)}`);
   if (result.meta.ask_debt) {
     lines.push("ask_debt:");
-    lines.push(`  score: ${result.meta.ask_debt.score.toFixed(1)}`);
-    lines.push(`  confidence: ${result.meta.ask_debt.confidence.toFixed(1)}`);
+    lines.push(
+      `  score: ${result.meta.ask_debt.score == null ? "n/a (no concepts)" : `${(result.meta.ask_debt.score * 100).toFixed(0)}%`}`,
+    );
     lines.push(`  band: ${result.meta.ask_debt.band}`);
     lines.push(`  retrieval_multiplier: ${result.meta.ask_debt.retrieval_multiplier.toFixed(2)}`);
     lines.push(
@@ -549,13 +550,12 @@ export function formatLs(result: {
   lore_mind: { name: string } & RegistryEntry;
   concepts: ConceptRow[];
   openNarratives: NarrativeRow[];
-  debt: number;
+  debt: number | null;
   debt_trend: string;
   concept_symbol_counts?: Record<string, number>;
 }): string {
   const lines: string[] = [];
-  const debtValue = result.debt;
-  const debt = `${debtValue.toFixed(1)}%`;
+  const debt = result.debt == null ? "n/a" : `${(result.debt * 100).toFixed(0)}%`;
   lines.push(
     `**${result.lore_mind.name}** · ${compactCount(result.concepts.length)} concepts · debt ${debt}\n`,
   );
@@ -569,7 +569,7 @@ export function formatLs(result: {
       const churn = c.churn != null ? `${(c.churn * 100).toFixed(0)}%` : "—";
       const staleness = c.staleness != null ? `${(c.staleness * 100).toFixed(0)}%` : "—";
       const symbols = result.concept_symbol_counts?.[c.id] ?? 0;
-      const pressure = (c.ground_residual ?? c.churn ?? 0) * 0.6 + (c.lore_residual ?? 0) * 0.4;
+      const pressure = c.ground_residual ?? c.churn ?? 0;
       const hub = c.is_hub === 1 ? "*" : "";
       const warn = pressure > 0.5 ? " ⚠" : "";
       lines.push(
