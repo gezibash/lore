@@ -135,6 +135,24 @@ export function claimCloseJob(
       const ttlMs = normalizeLeaseTtlMs(leaseTtlMs);
       const expiresAt = new Date(new Date(timestamp).getTime() + ttlMs).toISOString();
       const attemptsLimit = maxAttempts(maxRetries);
+
+      // N4 (knowledge-model spec): at most one close in flight per mind. A
+      // close merges against the head captured at its start, so two concurrent
+      // closes of one mind silently overwrite each other's merged concepts.
+      // Refuse to lease while another unexpired close lease exists for this
+      // lore_path; queued jobs are picked up on a later claim cycle.
+      const inFlight = db
+        .query<{ id: string }, [string, string]>(
+          `SELECT id FROM close_jobs
+           WHERE lore_path = ?
+             AND status = 'leased'
+             AND lease_expires_at IS NOT NULL
+             AND lease_expires_at > ?
+           LIMIT 1`,
+        )
+        .get(lorePath, timestamp);
+      if (inFlight) return null;
+
       const candidate = id
         ? db
             .query<CloseJobRow, [string, string, string, number]>(

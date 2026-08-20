@@ -103,3 +103,80 @@ test("failed close jobs requeue until retries are exhausted", () => {
 
   db.close();
 });
+
+test("N4: concurrent closes for one mind serialize on the lease", () => {
+  const db = createTestDb();
+  const first = queueCloseJob(db, {
+    lorePath: "/tmp/lore",
+    narrativeId: "n-1",
+    narrativeName: "auth-fix",
+    payload: {},
+  });
+  const second = queueCloseJob(db, {
+    lorePath: "/tmp/lore",
+    narrativeId: "n-2",
+    narrativeName: "billing-fix",
+    payload: {},
+  });
+
+  // ULIDs minted in the same millisecond are not queue-ordered; either job may
+  // be claimed first. The invariant under test is exclusivity, not order.
+  const claimed = claimCloseJob(db, { lorePath: "/tmp/lore", owner: "worker-1" });
+  if (!claimed) throw new Error("first claim returned null");
+  expect([first.id, second.id]).toContain(claimed.id);
+  const unclaimed = claimed.id === first.id ? second : first;
+
+  // Second claim must return null while the first lease is unexpired — even
+  // for a different narrative, and even when addressed by id.
+  expect(claimCloseJob(db, { lorePath: "/tmp/lore", owner: "worker-2" })).toBeNull();
+  expect(
+    claimCloseJob(db, { lorePath: "/tmp/lore", owner: "worker-2", id: unclaimed.id }),
+  ).toBeNull();
+
+  // A different mind is unaffected.
+  const other = queueCloseJob(db, {
+    lorePath: "/tmp/other",
+    narrativeId: "n-9",
+    narrativeName: "other",
+    payload: {},
+  });
+  expect(claimCloseJob(db, { lorePath: "/tmp/other", owner: "worker-2" })?.id).toBe(other.id);
+
+  // Completing the first lease frees the mind.
+  completeCloseJob(db, { lorePath: "/tmp/lore", id: claimed!.id, owner: "worker-1", result: {} });
+  expect(claimCloseJob(db, { lorePath: "/tmp/lore", owner: "worker-2" })?.id).toBe(unclaimed.id);
+
+  db.close();
+});
+
+test("N4: an expired lease does not block the next claim", () => {
+  const db = createTestDb();
+  queueCloseJob(db, {
+    lorePath: "/tmp/lore",
+    narrativeId: "n-1",
+    narrativeName: "auth-fix",
+    payload: {},
+  });
+  const t0 = "2026-08-20T10:00:00.000Z";
+  const claimed = claimCloseJob(db, {
+    lorePath: "/tmp/lore",
+    owner: "worker-1",
+    leaseTtlMs: 1000,
+    now: t0,
+  });
+  expect(claimed).not.toBeNull();
+
+  // Lease expired: the same job is reclaimable (crash recovery unchanged).
+  // maxRetries must allow a second attempt — the default of 0 permits only one.
+  const later = "2026-08-20T10:00:02.000Z";
+  const reclaimed = claimCloseJob(db, {
+    lorePath: "/tmp/lore",
+    owner: "worker-2",
+    maxRetries: 2,
+    now: later,
+  });
+  expect(reclaimed?.id).toBe(claimed!.id);
+  expect(reclaimed?.owner).toBe("worker-2");
+
+  db.close();
+});
