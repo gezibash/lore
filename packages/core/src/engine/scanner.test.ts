@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
 import { writeTextFile } from "../../test/support/files.ts";
-import { scanProject } from "./scanner.ts";
+import { rescanFiles, scanProject } from "./scanner.ts";
 import { getSourceFileByPath } from "@/db/source-files.ts";
 import { getSourceChunkPathsForFile } from "@/db/chunks.ts";
 import { upsertConceptSymbol } from "@/db/concept-symbols.ts";
@@ -157,6 +157,32 @@ test("scanProject keeps symbol bindings when a rescan re-qualifies the symbol", 
       )
       .get()!.n;
     expect(orphans).toBe(0);
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});
+
+test("rescanFiles reports files it dropped instead of silently skipping them", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    writeTextFile(`${codeDir}/src/ok.ts`, "export function ok() { return 1; }\n");
+    await scanProject(db, codeDir, loreDir);
+
+    // Change the file so the rescan actually processes it (unchanged hashes skip).
+    writeTextFile(`${codeDir}/src/ok.ts`, "export function ok() { return 2; }\n");
+    const result = await rescanFiles(
+      db,
+      codeDir,
+      ["src/ok.ts", "src/does-not-exist.ts"],
+      loreDir,
+    );
+    expect(result.rescanned).toBe(1);
+    expect(result.filesFailed).toEqual(["src/does-not-exist.ts"]);
   } finally {
     db.close();
     removeDir(codeDir);

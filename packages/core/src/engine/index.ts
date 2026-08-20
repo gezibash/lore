@@ -515,11 +515,16 @@ export class LoreEngine {
             this.codeEmbedderFor(config, loreName),
           ]);
         }
-        await runCloseMaintenanceJob(db, payload, config, embedder, generator, codeEmbedder);
+        const { rescanFailed } = await runCloseMaintenanceJob(
+          db, payload, config, embedder, generator, codeEmbedder,
+        );
         completeCloseMaintenanceJob(db, {
           lorePath: entry.lore_path,
           id: job.id,
           owner,
+          note: rescanFailed.length > 0
+            ? `refresh incomplete: ${rescanFailed.length} file(s) failed rescan: ${rescanFailed.join(", ")}`
+            : undefined,
         });
         completed += 1;
       } catch (error) {

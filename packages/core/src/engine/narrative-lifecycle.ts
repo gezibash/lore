@@ -3438,7 +3438,7 @@ export async function runCloseMaintenanceJob(
   embedder: Embedder,
   generator: Generator,
   codeEmbedder?: Embedder | null,
-): Promise<void> {
+): Promise<{ rescanFailed: string[] }> {
   if (payload.residualPairs.length === 0) {
     upsertManifest(db, {
       chunk_count: getChunkCount(db),
@@ -3446,9 +3446,10 @@ export async function runCloseMaintenanceJob(
       graph_stale: 0,
       last_integrated: new Date().toISOString(),
     });
-    return;
+    return { rescanFailed: [] };
   }
 
+  let rescanFailed: string[] = [];
   const debtBefore = getManifest(db)?.debt ?? getLatestDebt(db);
   const residualPairByConceptId = new Map(
     payload.residualPairs.map((pair) => [pair.conceptId, pair] as const),
@@ -3684,7 +3685,8 @@ export async function runCloseMaintenanceJob(
       }
     }
     if (filePaths.size > 0) {
-      await rescanFiles(db, payload.codePath, [...filePaths]);
+      const { filesFailed } = await rescanFiles(db, payload.codePath, [...filePaths]);
+      rescanFailed = filesFailed;
     }
     await extractBindingsForConcepts(db, residualConceptIds);
     await autoBindByFileOverlap(db, { conceptIds: residualConceptIds });
@@ -3844,6 +3846,7 @@ export async function runCloseMaintenanceJob(
     last_integrated: new Date().toISOString(),
     graph_stale: 0,
   });
+  return { rescanFailed };
 }
 
 export function discardNarrative(db: Database, narrativeName: string): CloseResult {

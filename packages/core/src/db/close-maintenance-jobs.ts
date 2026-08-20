@@ -153,7 +153,10 @@ export function claimCloseMaintenanceJob(
 
 export function completeCloseMaintenanceJob(
   db: Database,
-  opts: { lorePath: string; id: string; owner?: string; now?: string },
+  // `note` survives in last_error on a done job: a partial refresh (some files
+  // failed rescan) completes rather than retrying non-idempotent work, but the
+  // incompleteness must stay visible in `lore jobs`.
+  opts: { lorePath: string; id: string; owner?: string; now?: string; note?: string },
 ): boolean {
   const timestamp = nowIso(opts.now);
   const result = db
@@ -162,12 +165,12 @@ export function completeCloseMaintenanceJob(
        SET status = 'done',
            owner = COALESCE(?, owner),
            lease_expires_at = NULL,
-           last_error = NULL,
+           last_error = ?,
            updated_at = ?,
            completed_at = ?
        WHERE lore_path = ? AND id = ?`,
     )
-    .run(opts.owner ?? null, timestamp, timestamp, opts.lorePath, opts.id);
+    .run(opts.owner ?? null, opts.note ?? null, timestamp, timestamp, opts.lorePath, opts.id);
   return Number(result.changes ?? 0) > 0;
 }
 

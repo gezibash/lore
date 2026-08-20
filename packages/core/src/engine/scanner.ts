@@ -575,14 +575,17 @@ export async function rescanFiles(
   codePath: string,
   filePaths: string[],
   lorePath?: string,
-): Promise<{ rescanned: number; symbolsFound: number }> {
-  if (filePaths.length === 0) return { rescanned: 0, symbolsFound: 0 };
+): Promise<{ rescanned: number; symbolsFound: number; filesFailed: string[] }> {
+  if (filePaths.length === 0) return { rescanned: 0, symbolsFound: 0, filesFailed: [] };
 
   const pool = new TreeSitterPool();
   await pool.init();
 
   let rescanned = 0;
   let symbolsFound = 0;
+  // A dropped file keeps serving its previous chunks: indistinguishable from
+  // "unchanged" unless the caller is told. Mirrors scanProject's files_failed.
+  const filesFailed: string[] = [];
 
   for (const relativePath of filePaths) {
     const absolutePath = relativePath.startsWith("/")
@@ -595,6 +598,7 @@ export async function rescanFiles(
       content = readFileSync(absolutePath, "utf-8");
       stat = { size: Buffer.byteLength(content, "utf-8") };
     } catch {
+      filesFailed.push(relativePath);
       continue;
     }
 
@@ -716,6 +720,7 @@ export async function rescanFiles(
     } catch {
       db.run("ROLLBACK");
       await cleanupChunkFiles(writtenChunks.map((chunk) => chunk.filePath));
+      filesFailed.push(relativePath);
       continue;
     }
 
@@ -727,7 +732,7 @@ export async function rescanFiles(
     symbolsFound += symbols.length;
   }
 
-  return { rescanned, symbolsFound };
+  return { rescanned, symbolsFound, filesFailed };
 }
 
 export async function rescanProject(
