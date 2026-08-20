@@ -1272,26 +1272,22 @@ export async function queryConcepts(
     }
   }
 
-  // Concept-level dedup: when multiple chunks share the same concept/symbol name,
-  // keep only the highest-scoring entry per concept. This prevents source chunks
-  // from the same symbol (e.g. test fixtures) consuming multiple summary slots.
-  // Entries without a concept name are treated as unique (never deduped).
+  // Concept-level dedup: cap chunks sharing a concept/symbol name at two. One
+  // slot starves questions that span two sections of the same document (the
+  // concept is the file, so the second section never reaches the pack); more
+  // than two lets source chunks from one symbol (e.g. test fixtures) consume
+  // the summary slots. Entries without a concept name are never deduped.
   {
-    const seenConcepts = new Map<string, number>(); // concept → index in deduped
+    // The staleness penalty above rescored entries, so restore score order —
+    // the first N seen per concept must be its N best.
+    rerankedResults.sort((a, b) => b.score - a.score);
+    const perConcept = new Map<string, number>();
     const deduped: HybridSearchResult[] = [];
     for (const r of rerankedResults) {
-      if (!r.concept) {
-        deduped.push(r);
-        continue;
-      }
-      const existingIdx = seenConcepts.get(r.concept);
-      if (existingIdx === undefined) {
-        seenConcepts.set(r.concept, deduped.length);
-        deduped.push(r);
-      } else if (r.score > deduped[existingIdx]!.score) {
-        deduped[existingIdx] = r;
-      }
-      // else: lower score duplicate — skip
+      const kept = r.concept ? (perConcept.get(r.concept) ?? 0) : 0;
+      if (kept >= 2) continue;
+      if (r.concept) perConcept.set(r.concept, kept + 1);
+      deduped.push(r);
     }
     rerankedResults = deduped;
   }
