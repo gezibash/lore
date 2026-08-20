@@ -231,6 +231,16 @@ export class Generator {
         return {
           systemSuffix: noThinkSuffix,
         };
+      case "openai-compatible":
+        // Request-level reasoning_effort: needed when the endpoint is a proxy
+        // whose config default is wrong for bulk work (codex-as-api inherits
+        // "max" from ~/.codex/config.toml).
+        return {
+          systemSuffix: "",
+          providerOptions: {
+            openaiCompatible: { reasoningEffort: reasoning === "none" ? "low" : reasoning },
+          },
+        };
       case "moonshotai":
         return {
           systemSuffix: noThinkSuffix,
