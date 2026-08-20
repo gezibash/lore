@@ -1969,7 +1969,6 @@ export class LoreEngine {
         name: d.name,
         status: d.status,
         entry_count: d.entry_count,
-        theta: d.theta,
         note:
           d.status === "closing"
             ? "Closing in background"
@@ -1977,9 +1976,7 @@ export class LoreEngine {
               ? "Close failed; write or retry close"
               : d.entry_count < 3
                 ? "Early stage"
-                : d.convergence != null && d.convergence > config.thresholds.convergence
-                  ? "Converging"
-                  : "In progress",
+                : "In progress",
       })),
       dangling_narratives: danglingNarratives.map((d) => ({
         name: d.name,

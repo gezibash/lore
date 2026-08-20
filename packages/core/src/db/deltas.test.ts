@@ -40,17 +40,11 @@ test("updateNarrativeMetrics appends version preserving identity", () => {
   const narrative = insertNarrative(db, "metric", "intent", null);
 
   updateNarrativeMetrics(db, narrative.id, {
-    theta: 1,
-    convergence: 2,
-    magnitude: 3,
     entry_count: 4,
   });
 
   const current = getNarrative(db, narrative.id);
   expect(current?.entry_count).toBe(4);
-  expect(current?.theta).toBe(1);
-  expect(current?.convergence).toBe(2);
-  expect(current?.magnitude).toBe(3);
   expect(current?.status).toBe("open");
 
   db.close();

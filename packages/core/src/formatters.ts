@@ -581,8 +581,7 @@ export function formatLs(result: {
   if (result.openNarratives.length > 0) {
     lines.push("\n## Active Narratives\n");
     for (const d of result.openNarratives) {
-      const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
-      lines.push(`- **${d.name}**: ${compactCount(d.entry_count)} entries, ${theta}`);
+      lines.push(`- **${d.name}**: ${compactCount(d.entry_count)} entries`);
     }
   }
 

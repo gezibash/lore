@@ -139,9 +139,6 @@ export async function rebuildFromDisk(
       entryCount: sorted.length,
       openedAt: first.frontmatter.fl_created_at,
       closedAt,
-      theta: last.frontmatter.fl_theta,
-      convergence: last.frontmatter.fl_convergence,
-      magnitude: last.frontmatter.fl_magnitude,
     });
     narrativeCount++;
 

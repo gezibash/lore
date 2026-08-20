@@ -16,16 +16,13 @@ export function insertNarrativeRaw(
     entryCount: number;
     openedAt: string;
     closedAt?: string | null;
-    theta?: number | null;
-    convergence?: number | null;
-    magnitude?: number | null;
   },
 ): void {
   const versionId = ulid();
   const now = new Date().toISOString();
   db.run(
-    `INSERT INTO narratives (version_id, id, name, intent, status, entry_count, theta, convergence, magnitude, opened_at, closed_at, inserted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO narratives (version_id, id, name, intent, status, entry_count, opened_at, closed_at, inserted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       versionId,
       id,
@@ -33,9 +30,6 @@ export function insertNarrativeRaw(
       opts.intent,
       opts.status,
       opts.entryCount,
-      opts.theta ?? null,
-      opts.convergence ?? null,
-      opts.magnitude ?? null,
       opts.openedAt,
       opts.closedAt ?? null,
       now,
@@ -65,9 +59,6 @@ export function insertNarrative(
     name,
     intent,
     status: "open",
-    theta: null,
-    magnitude: null,
-    convergence: null,
     entry_count: 0,
     merge_base_commit_id: mergeBaseCommitId,
     targets: targetsJson,
@@ -82,31 +73,19 @@ function insertNarrativeVersion(
   db: Database,
   current: NarrativeRow,
   fields: Partial<
-    Pick<
-      NarrativeRow,
-      | "status"
-      | "theta"
-      | "magnitude"
-      | "convergence"
-      | "entry_count"
-      | "merge_base_commit_id"
-      | "closed_at"
-    >
+    Pick<NarrativeRow, "status" | "entry_count" | "merge_base_commit_id" | "closed_at">
   >,
 ): void {
   const now = new Date().toISOString();
   db.run(
-    `INSERT INTO narratives (version_id, id, name, intent, status, theta, magnitude, convergence, entry_count, merge_base_commit_id, targets, opened_at, closed_at, inserted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO narratives (version_id, id, name, intent, status, entry_count, merge_base_commit_id, targets, opened_at, closed_at, inserted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       ulid(),
       current.id,
       current.name,
       current.intent,
       fields.status ?? current.status,
-      fields.theta !== undefined ? fields.theta : current.theta,
-      fields.magnitude !== undefined ? fields.magnitude : current.magnitude,
-      fields.convergence !== undefined ? fields.convergence : current.convergence,
       fields.entry_count ?? current.entry_count,
       fields.merge_base_commit_id !== undefined
         ? fields.merge_base_commit_id
@@ -235,7 +214,7 @@ export function abandonNarrative(db: Database, id: string): void {
 export function updateNarrativeMetrics(
   db: Database,
   id: string,
-  fields: Partial<Pick<NarrativeRow, "theta" | "magnitude" | "convergence" | "entry_count">>,
+  fields: Partial<Pick<NarrativeRow, "entry_count">>,
 ): void {
   const current = getNarrative(db, id);
   if (!current) return;

@@ -319,9 +319,6 @@ export interface NarrativeRow {
   name: string;
   intent: string;
   status: NarrativeStatus;
-  theta: number | null;
-  magnitude: number | null;
-  convergence: number | null;
   entry_count: number;
   merge_base_commit_id: string | null;
   targets: string | null;
@@ -888,7 +885,6 @@ export interface StatusResult {
     name: string;
     status: NarrativeStatus;
     entry_count: number;
-    theta: number | null;
     note: string;
   }>;
   dangling_narratives: Array<{

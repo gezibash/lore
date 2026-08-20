@@ -700,9 +700,6 @@ export async function logEntry(
 
   // Update narrative entry count
   updateNarrativeMetrics(db, narrative.id, {
-    theta: null,
-    magnitude: null,
-    convergence: null,
     entry_count: narrative.entry_count + 1,
   });
 

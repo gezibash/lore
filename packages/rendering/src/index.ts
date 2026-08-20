@@ -667,9 +667,8 @@ function renderStatusVerbosePlain(result: StatusResult): string {
   if (result.active_narratives.length > 0) {
     lines.push(`\n${BOLD}ACTIVE NARRATIVES${RESET}`);
     for (const d of result.active_narratives) {
-      const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
       lines.push(
-        `  ${CYAN}${d.name}${RESET}  ·  ${d.status}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
+        `  ${CYAN}${d.name}${RESET}  ·  ${d.status}  ·  ${compactCount(d.entry_count)} entries`,
       );
       lines.push(`    ${DIM}${d.note}${RESET}`);
     }
@@ -844,10 +843,7 @@ function renderLsPlain(
     lines.push("");
     lines.push(`${BOLD}ACTIVE NARRATIVES${RESET}`);
     for (const d of openNarratives) {
-      const theta = d.theta != null ? `θ=${d.theta.toFixed(1)}°` : "θ=—";
-      lines.push(
-        `${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries  ·  ${theta}`,
-      );
+      lines.push(`${CYAN}${d.name}${RESET}  ·  ${compactCount(d.entry_count)} entries`);
     }
   }
 
