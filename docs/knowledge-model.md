@@ -265,16 +265,20 @@ debt. Amendments encoded during implementation: `p(c)` excludes synthetic
 call-site pack entries, and a concept-less mind reports debt as null — "no
 concepts" is not "no debt".
 
+Also resolved 2026-08-20 (commit 6844be3): the ask-debt blend — ask-time debt
+is the expected-error debt banded by config-owned `thresholds.debt_bands`
+(annotated with the embedding model); `confidence` dropped; the ranking
+staleness penalty uses σ(c) with age only as the unbound prior; debt displayed
+as a percentage of the stored [0,1] value.
+
 Still open:
 
 - **σ(c) file-change evidence.** `fileChanged(c)` needs per-file content
   change history since the concept's active chunk; today σ falls back to
   `e_drift` for bound concepts and the age prior for unbound.
-- **Ask-debt blend.** The eight-weight blend in `ask-debt.ts` still stands;
-  its replacement derives from (debt band, coverage, freshness) per §4.3.
-- **Threshold provenance.** Phase-divergence thresholds (0.45/0.6/0.75) and
-  band cutoffs are code constants with no model annotation; §2.3 renaming
-  (phase divergence = designation-mismatch warning) not yet applied.
+- **§2.3 renaming.** Phase-divergence thresholds (0.45/0.6/0.75) are still
+  code constants without model annotation, and the warning is not yet worded
+  as a designation-mismatch.
 - **Silent-evidence rule (amendment).** A measurement input that cannot be
   computed (missing embeddings, absent tables) must surface as its own state,
   never as a silent zero — the doc-embedding outage of 2026-08-20 read as
