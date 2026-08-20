@@ -256,19 +256,29 @@ derivation; `confidence = 100 − debt` is dropped (no independent meaning).
 
 ## 7. Known implementation gaps
 
-- **N4 unenforced.** `claimCloseJob` leases per job; two workers can close two
-  narratives of one mind concurrently. `closeNarrativeOp` captures HEAD before
-  its transaction, so a concurrent close touching the same concept is silently
-  overwritten with content merged against a stale head. Fix: per-mind lease
-  (one in-flight close job per `lore_path`) — one WHERE clause in the claim.
-- **`computeStateDistance`** contradicts its docstring (equal shares, excludes
-  ungrounded concepts). §4.1 is the fix; needs per-concept bound counts.
-- **Drift double-counting at close.** `runCloseMaintenanceJob` writes drift
-  into `staleness` and `ground_residual` (rule 3 violation); under this spec
-  drift lives only in `e_drift` and the ratchet writes are deleted.
-- **Dead fields.** `theta`/`convergence`/`magnitude` on narratives.
+Resolved 2026-08-20 (commits b4b4ab6, 9130394, 38ebb83): N4 per-mind close
+lease; migration 027 dead narrative fields; drift ratchet deleted;
+`computeStateDistance` per §4.1 with real masses and ungrounded ε; debt as
+expected consulted error (`engine/measurement.ts`) with pack concepts recorded
+on ask events; trend relative; fiedler divisor and lore_residual removed from
+debt. Amendments encoded during implementation: `p(c)` excludes synthetic
+call-site pack entries, and a concept-less mind reports debt as null — "no
+concepts" is not "no debt".
+
+Still open:
+
+- **σ(c) file-change evidence.** `fileChanged(c)` needs per-file content
+  change history since the concept's active chunk; today σ falls back to
+  `e_drift` for bound concepts and the age prior for unbound.
+- **Ask-debt blend.** The eight-weight blend in `ask-debt.ts` still stands;
+  its replacement derives from (debt band, coverage, freshness) per §4.3.
 - **Threshold provenance.** Phase-divergence thresholds (0.45/0.6/0.75) and
-  band cutoffs are code constants with no model annotation.
+  band cutoffs are code constants with no model annotation; §2.3 renaming
+  (phase divergence = designation-mismatch warning) not yet applied.
+- **Silent-evidence rule (amendment).** A measurement input that cannot be
+  computed (missing embeddings, absent tables) must surface as its own state,
+  never as a silent zero — the doc-embedding outage of 2026-08-20 read as
+  "healthy, no candidates" for hours.
 
 ---
 
