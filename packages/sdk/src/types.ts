@@ -411,6 +411,8 @@ export interface QueryOptions {
   /** Controls retrieval mode. "code" injects bound symbol bodies alongside concept prose.
    *  "arch" returns concept prose only. Defaults to "arch". */
   mode?: "arch" | "code";
+  /** Trace the retrieval pipeline for this ask and return the trace path in the result. */
+  debug?: boolean;
 }
 
 export interface OrchestrationQueryOptions extends QueryOptions {
@@ -622,6 +624,8 @@ export interface ExecutiveSummary {
 
 export interface QueryResult {
   result_id?: string;
+  /** Set when the ask ran with debug tracing — path to the ndjson pipeline trace. */
+  debug_trace_path?: string;
   meta: QueryRunMeta;
   executive_summary?: ExecutiveSummary;
   next_actions?: QueryNextAction[];

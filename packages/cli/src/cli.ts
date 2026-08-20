@@ -286,6 +286,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           type: "string",
           description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)",
         },
+        debug: {
+          type: "boolean",
+          description: "Trace the retrieval pipeline and print why this answer was selected",
+        },
       },
       async action({ args, options }) {
         await queryCommand(getWorker(), args.query, {
@@ -294,6 +298,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           concise: options.concise,
           sources: options.sources,
           mode: options.mode as "arch" | "code" | undefined,
+          debug: options.debug,
         });
       },
     }),

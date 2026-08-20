@@ -1282,11 +1282,23 @@ export async function queryConcepts(
     // the first N seen per concept must be its N best.
     rerankedResults.sort((a, b) => b.score - a.score);
     const perConcept = new Map<string, number>();
+    const firstBody = new Map<string, string>();
+    // The [Source:/Doc:] header differs between copies of one symbol in
+    // near-fork repos; compare bodies with it stripped, or twin files consume
+    // both slots with identical content and the second slot teaches nothing.
+    const bodyOf = (content: string): string =>
+      content.replace(/^\[(Source|Doc):[^\]]*\]\s*/g, "").slice(0, 2000);
     const deduped: HybridSearchResult[] = [];
     for (const r of rerankedResults) {
-      const kept = r.concept ? (perConcept.get(r.concept) ?? 0) : 0;
+      if (!r.concept) {
+        deduped.push(r);
+        continue;
+      }
+      const kept = perConcept.get(r.concept) ?? 0;
       if (kept >= 2) continue;
-      if (r.concept) perConcept.set(r.concept, kept + 1);
+      if (kept === 1 && firstBody.get(r.concept) === bodyOf(r.content)) continue;
+      if (kept === 0) firstBody.set(r.concept, bodyOf(r.content));
+      perConcept.set(r.concept, kept + 1);
       deduped.push(r);
     }
     rerankedResults = deduped;
@@ -1569,6 +1581,121 @@ export async function queryConcepts(
     }
   }
 
+  // Call-site expansion: a definition chunk often makes the pack while the call
+  // site holding the concrete values (a config object, a threshold) never ranks —
+  // a short interface is lexically denser than the 300-line caller, so top-k
+  // returns the type and the model reports the values as absent. The call_sites
+  // table already stores every caller with its snippet; attach them as evidence.
+  {
+    // Expand from the pack chunks' FILES, not just their own symbol names: the
+    // pack often holds a type or constant (RateLimiterConfig) while the callers
+    // invoke the function defined beside it (useRateLimiter) — an interface has
+    // no call sites, so expanding only the chunk's own name finds nothing.
+    const packFiles = [
+      ...new Set(
+        summaryInput
+          .map((item) => finalChunkMap.get(item.chunkId))
+          .filter((row) => row?.fl_type === "source" && row.source_file_path)
+          .map((row) => row!.source_file_path as string),
+      ),
+    ].slice(0, 8);
+    // Per-file, in pack order, capped — one huge backend module must not fill
+    // every slot before the fourth-ranked file's symbols are even considered.
+    let packSymbols: string[] = [];
+    try {
+      const seen = new Set<string>();
+      for (const filePath of packFiles) {
+        const names = db
+          .query<{ name: string }, [string]>(
+            `SELECT DISTINCT s.name FROM symbols s
+             JOIN source_files sf ON s.source_file_id = sf.id
+             WHERE sf.file_path = ? AND s.kind IN ('function', 'method', 'constant')
+             LIMIT 4`,
+          )
+          .all(filePath)
+          .map((r) => r.name);
+        for (const n of names) {
+          if (!seen.has(n)) {
+            seen.add(n);
+            packSymbols.push(n);
+          }
+        }
+        if (packSymbols.length >= 24) break;
+      }
+      packSymbols = packSymbols.slice(0, 24);
+    } catch {
+      // symbols table shape predates this query — expansion is best-effort
+    }
+    if (packSymbols.length > 0) {
+      let callRows: Array<{
+        callee_name: string;
+        caller_name: string | null;
+        line: number;
+        snippet: string | null;
+        file_path: string;
+      }> = [];
+      try {
+        const ph = packSymbols.map(() => "?").join(", ");
+        callRows = db
+          .query<(typeof callRows)[number], string[]>(
+            `SELECT cs.callee_name, cs.caller_name, cs.line, cs.snippet, sf.file_path
+             FROM call_sites cs JOIN source_files sf ON cs.source_file_id = sf.id
+             WHERE cs.callee_name IN (${ph})`,
+          )
+          .all(...packSymbols);
+      } catch {
+        // call_sites table may not exist yet (pre-migration)
+      }
+      const bySymbol = new Map<string, typeof callRows>();
+      for (const row of callRows) {
+        const group = bySymbol.get(row.callee_name) ?? [];
+        group.push(row);
+        bySymbol.set(row.callee_name, group);
+      }
+      const minScore = Math.min(...summaryInput.map((r) => r.score), 1);
+      let added = 0;
+      // Rank groups by query-term overlap in their snippets: a call site whose
+      // arguments echo the question's words is evidence, one that does not is
+      // plumbing. Ties break toward fewer callers (more specific).
+      const queryTerms = text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length > 3);
+      const groupRelevance = (sites: typeof callRows): number => {
+        const blob = sites
+          .map((s) => `${s.snippet ?? ""} ${s.caller_name ?? ""}`)
+          .join(" ")
+          .toLowerCase();
+        return queryTerms.reduce((n, t) => n + (blob.includes(t) ? 1 : 0), 0);
+      };
+      const ordered = [...bySymbol.entries()].sort(
+        (a, b) => groupRelevance(b[1]) - groupRelevance(a[1]) || a[1].length - b[1].length,
+      );
+      for (const [symbol, sites] of ordered) {
+        if (added >= 5) break;
+        if (sites.length === 0 || sites.length > 12) continue;
+        const lines = sites
+          .slice(0, 6)
+          .map(
+            (s) =>
+              `${s.file_path}:${s.line}${s.caller_name ? ` (in ${s.caller_name})` : ""}: ${(s.snippet ?? "").replace(/\s+/g, " ").slice(0, 200)}`,
+          );
+        summaryInput.push({
+          ...summaryInput[0]!,
+          chunkId: `callsites:${symbol}`,
+          concept: `call sites of ${symbol}`,
+          score: minScore,
+          content: `[Call sites of ${symbol} — how it is invoked in practice]\n${lines.join("\n")}`,
+        });
+        added++;
+      }
+      opts?.tracer?.log("call_site_expansion", {
+        symbols: packSymbols,
+        added,
+      });
+    }
+  }
+
   opts?.onProgress?.("grounding code evidence");
 
   // Detect source chunks — direct code reads that serve as authoritative grounding.
@@ -1665,21 +1792,31 @@ export async function queryConcepts(
     });
     const summaryStartMs = Date.now();
 
+    // Built before the call so the pack — the evidence the model actually
+    // sees, post-budgeting — can be traced. Retrieval traces without this
+    // stage answer "what ranked" but not "what the model was shown".
+    const evidencePack = summaryInput.map((r) => ({
+      concept: r.concept ?? "unknown",
+      score: r.score,
+      content: budgetEvidenceContent(db, r.content, summaryMaxChars, summarySourceMaxChars, text),
+    }));
+    opts?.tracer?.log("pack", {
+      items: evidencePack.map((p, i) => ({
+        rank: i,
+        concept: p.concept,
+        score: Number(p.score.toFixed(4)),
+        chars: p.content.length,
+        truncated: p.content.length < (summaryInput[i]?.content.length ?? 0),
+        preview: p.content.slice(0, 120),
+      })),
+      total_chars: evidencePack.reduce((n, p) => n + p.content.length, 0),
+    });
+
     try {
       const summary = await generateExecutiveSummary(
         opts.summary_generator,
         text,
-        summaryInput.map((r) => ({
-          concept: r.concept ?? "unknown",
-          score: r.score,
-          content: budgetEvidenceContent(
-            db,
-            r.content,
-            summaryMaxChars,
-            summarySourceMaxChars,
-            text,
-          ),
-        })),
+        evidencePack,
         rerankedResults.length,
         summaryReasoning,
         summaryTimeoutMs,

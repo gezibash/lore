@@ -848,7 +848,8 @@ export class LoreEngine {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
     const askId = ulid();
-    const askTracer = config.debug?.ask?.trace ? new AskTracer(entry.lore_path, askId) : undefined;
+    const askTracer =
+      opts?.debug || config.debug?.ask?.trace ? new AskTracer(entry.lore_path, askId) : undefined;
     opts?.onProgress?.("preparing models");
     const summaryCfg = config.ai.search?.executive_summary;
     const summaryEnabled = internal?.disablePerLoreMindSummary
@@ -995,6 +996,7 @@ export class LoreEngine {
 
     try {
       askTracer?.flush();
+      if (askTracer && opts?.debug) result.debug_trace_path = askTracer.outputPath;
     } catch {}
 
     return result;

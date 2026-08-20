@@ -15,6 +15,9 @@ const TEXT_EXTENSIONS = new Set([
   ".jsonc",
   ".toml",
   ".adoc",
+  // Languages without a tree-sitter grammar in the code lane. Text ingestion
+  // still gives BM25 and embedding coverage of their content.
+  ".lean",
   // Markup formats. Ingested as raw text for now — see docs on structured
   // extraction; measured raw first so the extractor's value is attributable.
   ".html",
