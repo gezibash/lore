@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { generateText, streamText, type LanguageModel } from "ai";
 import pRetry, { AbortError } from "p-retry";
 import { LoreError } from "@/types/index.ts";
 import type { LoreConfig, MergeStrategy } from "@/types/index.ts";
@@ -288,7 +288,7 @@ export class Generator {
       const result = await pRetry(
         async () => {
           try {
-            return await generateText({
+            const callArgs = {
               model: this.model,
               system: system + reasoningOpts.systemSuffix,
               prompt: user,
@@ -296,7 +296,23 @@ export class Generator {
                 providerOptions: reasoningOpts.providerOptions,
               }),
               ...(timeoutMs && timeoutMs > 0 ? { timeout: timeoutMs } : {}),
-            });
+            };
+            if (this.provider === "openai-compatible") {
+              // Streaming is load-bearing here, not cosmetic: codex-as-api's
+              // non-streaming handler runs its sync upstream call on the event
+              // loop, so concurrent generations serialize — at 10-way ask
+              // parallelism the queue wait exceeds the ask timeout and the
+              // aborted requests wedge the proxy. Its streaming path iterates
+              // in a threadpool and runs requests in parallel.
+              const stream = streamText(callArgs);
+              let text = "";
+              for await (const part of stream.fullStream) {
+                if (part.type === "text-delta") text += part.text;
+                else if (part.type === "error") throw part.error;
+              }
+              return { text, usage: await stream.usage, response: await stream.response };
+            }
+            return await generateText(callArgs);
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             // Don't retry on auth, quota, or bad request errors
