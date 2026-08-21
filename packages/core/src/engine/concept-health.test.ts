@@ -54,6 +54,15 @@ test("computeConceptHealthSignals includes critical multiplier and returns sorte
       ["c1", 0],
       ["c2", 0.7],
     ]),
+    // σ(c) comes from the snapshot, never the staleness column on the rows above.
+    sigmaByConcept: new Map([
+      ["c1", 0.2],
+      ["c2", 0.8],
+    ]),
+    residualByConcept: new Map([
+      ["c1", { residual: 0.1, eDrift: 0, eEmbed: 0.1, eEmbedMeasured: true, ungrounded: false }],
+      ["c2", { residual: 0.7, eDrift: 0.7, eEmbed: 0.3, eEmbedMeasured: true, ungrounded: false }],
+    ]),
     relations: [relation()],
     criticalConceptIds: new Set(["c2"]),
     fiedlerValue: 0.2,

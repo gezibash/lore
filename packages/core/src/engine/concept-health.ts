@@ -4,7 +4,7 @@ import type {
   ConceptRelationRow,
   ConceptRow,
 } from "@/types/index.ts";
-import { conceptPressureBase } from "./residuals.ts";
+import type { GroundednessResult } from "./measurement.ts";
 
 export interface ComputedConceptHealthSignal {
   concept_id: string;
@@ -23,6 +23,10 @@ export interface ComputedConceptHealthSignal {
 export interface ComputeConceptHealthSignalsInput {
   concepts: ConceptRow[];
   refDriftScoreByConcept: Map<string, number>;
+  /** σ(c) from the debt snapshot — never the persisted staleness column. */
+  sigmaByConcept: Map<string, number>;
+  /** R(c) from the debt snapshot — the residual base every what-if starts from. */
+  residualByConcept: Map<string, GroundednessResult>;
   relations: ConceptRelationRow[];
   criticalConceptIds: Set<string>;
   fiedlerValue: number;
@@ -42,33 +46,36 @@ function clamp(value: number): number {
   return value;
 }
 
-function conceptBaseStale(
-  concept: ConceptRow,
-  refDriftScoreByConcept: Map<string, number>,
-): number {
-  const time = clamp(concept.staleness ?? 0);
-  const ref = clamp(refDriftScoreByConcept.get(concept.id) ?? 0);
+interface AxisLookup {
+  refDriftScoreByConcept: Map<string, number>;
+  sigmaByConcept: Map<string, number>;
+  residualByConcept: Map<string, GroundednessResult>;
+}
+
+function conceptBaseStale(concept: ConceptRow, axes: AxisLookup): number {
+  const time = clamp(axes.sigmaByConcept.get(concept.id) ?? 0);
+  const ref = clamp(axes.refDriftScoreByConcept.get(concept.id) ?? 0);
   return clamp(0.6 * time + 0.4 * ref);
+}
+
+function conceptResidualBase(concept: ConceptRow, axes: AxisLookup): number {
+  return clamp(
+    axes.residualByConcept.get(concept.id)?.residual ?? concept.ground_residual ?? 0,
+  );
 }
 
 function relationWeight(relation: ConceptRelationRow): number {
   return clamp(relation.weight <= 0 ? 0 : relation.weight);
 }
 
-function computeGlobalShock(
-  concepts: ConceptRow[],
-  refDriftScoreByConcept: Map<string, number>,
-  baseDebt: number,
-): number {
+function computeGlobalShock(concepts: ConceptRow[], axes: AxisLookup, baseDebt: number): number {
   if (concepts.length === 0) return 0;
 
-  const baseStaleValues = concepts.map((concept) =>
-    conceptBaseStale(concept, refDriftScoreByConcept),
-  );
+  const baseStaleValues = concepts.map((concept) => conceptBaseStale(concept, axes));
   const highStaleRatio =
     baseStaleValues.filter((value) => value >= 0.65).length / Math.max(1, baseStaleValues.length);
   const driftRatio =
-    concepts.filter((concept) => (refDriftScoreByConcept.get(concept.id) ?? 0) > 0).length /
+    concepts.filter((concept) => (axes.refDriftScoreByConcept.get(concept.id) ?? 0) > 0).length /
     Math.max(1, concepts.length);
 
   return clamp(0.5 * highStaleRatio + 0.25 * driftRatio + 0.25 * clamp(baseDebt));
@@ -79,13 +86,17 @@ export function computeConceptHealthSignals(
 ): ComputeConceptHealthSignalsResult {
   const concepts = input.concepts;
   const conceptById = new Map(concepts.map((concept) => [concept.id, concept]));
-  const refDriftScoreByConcept = input.refDriftScoreByConcept;
+  const axes: AxisLookup = {
+    refDriftScoreByConcept: input.refDriftScoreByConcept,
+    sigmaByConcept: input.sigmaByConcept,
+    residualByConcept: input.residualByConcept,
+  };
   const relations = input.relations.filter((relation) => relation.active === 1);
   const criticalConceptIds = input.criticalConceptIds;
 
   const baseStaleByConceptId = new Map<string, number>();
   for (const concept of concepts) {
-    baseStaleByConceptId.set(concept.id, conceptBaseStale(concept, refDriftScoreByConcept));
+    baseStaleByConceptId.set(concept.id, conceptBaseStale(concept, axes));
   }
 
   const outbound = new Map<string, ConceptRelationRow[]>();
@@ -97,15 +108,15 @@ export function computeConceptHealthSignals(
     inbound.get(relation.to_concept_id)!.push(relation);
   }
 
-  const globalShock = computeGlobalShock(concepts, refDriftScoreByConcept, input.baseDebt);
+  const globalShock = computeGlobalShock(concepts, axes, input.baseDebt);
 
   const interimSignals: Array<
     Omit<ComputedConceptHealthSignal, "residual_after_adjust" | "debt_after_adjust">
   > = [];
 
   for (const concept of concepts) {
-    const timeStale = clamp(concept.staleness ?? 0);
-    const refStale = clamp(refDriftScoreByConcept.get(concept.id) ?? 0);
+    const timeStale = clamp(axes.sigmaByConcept.get(concept.id) ?? 0);
+    const refStale = clamp(axes.refDriftScoreByConcept.get(concept.id) ?? 0);
 
     const neighbors = (outbound.get(concept.id) ?? []).concat(inbound.get(concept.id) ?? []);
     let neighborWeightTotal = 0;
@@ -156,34 +167,25 @@ export function computeConceptHealthSignals(
     });
   }
 
-  const adjustedConcepts: ConceptRow[] = concepts.map((concept) => {
+  const adjustedResiduals = concepts.map((concept) => {
     const signal = interimSignals.find((item) => item.concept_id === concept.id);
     const finalStale = signal?.final_stale ?? 0;
-    const adjustedResidual = clamp(Math.max(conceptPressureBase(concept), finalStale * 0.9));
-
-    // Override ground_residual so computeTotalDebt (which uses conceptPressureBase) sees the adjusted value
-    return {
-      ...concept,
-      ground_residual: adjustedResidual,
-      lore_residual: 0,
-      staleness: finalStale,
-    };
+    return clamp(Math.max(conceptResidualBase(concept, axes), finalStale * 0.9));
   });
 
   // What-if signal with no consult context: uniform prior, so expected debt
   // reduces to the mean adjusted residual (spec cold-start behavior).
   const debtAfterAdjust =
-    adjustedConcepts.length === 0
+    adjustedResiduals.length === 0
       ? 0
-      : adjustedConcepts.reduce((sum, c) => sum + conceptPressureBase(c), 0) /
-        adjustedConcepts.length;
+      : adjustedResiduals.reduce((sum, r) => sum + r, 0) / adjustedResiduals.length;
 
   const signals: ComputedConceptHealthSignal[] = interimSignals
     .map((signal) => {
       const concept = conceptById.get(signal.concept_id);
       const residualAfterAdjust = clamp(
         Math.max(
-          concept ? conceptPressureBase(concept) : 0,
+          concept ? conceptResidualBase(concept, axes) : 0,
           signal.final_stale * signal.critical_multiplier * 0.75,
         ),
       );

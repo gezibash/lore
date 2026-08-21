@@ -90,9 +90,14 @@ import {
   computeDebtTrend,
   recordResiduals,
   computeStaleness,
-  conceptPressureBase,
 } from "./residuals.ts";
-import { computeExpectedDebt, getConceptBindingStats } from "./measurement.ts";
+import {
+  computeExpectedDebt,
+  getConceptBindingStats,
+  groundednessResidual,
+  stalenessSigma,
+  type GroundednessResult,
+} from "./measurement.ts";
 import { readSymbolContent } from "./git.ts";
 import {
   getDriftedBindings,
@@ -1252,27 +1257,27 @@ export async function queryConcepts(
   // never wall-clock age, which punishes stable code. Age survives only as
   // the weak prior for unbound concepts, where no evidence exists.
   const stalenessDecayDays = config.thresholds?.staleness_days ?? 90;
-  if (stalenessDecayDays > 0) {
-    const sigmaBindingStats = getConceptBindingStats(db);
-    for (const r of rerankedResults) {
-      const chunk = getChunk(db, r.chunkId);
-      const concept = chunk?.concept_id ? getConcept(db, chunk.concept_id) : null;
-      if (!concept) continue;
-      const stats = sigmaBindingStats.get(concept.id);
-      let sigma: number;
-      if (stats && stats.total > 0) {
-        sigma = stats.drifted / stats.total;
-      } else if (concept.inserted_at) {
-        const ageDays = (Date.now() - new Date(concept.inserted_at).getTime()) / 86_400_000;
-        sigma = Math.min(1, ageDays / stalenessDecayDays);
-      } else {
-        continue;
-      }
-      // Max 10% penalty at full σ for healthy debt bands; higher bands
-      // increase it (capped at 30%) to favor verified-fresh concepts.
-      const penalty = Math.min(0.3, 0.1 * sigma * stalenessPenaltyMultiplier);
-      r.score = Math.max(0.01, r.score * (1 - penalty));
+  const sigmaBindingStats = getConceptBindingStats(db);
+  const sigmaByConceptId = new Map<string, number>();
+  const groundednessByConceptId = new Map<string, GroundednessResult>();
+  for (const r of rerankedResults) {
+    const chunk = getChunk(db, r.chunkId);
+    const concept = chunk?.concept_id ? getConcept(db, chunk.concept_id) : null;
+    if (!concept) continue;
+    const stats = sigmaBindingStats.get(concept.id);
+    if (!groundednessByConceptId.has(concept.id)) {
+      groundednessByConceptId.set(concept.id, groundednessResidual(concept, stats));
     }
+    if (stalenessDecayDays <= 0) continue;
+    let sigma = sigmaByConceptId.get(concept.id);
+    if (sigma == null) {
+      sigma = stalenessSigma(concept, stats, chunk?.created_at, stalenessDecayDays);
+      sigmaByConceptId.set(concept.id, sigma);
+    }
+    // Max 10% penalty at full σ for healthy debt bands; higher bands
+    // increase it (capped at 30%) to favor verified-fresh concepts.
+    const penalty = Math.min(0.3, 0.1 * sigma * stalenessPenaltyMultiplier);
+    r.score = Math.max(0.01, r.score * (1 - penalty));
   }
 
   // Concept-level dedup: cap chunks sharing a concept/symbol name at two. One
@@ -1364,17 +1369,22 @@ export async function queryConcepts(
     if (symbolsDrifted > 0) {
       warnings.push(`${symbolsDrifted} bound symbol(s) have changed since last update`);
     }
-    if (concept?.staleness != null && concept.staleness > 0.5) {
-      warnings.push(`concept is stale (staleness: ${concept.staleness.toFixed(2)})`);
+    // Axes, not columns: σ(c) and R(c) as computed above for this result set.
+    // The persisted staleness column is frozen at 0 by close and would never
+    // fire these warnings.
+    const sigma = concept ? (sigmaByConceptId.get(concept.id) ?? null) : null;
+    const groundedness = concept ? (groundednessByConceptId.get(concept.id) ?? null) : null;
+    if (groundedness?.ungrounded) {
+      warnings.push("concept has no symbol bindings — unverifiable against code");
     }
-    if (concept?.staleness != null && concept.staleness > 0.4) {
-      const lastUpdatedDate = new Date(chunk?.created_at ?? concept.inserted_at);
+    if (sigma != null && sigma > 0.5) {
+      warnings.push(`concept is stale (σ ${sigma.toFixed(2)})`);
+    } else if (sigma != null && sigma > 0.4) {
+      const lastUpdatedDate = new Date(chunk?.created_at ?? concept!.inserted_at);
       const ageDays = (Date.now() - lastUpdatedDate.getTime()) / (1000 * 60 * 60 * 24);
-      if (ageDays > 7) {
-        warnings.push(
-          `concept may need refresh — staleness ${concept.staleness.toFixed(2)}, last updated ${Math.round(ageDays)}d ago`,
-        );
-      }
+      warnings.push(
+        `concept may need refresh — σ ${sigma.toFixed(2)}, last verified ${Math.round(ageDays)}d ago`,
+      );
     }
     const warning = warnings.length > 0 ? warnings.join("; ") : undefined;
 
@@ -1493,8 +1503,8 @@ export async function queryConcepts(
         chunk_id: r.chunkId,
         files,
         score: r.score,
-        residual: concept?.residual ?? null,
-        staleness: concept?.staleness ?? null,
+        residual: groundedness?.residual ?? concept?.residual ?? null,
+        staleness: sigma,
         symbol_drift: symbolDrift,
         symbols_bound: symbolsBound,
         symbols_drifted: symbolsDrifted,
@@ -3740,7 +3750,7 @@ export async function runCloseMaintenanceJob(
 
   const residualConceptUpdates: Array<{
     id: string;
-    fields: { churn: number; ground_residual: number | null; residual: number };
+    fields: { churn: number; ground_residual: number | null };
   }> = [];
   const conceptsBeforeResidualsById = new Map(
     getConcepts(db).map((concept) => [concept.id, concept]),
@@ -3788,29 +3798,22 @@ export async function runCloseMaintenanceJob(
               textGrounding.map((item) => item.confidence),
             ),
           );
-        } else {
-          groundResidual = churn;
         }
-      } else {
-        groundResidual = churn;
       }
-    } else {
-      groundResidual = churn;
     }
+    // When e_embed cannot be measured (no code path, no bound symbols, no
+    // embeddings) it stays null. Churn — how much the prose moved between
+    // versions — is a change rate, not an error estimate, and used to be
+    // written here as ground_residual, where debt read it as evidence that the
+    // prose was WRONG. A null is a measurement gap and is surfaced as one.
 
-    const residual = groundResidual ?? churn;
     residualConceptUpdates.push({
       id: pair.conceptId,
-      fields: {
-        churn,
-        ground_residual: groundResidual,
-        residual,
-      },
+      fields: { churn, ground_residual: groundResidual },
     });
     const chunkRow = newChunkRows.get(pair.newChunkId);
     if (chunkRow) {
       mergeFrontmatterUpdates(frontmatterUpdatesByPath, chunkRow.file_path, {
-        fl_residual: residual,
         fl_staleness: 0,
       });
     }
@@ -3874,37 +3877,42 @@ export async function runCloseMaintenanceJob(
     }
   }
 
-  const concepts = getConcepts(db);
-  const priority = concepts
-    .filter((concept) => conceptPressureBase(concept) > 0.3 || (concept.staleness ?? 0) > 0.5)
-    .map((concept) => concept.id);
-  const scopedConcepts = new Set<string>(priority);
-  for (const conceptId of residualConceptIds) scopedConcepts.add(conceptId);
-
-  let closeDriftedBindings: SymbolDriftResult[] = [];
-  try {
-    closeDriftedBindings = getDriftedBindings(db);
-  } catch {}
-  const closeDriftByConceptId = new Map<string, number>();
-  for (const drift of closeDriftedBindings) {
-    closeDriftByConceptId.set(
-      drift.concept_id,
-      (closeDriftByConceptId.get(drift.concept_id) ?? 0) + 1,
-    );
-  }
-
-  // Drift is NOT ratcheted into staleness or ground_residual here any more
+  // Drift is NOT ratcheted into staleness or ground_residual here
   // (knowledge-model spec rule 3: a composite is never stored into a
   // component). Drift lives in exactly one place — the drifted-binding rows —
   // and debt/staleness read it as the e_drift ratio at read time. The old
   // ratchet double-counted every drift event (staleness, ground_residual and
   // residual all moved) and could never be un-ratcheted when the drift healed.
 
+  // The `residual` column is the R(c) cache (spec §9.2): refreshed from the
+  // axes now that bindings have settled, so ls/show and residual_history see
+  // the same number debt does. Nothing else may write it.
+  const activeBeforeCache = getActiveConcepts(db);
+  const expectedAfter = computeExpectedDebt(db, activeBeforeCache);
+  const residualCacheUpdates = activeBeforeCache.flatMap((concept) => {
+    const g = expectedAfter.residuals.get(concept.id);
+    if (!g || (concept.residual != null && Math.abs(concept.residual - g.residual) < 1e-9)) {
+      return [];
+    }
+    return [{ id: concept.id, fields: { residual: g.residual } }];
+  });
+  insertConceptVersionBatch(
+    db,
+    residualCacheUpdates,
+    new Map(getConcepts(db).map((concept) => [concept.id, concept])),
+  );
+
   const conceptsPost = getConcepts(db);
   const activeConceptsPost = getActiveConcepts(db);
-  const debtAfter = computeExpectedDebt(db, activeConceptsPost).debt ?? 0;
+  const debtAfter = expectedAfter.debt ?? 0;
   recordResiduals(db, activeConceptsPost, debtAfter);
 
+  // Frontmatter mirrors for the concepts this close touched plus any whose
+  // R(c) is high enough to be acted on — best-effort metadata only.
+  const scopedConcepts = new Set<string>(residualConceptIds);
+  for (const [conceptId, g] of expectedAfter.residuals) {
+    if (g.residual > 0.3) scopedConcepts.add(conceptId);
+  }
   const conceptsPostChunkRows = batchLoadChunksByIds(
     db,
     conceptsPost
@@ -3919,6 +3927,7 @@ export async function runCloseMaintenanceJob(
     if (chunkRow) {
       mergeFrontmatterUpdates(frontmatterUpdatesByPath, chunkRow.file_path, {
         fl_cluster: concept.cluster ?? null,
+        fl_residual: expectedAfter.residuals.get(concept.id)?.residual ?? concept.residual ?? null,
       });
     }
   }

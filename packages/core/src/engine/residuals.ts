@@ -41,16 +41,6 @@ export function computeStaleness(lastUpdated: string, config: LoreConfig): numbe
 }
 
 /**
- * e_embed: the concept-vs-bound-code embedding residual, falling back to churn
- * when not yet populated. lore_residual (cluster cohesion) is a graph
- * property, not error evidence — as pressure it punished semantic
- * distinctiveness with a penalty no maintenance action could heal.
- */
-export function conceptPressureBase(concept: ConceptRow): number {
-  return concept.ground_residual ?? concept.churn ?? 0;
-}
-
-/**
  * Average a list of Float32Array vectors component-wise.
  */
 export function averageVectors(vecs: Float32Array[]): Float32Array {

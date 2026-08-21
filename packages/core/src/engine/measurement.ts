@@ -42,6 +42,12 @@ export interface GroundednessResult {
   eDrift: number;
   /** Concept-vs-bound-code embedding distance (stored ground_residual). */
   eEmbed: number;
+  /**
+   * Whether e_embed was ever computed for this concept. When false, R(c)
+   * rests on drift alone — that is a measurement gap, not a clean bill, and
+   * callers must surface it rather than read the 0 as evidence.
+   */
+  eEmbedMeasured: boolean;
   /** B(c) = ∅ — an unverifiable claim; scored R = 1 in composites. */
   ungrounded: boolean;
 }
@@ -52,12 +58,74 @@ export function groundednessResidual(
   bindings: ConceptBindingStats | undefined,
 ): GroundednessResult {
   const total = bindings?.total ?? 0;
+  const eEmbedMeasured = concept.ground_residual != null;
+  const eEmbed = concept.ground_residual ?? 0;
   if (total === 0) {
-    return { residual: 1, eDrift: 0, eEmbed: concept.ground_residual ?? 0, ungrounded: true };
+    return { residual: 1, eDrift: 0, eEmbed, eEmbedMeasured, ungrounded: true };
   }
   const eDrift = (bindings?.drifted ?? 0) / total;
-  const eEmbed = concept.ground_residual ?? 0;
-  return { residual: Math.max(eDrift, eEmbed), eDrift, eEmbed, ungrounded: false };
+  return { residual: Math.max(eDrift, eEmbed), eDrift, eEmbed, eEmbedMeasured, ungrounded: false };
+}
+
+// ── §3.2 staleness σ(c) ──────────────────────────────────────────────────────
+
+/**
+ * One query: when each concept was last verified — the created_at of its
+ * active state chunk (the last time the prose was actually rewritten). The
+ * concept row's own inserted_at is NOT that: every metric write (cluster,
+ * residual) inserts a new version row and would reset the clock.
+ */
+export function getVerifiedAtByConcept(db: Database): Map<string, string> {
+  const rows = db
+    .query<{ id: string; created_at: string }, []>(
+      `SELECT c.id, ch.created_at
+       FROM current_concepts c
+       JOIN chunks ch ON ch.id = c.active_chunk_id`,
+    )
+    .all();
+  return new Map(rows.map((r) => [r.id, r.created_at]));
+}
+
+/**
+ * σ(c): probability the code under a concept changed since it was last
+ * verified. Bound concepts: the drifted-binding ratio — evidence that the
+ * code moved. Unbound concepts: age since verification over staleness_days —
+ * time survives only as the weak prior where no evidence exists. Wall-clock
+ * age never applies to bound concepts; it punishes stable code.
+ *
+ * The persisted `staleness` column is not an input: it is frozen at 0 by
+ * close and 0.x by heal, and no maintenance path advances it.
+ */
+export function stalenessSigma(
+  concept: ConceptRow,
+  bindings: ConceptBindingStats | undefined,
+  verifiedAt: string | undefined,
+  stalenessDays: number,
+  now = new Date(),
+): number {
+  if (bindings && bindings.total > 0) return bindings.drifted / bindings.total;
+  const since = verifiedAt ?? concept.inserted_at;
+  if (!since || stalenessDays <= 0) return 0;
+  const ageDays = (now.getTime() - new Date(since).getTime()) / 86_400_000;
+  if (!Number.isFinite(ageDays)) return 0;
+  return Math.min(1, Math.max(0, ageDays / stalenessDays));
+}
+
+export function computeSigmaByConcept(
+  db: Database,
+  concepts: ConceptRow[],
+  stalenessDays: number,
+  now = new Date(),
+): Map<string, number> {
+  if (concepts.length === 0) return new Map();
+  const bindingStats = getConceptBindingStats(db);
+  const verifiedAt = getVerifiedAtByConcept(db);
+  return new Map(
+    concepts.map((c) => [
+      c.id,
+      stalenessSigma(c, bindingStats.get(c.id), verifiedAt.get(c.id), stalenessDays, now),
+    ]),
+  );
 }
 
 // ── §4.2 consult distribution p(c) ───────────────────────────────────────────
@@ -143,6 +211,8 @@ export interface ExpectedDebtResult {
   /** Per-concept consult probability p(c), keyed by concept id. */
   consultShare: Map<string, number>;
   ungroundedCount: number;
+  /** Bound concepts with no e_embed on record — R(c) rests on drift alone. */
+  unmeasuredEmbedCount: number;
 }
 
 /** Debt = Σ p(c) · R(c). With no events, p is uniform and debt = mean R. */
@@ -152,7 +222,13 @@ export function computeExpectedDebt(
   now = new Date(),
 ): ExpectedDebtResult {
   if (concepts.length === 0) {
-    return { debt: null, residuals: new Map(), consultShare: new Map(), ungroundedCount: 0 };
+    return {
+      debt: null,
+      residuals: new Map(),
+      consultShare: new Map(),
+      ungroundedCount: 0,
+      unmeasuredEmbedCount: 0,
+    };
   }
 
   const bindingStats = getConceptBindingStats(db);
@@ -161,6 +237,7 @@ export function computeExpectedDebt(
   const residuals = new Map<string, GroundednessResult>();
   const consultShare = new Map<string, number>();
   let ungroundedCount = 0;
+  let unmeasuredEmbedCount = 0;
 
   const totalMass =
     concepts.reduce((sum, c) => sum + (consultMass.get(c.name) ?? 0), 0) +
@@ -171,12 +248,13 @@ export function computeExpectedDebt(
     const g = groundednessResidual(concept, bindingStats.get(concept.id));
     residuals.set(concept.id, g);
     if (g.ungrounded) ungroundedCount++;
+    else if (!g.eEmbedMeasured) unmeasuredEmbedCount++;
     const p = ((consultMass.get(concept.name) ?? 0) + CONSULT_SMOOTHING_ALPHA) / totalMass;
     consultShare.set(concept.id, p);
     debt += p * g.residual;
   }
 
-  return { debt, residuals, consultShare, ungroundedCount };
+  return { debt, residuals, consultShare, ungroundedCount, unmeasuredEmbedCount };
 }
 
 // ── §4.1 state distance — the epistemic gap ──────────────────────────────────

@@ -569,7 +569,8 @@ export function formatLs(result: {
       const churn = c.churn != null ? `${(c.churn * 100).toFixed(0)}%` : "—";
       const staleness = c.staleness != null ? `${(c.staleness * 100).toFixed(0)}%` : "—";
       const symbols = result.concept_symbol_counts?.[c.id] ?? 0;
-      const pressure = c.ground_residual ?? c.churn ?? 0;
+      // `residual` is the R(c) cache; ls also overlays σ(c) onto `staleness`.
+      const pressure = c.residual ?? c.ground_residual ?? 0;
       const hub = c.is_hub === 1 ? "*" : "";
       const warn = pressure > 0.5 ? " ⚠" : "";
       lines.push(
@@ -676,9 +677,7 @@ export function formatHistory(
   const ground =
     c.ground_residual != null
       ? `${(c.ground_residual * 100).toFixed(0)}%`
-      : c.churn != null
-        ? `${(c.churn * 100).toFixed(0)}% (churn)`
-        : "—";
+      : "unmeasured";
   const lore = c.lore_residual != null ? `${(c.lore_residual * 100).toFixed(0)}%` : "—";
   const staleness =
     c.staleness != null ? (c.staleness > 0.5 ? "high" : c.staleness > 0.3 ? "medium" : "low") : "—";

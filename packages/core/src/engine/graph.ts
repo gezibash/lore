@@ -486,10 +486,10 @@ export function recomputeGraph(db: Database): RecomputeGraphResult | null {
         const meanSim =
           peers.reduce((s, p) => s + A_hybrid.get(chunkIdx, p.chunkIdx), 0) / peers.length;
         const loreResidual = 1 - meanSim;
-        const current = existingConcepts.find((c) => c.id === conceptId);
-        const groundResidual = current?.ground_residual ?? current?.churn ?? 0;
-        const residual = Math.max(groundResidual, loreResidual);
-        insertConceptVersion(db, conceptId, { lore_residual: loreResidual, residual });
+        // Cluster cohesion is graph health (spec §3.4), not error evidence: it
+        // is recorded as lore_residual only. The `residual` column is the R(c)
+        // cache and is written solely by close maintenance from the axes.
+        insertConceptVersion(db, conceptId, { lore_residual: loreResidual });
       }
     }
   }

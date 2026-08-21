@@ -8,7 +8,8 @@ import { getLaplacianCache } from "@/db/laplacian.ts";
 import { getConcept } from "@/db/concepts.ts";
 import { getFilesForConcept } from "@/db/concept-symbols.ts";
 import { pairwiseCosineSimilarity } from "./graph.ts";
-import { computeDebtSnapshot, conceptPressure } from "./debt.ts";
+import { computeDebtSnapshot, conceptDebtShare } from "./debt.ts";
+import { defaultConfig } from "@/config/index.ts";
 import type {
   ConceptRow,
   LoreConfig,
@@ -81,6 +82,7 @@ export async function computeSuggestions(
     db,
     activeConcepts,
     manifest,
+    { stalenessDays: (ctx?.config ?? defaultConfig).thresholds.staleness_days },
   );
   const liveDebt = debtSnapshot.live_debt;
   const rawDebt = debtSnapshot.debt;
@@ -96,18 +98,17 @@ export async function computeSuggestions(
         })
       : null);
   const totalDebt = askDebtSnapshot?.debt ?? liveDebt;
-  const fiedlerValue = laplacian?.fiedler_value ?? manifest?.fiedler_value ?? 0;
-  const fiedlerDivisor = 1 + fiedlerValue;
-  const { refDriftScoreByConcept } = debtSnapshot;
 
+  // Debt is Σ p(c)·R(c), so fully healing c removes exactly p(c)·R(c) — no
+  // Fiedler divisor (graph topology is its own axis, spec §3.4) and no
+  // raw-to-display rescaling: there is one debt.
   function impactForConcept(
     concept: ConceptRow,
     fraction: number = 1.0,
     rationale: string,
   ): SuggestionImpact {
-    const pressure = conceptPressure(concept, refDriftScoreByConcept);
-    const rawReduction = (pressure * fraction) / fiedlerDivisor;
-    const pointReduction = rawDebt > 0 ? (rawReduction / rawDebt) * totalDebt : rawReduction;
+    const rawReduction = conceptDebtShare(concept, debtSnapshot, fraction);
+    const pointReduction = rawReduction;
     return {
       expected_debt_reduction: pointReduction,
       expected_debt_reduction_points: pointReduction,

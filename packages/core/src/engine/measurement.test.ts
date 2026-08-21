@@ -4,9 +4,11 @@ import type { ConceptRow } from "@/types/index.ts";
 import { createTestDb } from "../../test/support/db.ts";
 import {
   computeExpectedDebt,
+  computeSigmaByConcept,
   computeStateDistanceSpec,
   getConceptBindingStats,
   groundednessResidual,
+  stalenessSigma,
 } from "./measurement.ts";
 
 function concept(id: string, groundResidual: number | null): ConceptRow {
@@ -133,4 +135,63 @@ test("state distance: adding an unbound concept increases D; binding it decrease
   const afterBinding = computeStateDistanceSpec(db, [concept("a", 0.2), concept("u", 0.1)]);
   expect(afterBinding).toBeLessThan(withUnbound);
   db.close();
+});
+
+// ── §3.2 σ(c): evidence for bound concepts, age prior only for unbound ───────
+
+test("σ ignores the persisted staleness column — bound concepts read drift ratio", () => {
+  const db = createTestDb();
+  seedSymbol(db, "sym-a", "hash-1");
+  seedSymbol(db, "sym-b", "hash-2");
+  bind(db, "a", "sym-a", "hash-1"); // undrifted
+  bind(db, "a", "sym-b", "stale-hash"); // drifted
+  const stats = getConceptBindingStats(db).get("a");
+
+  const frozen = { ...concept("a", 0.1), staleness: 0 }; // what close writes, forever
+  // Persisted 0 would say "fresh"; the bindings say half the code moved.
+  expect(stalenessSigma(frozen, stats, "2020-01-01T00:00:00.000Z", 47)).toBeCloseTo(0.5);
+  // And a bound concept never ages by wall clock, however old its chunk is.
+  bind(db, "c", "sym-a", "hash-1");
+  const stable = getConceptBindingStats(db).get("c");
+  expect(stalenessSigma(concept("c", 0), stable, "2020-01-01T00:00:00.000Z", 47)).toBe(0);
+});
+
+test("σ for an unbound concept is age since last verification over staleness_days", () => {
+  const now = new Date("2026-03-01T00:00:00.000Z");
+  const verifiedAt = "2026-02-01T00:00:00.000Z"; // 28 days earlier
+  const c = { ...concept("u", null), inserted_at: "2026-02-28T00:00:00.000Z" };
+  // Verification time is the active chunk's created_at, not the concept
+  // row's inserted_at (which every metric write resets).
+  expect(stalenessSigma(c, undefined, verifiedAt, 56, now)).toBeCloseTo(0.5);
+  expect(stalenessSigma(c, undefined, verifiedAt, 14, now)).toBe(1);
+});
+
+test("computeSigmaByConcept reads verification time from the active state chunk", () => {
+  const db = createTestDb();
+  db.run(
+    `INSERT INTO concepts (version_id, id, name, active_chunk_id, inserted_at)
+     VALUES ('v-u', 'u', 'u', 'chunk-u', '2026-02-28T00:00:00.000Z')`,
+  );
+  db.run(
+    `INSERT INTO chunks (id, file_path, fl_type, concept_id, created_at)
+     VALUES ('chunk-u', 'u.md', 'chunk', 'u', '2026-02-01T00:00:00.000Z')`,
+  );
+  const now = new Date("2026-03-01T00:00:00.000Z");
+  const rows = db.query<ConceptRow, []>("SELECT * FROM current_concepts").all();
+  const sigma = computeSigmaByConcept(db, rows, 56, now);
+  expect(sigma.get("u")).toBeCloseTo(0.5); // 28d since chunk, not 1d since row
+});
+
+// ── unmeasured e_embed is a gap, not a clean bill ────────────────────────────
+
+test("a bound concept with no e_embed on record is counted as unmeasured", () => {
+  const db = createTestDb();
+  seedSymbol(db, "sym-a", "hash-1");
+  bind(db, "a", "sym-a", "hash-1");
+  const result = computeExpectedDebt(db, [concept("a", null), concept("b", 0.3)]);
+  const g = result.residuals.get("a")!;
+  expect(g.ungrounded).toBe(false);
+  expect(g.eEmbedMeasured).toBe(false);
+  expect(result.unmeasuredEmbedCount).toBe(1);
+  expect(result.ungroundedCount).toBe(1); // b has no bindings
 });

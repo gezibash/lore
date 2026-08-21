@@ -29,7 +29,12 @@ function makeDebtSnapshot(overrides?: Partial<DebtSnapshot>): DebtSnapshot {
     live_debt: 0,
     refWarnings: new Map(),
     refDriftScoreByConcept: new Map(),
+    residualByConcept: new Map(),
+    sigmaByConcept: new Map(),
+    consultShareByConcept: new Map(),
     symbolDriftWarnings: new Map(),
+    ungroundedCount: 0,
+    unmeasuredEmbedCount: 0,
     ...overrides,
   };
 }

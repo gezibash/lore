@@ -271,8 +271,27 @@ is the expected-error debt banded by config-owned `thresholds.debt_bands`
 staleness penalty uses σ(c) with age only as the unbound prior; debt displayed
 as a percentage of the stored [0,1] value.
 
+Also resolved 2026-08-21 (axis leaks found in review of the above): every
+consumer now reads R(c), σ(c) and p(c) from one `DebtSnapshot`
+(`engine/debt.ts`) instead of persisted columns — status priorities, `ls`,
+ask warnings/meta, concept health and suggest. Specifically: the `staleness`
+column (frozen at 0 by close, never advanced) is no longer read for any
+decision; σ(c) is computed by `measurement.ts#stalenessSigma` with
+verification time = the active chunk's `created_at`; churn is no longer
+written as `ground_residual` when e_embed cannot be measured (it stays null
+and is counted as `unmeasuredEmbedCount`); the `residual` column is written
+only by close maintenance as the R(c) cache (`graph.ts` no longer writes it);
+and suggest's impact estimate is `p(c)·R(c)·fraction` with the Fiedler
+divisor removed.
+
 Still open:
 
+- **`heal` semantics.** `lore heal` still writes `staleness`/`residual` down
+  by formula with no new evidence. Under this spec that is correctly a no-op
+  on debt (the next maintenance run overwrites the cache from the axes), but
+  its from/to report claims a delta it did not make. Heal must become an
+  evidence-producing action — re-extract bindings and recompute e_embed — or
+  be removed.
 - **σ(c) file-change evidence.** `fileChanged(c)` needs per-file content
   change history since the concept's active chunk; today σ falls back to
   `e_drift` for bound concepts and the age prior for unbound.

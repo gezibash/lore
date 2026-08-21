@@ -183,6 +183,7 @@ import {
   computeDebtSnapshot,
   conceptLiveStaleness,
   conceptPressure,
+  conceptDebtShare,
   type DebtSnapshot,
 } from "./debt.ts";
 import { computeAskDebtSnapshot } from "./ask-debt.ts";
@@ -935,7 +936,9 @@ export class LoreEngine {
 
     const askDebtConcepts = getActiveConcepts(db);
     const askDebtManifest = getManifest(db);
-    const askDebtRaw = await computeDebtSnapshot(entry, db, askDebtConcepts, askDebtManifest);
+    const askDebtRaw = await computeDebtSnapshot(entry, db, askDebtConcepts, askDebtManifest, {
+      stalenessDays: config.thresholds.staleness_days,
+    });
     const askDebtSnapshot = computeAskDebtSnapshot({
       db,
       entry,
@@ -1668,8 +1671,10 @@ export class LoreEngine {
     const danglingNarratives = getDanglingNarratives(db, config.thresholds.dangling_days);
     const closeMaintenance = getCloseMaintenanceJobCounts(db, { lorePath: entry.lore_path });
     const closeJobs = getCloseJobCounts(db, { lorePath: entry.lore_path });
-    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
-    const { debt: rawDebt, refWarnings, refDriftScoreByConcept } = debtSnapshot;
+    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest, {
+      stalenessDays: config.thresholds.staleness_days,
+    });
+    const { debt: rawDebt } = debtSnapshot;
     const debtPrevious = null;
     const debtChange = null;
 
@@ -1688,41 +1693,41 @@ export class LoreEngine {
       .reduce((s, r) => s + r.cnt, 0);
     const staleEmbeddings = totalEmbeddings - matchingEmbeddings;
 
-    // Priorities: concepts with high pressure/staleness or live ref drift.
+    // Priorities: ranked by expected debt share p(c)·R(c) — the concepts whose
+    // healing moves debt most — among those with R(c) or σ(c) worth acting on.
+    // Reads the axes from the snapshot, never the persisted staleness column
+    // (frozen at 0 by close, never advanced by maintenance).
     const priorityConcepts = concepts
       .filter(
         (c) =>
-          conceptPressure(c, refDriftScoreByConcept) > 0.3 ||
-          (c.staleness ?? 0) > 0.5 ||
-          (refDriftScoreByConcept.get(c.id) ?? 0) > 0,
+          conceptPressure(c, debtSnapshot) > 0.3 || conceptLiveStaleness(c, debtSnapshot) > 0.5,
       )
-      .sort((a, b) => {
-        return (
-          conceptPressure(b, refDriftScoreByConcept) - conceptPressure(a, refDriftScoreByConcept)
-        );
-      })
+      .sort((a, b) => conceptDebtShare(b, debtSnapshot) - conceptDebtShare(a, debtSnapshot))
       .slice(0, 5);
 
     const priorities = priorityConcepts.map((c) => {
-      const staleRefs = refWarnings.get(c.id);
+      const g = debtSnapshot.residualByConcept.get(c.id);
+      const drifted = debtSnapshot.symbolDriftWarnings.get(c.id)?.length ?? 0;
+      const sigma = conceptLiveStaleness(c, debtSnapshot);
       let reason: string;
-      if (staleRefs && staleRefs.length > 0) {
-        reason = `Referenced files changed: ${staleRefs.join(", ")}`;
-      } else if ((c.staleness ?? 0) > 0.5) {
-        reason = `Not updated in a long time. Staleness: ${((c.staleness ?? 0) * 100).toFixed(0)}%`;
+      let action: string;
+      if (!g || g.ungrounded) {
+        reason = `No symbol bindings — the prose cannot be verified against code (σ ${(sigma * 100).toFixed(0)}%)`;
+        action = "bind to code";
+      } else if (drifted > 0) {
+        reason = `${drifted} bound symbol(s) changed since verification (drift ${(g.eDrift * 100).toFixed(0)}%)`;
+        action = "update — bound code changed";
       } else {
-        const pressure = conceptPressure(c, refDriftScoreByConcept);
-        reason = `High pressure: ${(pressure * 100).toFixed(0)}% (ground=${((c.ground_residual ?? c.churn ?? 0) * 100).toFixed(0)}%, lore=${((c.lore_residual ?? 0) * 100).toFixed(0)}%)`;
+        reason = g.eEmbedMeasured
+          ? `Prose diverges from bound code (embedding residual ${(g.eEmbed * 100).toFixed(0)}%)`
+          : "Bound, but the code-vs-prose residual was never measured";
+        action = g.residual > 0.5 ? "update docs" : "review";
       }
       const lastNarrative = getLastNarrativeForConcept(db, c.id);
       const chunkRow = c.active_chunk_id ? getChunk(db, c.active_chunk_id) : null;
       return {
         concept: c.name,
-        action: staleRefs
-          ? "update — source files changed"
-          : conceptPressure(c, refDriftScoreByConcept) > 0.5
-            ? "update docs"
-            : "review",
+        action,
         reason,
         last_narrative: lastNarrative ?? undefined,
         changed_at: chunkRow?.created_at ?? undefined,
@@ -2046,6 +2051,8 @@ export class LoreEngine {
     const computed = computeConceptHealthSignals({
       concepts,
       refDriftScoreByConcept: debtSnapshot.refDriftScoreByConcept,
+      sigmaByConcept: debtSnapshot.sigmaByConcept,
+      residualByConcept: debtSnapshot.residualByConcept,
       relations,
       criticalConceptIds,
       fiedlerValue: manifest?.fiedler_value ?? 0,
@@ -2811,9 +2818,12 @@ export class LoreEngine {
     top?: number;
   }): Promise<ConceptHealthComputeResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const config = this.configFor(entry);
     const concepts = getActiveConcepts(db);
     const manifest = getManifest(db);
-    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
+    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest, {
+      stalenessDays: config.thresholds.staleness_days,
+    });
     return this.persistConceptHealthRun(db, concepts, manifest, debtSnapshot, { top: opts?.top });
   }
 
@@ -3115,10 +3125,14 @@ export class LoreEngine {
     const concepts = getActiveConcepts(db);
     const manifest = getManifest(db);
     const openNarratives = getActiveNarratives(db);
-    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest);
+    const debtSnapshot = await computeDebtSnapshot(entry, db, concepts, manifest, {
+      stalenessDays: config.thresholds.staleness_days,
+    });
+    // Present the axes, not the frozen columns: staleness is σ(c), residual is R(c).
     const conceptsWithLiveStaleness = concepts.map((concept) => ({
       ...concept,
-      staleness: conceptLiveStaleness(concept, debtSnapshot.refDriftScoreByConcept),
+      staleness: conceptLiveStaleness(concept, debtSnapshot),
+      residual: conceptPressure(concept, debtSnapshot),
     }));
     const conceptTrends = conceptsWithLiveStaleness.map((concept) => {
       const previous = getPreviousConceptMetrics(db, concept.id);
