@@ -257,30 +257,3 @@ export function buildConceptHealthNeighbors(
     return a.concept.localeCompare(b.concept);
   });
 }
-
-export interface HealSignalInput {
-  concept: ConceptRow;
-  finalStale: number;
-}
-
-export function healSignal(input: HealSignalInput): {
-  from_staleness: number;
-  to_staleness: number;
-  from_residual: number;
-  to_residual: number;
-} {
-  const fromStaleness = clamp(input.concept.staleness ?? 0);
-  // Use residual (backward-compat field) to show the before/after heal delta
-  const fromResidual = clamp(input.concept.residual ?? 0);
-  const pressure = clamp(input.finalStale);
-
-  const toStaleness = clamp(Math.max(0, fromStaleness - (0.2 + pressure * 0.3)));
-  const toResidual = clamp(Math.max(0, fromResidual - (0.12 + pressure * 0.25)));
-
-  return {
-    from_staleness: fromStaleness,
-    to_staleness: toStaleness,
-    from_residual: fromResidual,
-    to_residual: toResidual,
-  };
-}

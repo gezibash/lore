@@ -284,14 +284,21 @@ only by close maintenance as the R(c) cache (`graph.ts` no longer writes it);
 and suggest's impact estimate is `p(c)·R(c)·fraction` with the Fiedler
 divisor removed.
 
+Also resolved 2026-08-21: heal is an evidence-producing action
+(`engine/heal.ts`). Per concept it rescans bound files, extracts bindings only
+for ungrounded concepts (re-extraction on a bound concept would wipe and
+re-bind at current hashes — re-verifying every drifted binding by decree — so
+it is never run there), verifies each drifted binding with the generator
+against the symbol's current body (accepted → re-verified; rejected → stays
+drifted with the reason, the cue to open a narrative), re-measures e_embed via
+the shared `engine/ground-residual.ts` (also used by close maintenance), and
+refreshes the R(c) cache. Candidates are ranked by debt share `p(c)·R(c)`.
+The formula-based `healSignal` and the stop-loss halt are gone — a heal that
+raises debt has *found* debt, and halting on that would be the silent-evidence
+failure. Dry runs report the evidence steps they would take.
+
 Still open:
 
-- **`heal` semantics.** `lore heal` still writes `staleness`/`residual` down
-  by formula with no new evidence. Under this spec that is correctly a no-op
-  on debt (the next maintenance run overwrites the cache from the axes), but
-  its from/to report claims a delta it did not make. Heal must become an
-  evidence-producing action — re-extract bindings and recompute e_embed — or
-  be removed.
 - **σ(c) file-change evidence.** `fileChanged(c)` needs per-file content
   change history since the concept's active chunk; today σ falls back to
   `e_drift` for bound concepts and the age prior for unbound.

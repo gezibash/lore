@@ -89,6 +89,24 @@ export function getConceptsForSymbols(db: Database, symbolIds: string[]): Symbol
     .all(...symbolIds);
 }
 
+/**
+ * Re-verify a drifted binding: record that the concept's prose was checked
+ * against the symbol's current body and still holds. The only legitimate
+ * writers are close maintenance (prose just rewritten) and heal (an explicit
+ * verification) — never a re-extraction pass, which would re-verify by decree.
+ */
+export function reverifyConceptSymbol(
+  db: Database,
+  opts: { conceptId: string; symbolId: string; bodyHash: string; body?: string | null },
+): void {
+  db.run(
+    `UPDATE concept_symbols
+     SET bound_body_hash = ?, bound_body = COALESCE(?, bound_body), updated_at = ?
+     WHERE concept_id = ? AND symbol_id = ?`,
+    [opts.bodyHash, opts.body ?? null, new Date().toISOString(), opts.conceptId, opts.symbolId],
+  );
+}
+
 export function getDriftedBindings(db: Database): SymbolDriftResult[] {
   return db
     .query<SymbolDriftResult, []>(

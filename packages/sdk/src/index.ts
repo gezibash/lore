@@ -329,7 +329,6 @@ interface LoreClientEngine {
     dry?: boolean;
     workers?: number;
     batchSize?: number;
-    stopLossDelta?: number;
     leaseTtlMs?: number;
     maxRetries?: number;
     runId?: string;
@@ -702,7 +701,6 @@ export class LoreClient {
     dry?: boolean;
     workers?: number;
     batchSize?: number;
-    stopLossDelta?: number;
     leaseTtlMs?: number;
     maxRetries?: number;
     runId?: string;

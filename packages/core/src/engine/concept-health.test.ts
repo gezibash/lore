@@ -3,7 +3,6 @@ import type { ConceptRelationRow, ConceptRow } from "@/types/index.ts";
 import {
   buildConceptHealthNeighbors,
   computeConceptHealthSignals,
-  healSignal,
 } from "./concept-health.ts";
 
 function concept(overrides?: Partial<ConceptRow>): ConceptRow {
@@ -104,14 +103,4 @@ test("buildConceptHealthNeighbors returns inbound and outbound links with stale 
   expect(neighbors.length).toBe(2);
   expect(neighbors.find((item) => item.direction === "outbound")?.concept).toBe("beta");
   expect(neighbors.find((item) => item.direction === "inbound")?.concept).toBe("gamma");
-});
-
-test("healSignal lowers staleness and residual based on pressure", () => {
-  const healed = healSignal({
-    concept: concept({ staleness: 0.9, residual: 0.7 }),
-    finalStale: 0.8,
-  });
-
-  expect(healed.to_staleness).toBeLessThan(healed.from_staleness);
-  expect(healed.to_residual).toBeLessThan(healed.from_residual);
 });

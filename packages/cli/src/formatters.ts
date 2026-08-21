@@ -346,12 +346,45 @@ export function formatHealConceptsCli(result: HealConceptsResult): string {
   lines.push(`${DIM}considered:${RESET} ${compactCount(result.considered)}`);
   lines.push(`${DIM}healed:${RESET} ${compactCount(result.healed.length)}`);
 
+  if (result.batch_stats) {
+    lines.push(
+      `${DIM}debt:${RESET} ${(result.batch_stats.pre_debt * 100).toFixed(1)}% -> ${(result.batch_stats.post_debt * 100).toFixed(1)}%`,
+    );
+  }
+
   if (result.healed.length > 0) {
     lines.push("");
     for (const concept of result.healed) {
+      const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
+      if (result.dry) {
+        const state = concept.ungrounded_before ? " (ungrounded)" : "";
+        lines.push(
+          `- ${CYAN}${concept.concept}${RESET}${state}: R ${pct(concept.from_residual)}, σ ${pct(concept.from_staleness)}, drifted ${concept.bindings_still_drifted}`,
+        );
+        for (const step of concept.plan) lines.push(`    ${DIM}would:${RESET} ${step}`);
+        continue;
+      }
+      const state = concept.ungrounded_after
+        ? " (still ungrounded)"
+        : concept.ungrounded_before
+          ? " (now grounded)"
+          : "";
       lines.push(
-        `- ${CYAN}${concept.concept}${RESET}: staleness ${(concept.from_staleness * 100).toFixed(0)}% -> ${(concept.to_staleness * 100).toFixed(0)}%, residual ${(concept.from_residual * 100).toFixed(0)}% -> ${(concept.to_residual * 100).toFixed(0)}%`,
+        `- ${CYAN}${concept.concept}${RESET}${state}: R ${pct(concept.from_residual)} -> ${pct(concept.to_residual)}, σ ${pct(concept.from_staleness)} -> ${pct(concept.to_staleness)}`,
       );
+      const evidence: string[] = [];
+      if (concept.bindings_added > 0) evidence.push(`${concept.bindings_added} binding(s) added`);
+      if (concept.bindings_verified > 0)
+        evidence.push(`${concept.bindings_verified} drifted binding(s) verified`);
+      if (concept.bindings_still_drifted > 0)
+        evidence.push(`${concept.bindings_still_drifted} still drifted`);
+      evidence.push(
+        concept.e_embed != null ? `e_embed ${pct(concept.e_embed)}` : "e_embed unmeasured",
+      );
+      lines.push(`    ${DIM}${evidence.join(", ")}${RESET}`);
+      for (const reason of concept.still_drifted_reasons) {
+        lines.push(`    ${DIM}needs narrative:${RESET} ${reason}`);
+      }
     }
   }
 

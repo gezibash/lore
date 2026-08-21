@@ -60,7 +60,6 @@ import {
   getJournalChunksForNarrative,
   getJournalTopicsForNarrative,
   getFilesForConcept,
-  insertSymbolEmbeddingBatch,
   queueCloseMaintenanceJob,
   getCloseMaintenanceJobCounts,
 } from "@/db/index.ts";
@@ -83,7 +82,7 @@ import { readChunk } from "@/storage/chunk-reader.ts";
 import { hybridSearch } from "./search.ts";
 import type { HybridSearchResult } from "./search.ts";
 import { webSearch } from "./web-search.ts";
-import { cosineDistance, averageVectors, weightedAverageVectors } from "./residuals.ts";
+import { cosineDistance, averageVectors } from "./residuals.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import {
@@ -91,6 +90,7 @@ import {
   recordResiduals,
   computeStaleness,
 } from "./residuals.ts";
+import { loadSymbolLinesByConceptIds, measureGroundResiduals } from "./ground-residual.ts";
 import {
   computeExpectedDebt,
   getConceptBindingStats,
@@ -350,51 +350,6 @@ function batchLoadLastNarrativesByConceptIds(
         closed_at: row.closed_at,
       });
     }
-  }
-
-  return grouped;
-}
-
-function batchLoadSymbolLinesByConceptIds(
-  db: Database,
-  conceptIds: readonly string[],
-): Map<string, ConceptSymbolLineRange[]> {
-  const grouped = new Map<string, ConceptSymbolLineRange[]>();
-  if (conceptIds.length === 0) return grouped;
-
-  let rows: Array<ConceptSymbolLineRange & { concept_id: string }> = [];
-  try {
-    const placeholders = conceptIds.map(() => "?").join(", ");
-    rows = db
-      .query<ConceptSymbolLineRange & { concept_id: string }, string[]>(
-        `SELECT cs.concept_id, cs.symbol_id, sf.file_path, s.name AS symbol_name, s.qualified_name, s.kind,
-                s.line_start, s.line_end, s.signature, cs.confidence
-         FROM concept_symbols cs
-         JOIN symbols s ON cs.symbol_id = s.id
-         JOIN source_files sf ON s.source_file_id = sf.id
-         WHERE cs.concept_id IN (${placeholders})
-         ORDER BY cs.concept_id, sf.file_path, s.line_start`,
-      )
-      .all(...conceptIds);
-  } catch {
-    return grouped;
-  }
-
-  for (const row of rows) {
-    const list = grouped.get(row.concept_id);
-    const lineRange: ConceptSymbolLineRange = {
-      symbol_id: row.symbol_id,
-      file_path: row.file_path,
-      symbol_name: row.symbol_name,
-      qualified_name: row.qualified_name,
-      kind: row.kind,
-      line_start: row.line_start,
-      line_end: row.line_end,
-      signature: row.signature,
-      confidence: row.confidence,
-    };
-    if (list) list.push(lineRange);
-    else grouped.set(row.concept_id, [lineRange]);
   }
 
   return grouped;
@@ -1746,7 +1701,7 @@ export async function queryConcepts(
         .filter((conceptId): conceptId is string => conceptId != null),
     ),
   ];
-  const summarySymbolLinesByConceptId = batchLoadSymbolLinesByConceptIds(
+  const summarySymbolLinesByConceptId = loadSymbolLinesByConceptIds(
     db,
     summaryInputConceptIds,
   );
@@ -3631,122 +3586,26 @@ export async function runCloseMaintenanceJob(
   }
 
   const frontmatterUpdatesByPath = new Map<string, Record<string, unknown>>();
-  const symbolLinesByConceptId = payload.codePath
-    ? batchLoadSymbolLinesByConceptIds(db, residualConceptIds)
-    : new Map<string, ConceptSymbolLineRange[]>();
-  const symbolReadTargets = new Map<
-    string,
-    { file_path: string; line_start: number; line_end: number }
-  >();
-  if (payload.codePath) {
-    for (const symbolLines of symbolLinesByConceptId.values()) {
-      for (const sym of symbolLines) {
-        if (!symbolReadTargets.has(sym.symbol_id)) {
-          symbolReadTargets.set(sym.symbol_id, {
-            file_path: sym.file_path,
-            line_start: sym.line_start,
-            line_end: sym.line_end,
-          });
-        }
-      }
-    }
-  }
-
-  const symbolContentById = new Map<string, string>();
-  if (payload.codePath && symbolReadTargets.size > 0) {
-    const symbolReads = await mapConcurrent(
-      [...symbolReadTargets.entries()],
-      8,
-      async ([symbolId, target]) => ({
-        symbolId,
-        content: await readSymbolContent(
-          payload.codePath!,
-          target.file_path,
-          target.line_start,
-          target.line_end,
-        ),
-      }),
-    );
-    for (const read of symbolReads) {
-      if (read.content) {
-        symbolContentById.set(read.symbolId, read.content);
-      }
-    }
-  }
-
-  const symbolContentEntries = [...symbolContentById.entries()].map(([symbolId, content]) => ({
-    symbolId,
-    content,
-  }));
-  const conceptCodeEmbeddingsByConceptId = new Map<string, Float32Array>();
-  const symbolCodeEmbeddingsById = new Map<string, Float32Array>();
-  const symbolTextEmbeddingsById = new Map<string, Float32Array>();
-
-  if (codeEmbedder && config.ai.embedding.code?.model && payload.codePath) {
-    const codeModel = config.ai.embedding.code.model;
-    try {
-      const conceptCodeTargets = residualConceptIds
-        .map((conceptId) => {
-          const pair = residualPairByConceptId.get(conceptId);
-          if (!pair) return null;
-          const content = contentByChunkId.get(pair.newChunkId);
-          if (!content) return null;
-          return { conceptId, content };
-        })
-        .filter((target): target is { conceptId: string; content: string } => target != null);
-
-      if (conceptCodeTargets.length > 0 || symbolContentEntries.length > 0) {
-        const codeEmbeddings = await codeEmbedder.embedBatch([
-          ...conceptCodeTargets.map((target) => target.content),
-          ...symbolContentEntries.map((entry) => entry.content),
-        ]);
-        for (let i = 0; i < conceptCodeTargets.length; i++) {
-          conceptCodeEmbeddingsByConceptId.set(
-            conceptCodeTargets[i]!.conceptId,
-            codeEmbeddings[i]!,
-          );
-        }
-        const symbolOffset = conceptCodeTargets.length;
-        const symbolEmbeddingWrites: Array<{
-          symbolId: string;
-          embedding: Float32Array;
-          model: string;
-        }> = [];
-        for (let i = 0; i < symbolContentEntries.length; i++) {
-          const embedding = codeEmbeddings[symbolOffset + i]!;
-          symbolCodeEmbeddingsById.set(symbolContentEntries[i]!.symbolId, embedding);
-          symbolEmbeddingWrites.push({
-            symbolId: symbolContentEntries[i]!.symbolId,
-            embedding,
-            model: codeModel,
-          });
-        }
-        if (symbolEmbeddingWrites.length > 0) {
-          insertSymbolEmbeddingBatch(db, symbolEmbeddingWrites);
-        }
-      }
-    } catch {
-      // Non-fatal: residuals can still fall back to text embeddings/churn.
-    }
-  }
-
-  if (
-    payload.codePath &&
-    symbolContentEntries.length > 0 &&
-    (!codeEmbedder ||
-      residualConceptIds.some((conceptId) => !conceptCodeEmbeddingsByConceptId.has(conceptId)))
-  ) {
-    try {
-      const symbolTextEmbeddings = await embedder.embedBatch(
-        symbolContentEntries.map((entry) => entry.content),
-      );
-      for (let i = 0; i < symbolContentEntries.length; i++) {
-        symbolTextEmbeddingsById.set(symbolContentEntries[i]!.symbolId, symbolTextEmbeddings[i]!);
-      }
-    } catch {
-      // Non-fatal.
-    }
-  }
+  // e_embed via the shared measurement (engine/ground-residual.ts) — the same
+  // code heal uses, so close and heal cannot disagree about groundedness.
+  const groundResidualByConceptId = await measureGroundResiduals(db, {
+    codePath: payload.codePath,
+    targets: residualConceptIds.flatMap((conceptId) => {
+      const pair = residualPairByConceptId.get(conceptId);
+      const content = pair ? contentByChunkId.get(pair.newChunkId) : undefined;
+      if (!pair || !content) return [];
+      return [
+        {
+          conceptId,
+          content,
+          textEmbedding: newEmbeddingsByChunkId.get(pair.newChunkId) ?? null,
+        },
+      ];
+    }),
+    embedder,
+    codeEmbedder,
+    codeModel: config.ai.embedding.code?.model ?? null,
+  });
 
   const residualConceptUpdates: Array<{
     id: string;
@@ -3765,42 +3624,7 @@ export async function runCloseMaintenanceJob(
       }
     }
 
-    let groundResidual: number | null = null;
-    if (payload.codePath) {
-      const symbolLines = symbolLinesByConceptId.get(pair.conceptId) ?? [];
-      const codeGrounding = symbolLines
-        .map((sym) => {
-          const embedding = symbolCodeEmbeddingsById.get(sym.symbol_id);
-          return embedding ? { embedding, confidence: sym.confidence } : null;
-        })
-        .filter((item): item is { embedding: Float32Array; confidence: number } => item != null);
-      const conceptCodeEmbedding = conceptCodeEmbeddingsByConceptId.get(pair.conceptId);
-      if (conceptCodeEmbedding && codeGrounding.length > 0) {
-        groundResidual = cosineDistance(
-          conceptCodeEmbedding,
-          weightedAverageVectors(
-            codeGrounding.map((item) => item.embedding),
-            codeGrounding.map((item) => item.confidence),
-          ),
-        );
-      } else if (newEmb) {
-        const textGrounding = symbolLines
-          .map((sym) => {
-            const embedding = symbolTextEmbeddingsById.get(sym.symbol_id);
-            return embedding ? { embedding, confidence: sym.confidence } : null;
-          })
-          .filter((item): item is { embedding: Float32Array; confidence: number } => item != null);
-        if (textGrounding.length > 0) {
-          groundResidual = cosineDistance(
-            newEmb,
-            weightedAverageVectors(
-              textGrounding.map((item) => item.embedding),
-              textGrounding.map((item) => item.confidence),
-            ),
-          );
-        }
-      }
-    }
+    const groundResidual = groundResidualByConceptId.get(pair.conceptId) ?? null;
     // When e_embed cannot be measured (no code path, no bound symbols, no
     // embeddings) it stays null. Churn — how much the prose moved between
     // versions — is a change rate, not an error estimate, and used to be

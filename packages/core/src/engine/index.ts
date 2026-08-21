@@ -125,7 +125,6 @@ import {
   markNarrativeClosing,
   failNarrativeClose,
   reopenNarrative,
-  getConcept,
   parseLifecycleMessage,
   getLastNarrativeForConcept,
   insertQueryCache,
@@ -178,6 +177,7 @@ import { cosineDistance } from "./residuals.ts";
 import { computeExpectedDebt } from "./measurement.ts";
 import { computeDebtTrend } from "./residuals.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
+import { healConcept, planHealConcept, type HealConceptDeps } from "./heal.ts";
 import { recomputeGraph } from "./graph.ts";
 import {
   computeDebtSnapshot,
@@ -208,7 +208,6 @@ import type { SchemaRepairOptions, SchemaRepairResult } from "@/db/index.ts";
 import {
   buildConceptHealthNeighbors,
   computeConceptHealthSignals,
-  healSignal,
 } from "./concept-health.ts";
 import { ulid } from "ulid";
 import { computeSuggestions } from "./suggest.ts";
@@ -2870,21 +2869,17 @@ export class LoreEngine {
     dry?: boolean;
     workers?: number;
     batchSize?: number;
-    stopLossDelta?: number;
     leaseTtlMs?: number;
     maxRetries?: number;
     runId?: string;
   }): Promise<HealConceptsResult> {
-    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const { name, entry, db } = this.resolveLoreMind(opts?.codePath);
+    const config = this.configFor(entry);
     const dry = opts?.dry ?? false;
     const threshold = Math.max(0, Math.min(1, opts?.threshold ?? 0.6));
     const limit = Math.max(1, opts?.limit ?? 5);
     const workers = Math.max(1, Math.floor(opts?.workers ?? 4));
     const batchSize = Math.max(1, Math.floor(opts?.batchSize ?? 5));
-    const stopLossDelta =
-      opts?.stopLossDelta !== undefined && Number.isFinite(opts.stopLossDelta)
-        ? Math.max(0, opts.stopLossDelta)
-        : 0.1;
     const leaseTtlMs =
       opts?.leaseTtlMs !== undefined && Number.isFinite(opts.leaseTtlMs)
         ? Math.max(1_000, Math.floor(opts.leaseTtlMs))
@@ -2894,127 +2889,100 @@ export class LoreEngine {
         ? Math.max(0, Math.floor(opts.maxRetries))
         : 0;
     const runId = opts?.runId?.trim() ? opts.runId.trim() : `heal-${ulid()}`;
+    const stalenessDays = config.thresholds.staleness_days;
 
-    await this.computeConceptHealth({ codePath: opts?.codePath });
-    const activeConceptById = new Map(
-      getActiveConcepts(db).map((concept) => [concept.id, concept]),
-    );
-    const signals = getCurrentConceptHealthSignals(db)
-      .filter((signal) => signal.final_stale >= threshold)
-      .sort((a, b) => b.final_stale - a.final_stale)
+    // Candidates: concepts whose R(c) is worth acting on, ordered by how much
+    // debt their healing would move — p(c)·R(c). Heal then goes and LOOKS
+    // (engine/heal.ts); it never writes a concept healthier by formula.
+    const concepts = getActiveConcepts(db);
+    const snapshot = await computeDebtSnapshot(entry, db, concepts, getManifest(db), {
+      stalenessDays,
+    });
+    const candidates = concepts
+      .filter((concept) => conceptPressure(concept, snapshot) >= threshold)
+      .sort((a, b) => conceptDebtShare(b, snapshot) - conceptDebtShare(a, snapshot))
       .slice(0, limit);
-    const signalByConceptId = new Map(
-      signals.map((signal) => [signal.concept_id, signal.final_stale]),
-    );
-    type ClaimedLease = NonNullable<ReturnType<typeof claimConceptHealLease>>;
 
     const healed: HealConceptsResult["healed"] = [];
-    const manifest = getManifest(db);
-    const fiedlerValue = manifest?.fiedler_value ?? 0;
-    const preDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
+    const preDebt = snapshot.debt;
     let postDebt = preDebt;
     let retried = 0;
     let batchesProcessed = 0;
-    let haltedAtBatch: number | null = null;
-    let partial = false;
-    let haltReason: string | undefined;
 
-    if (signals.length === 0) {
+    if (candidates.length === 0) {
       return {
         run_id: runId,
         dry,
         considered: 0,
         healed: [],
-        worker_stats: {
-          configured: workers,
-          completed: 0,
-          failed: 0,
-          retried: 0,
-        },
-        batch_stats: {
-          processed: 0,
-          halted_at_batch: null,
-          pre_debt: preDebt,
-          post_debt: postDebt,
-        },
+        worker_stats: { configured: workers, completed: 0, failed: 0, retried: 0 },
+        batch_stats: { processed: 0, halted_at_batch: null, pre_debt: preDebt, post_debt: postDebt },
       };
     }
 
     if (dry) {
-      for (const signal of signals) {
-        const concept = activeConceptById.get(signal.concept_id);
-        if (!concept) continue;
-        const heal = healSignal({ concept, finalStale: signal.final_stale });
+      for (const concept of candidates) {
+        const plan = planHealConcept(db, concept, stalenessDays);
         healed.push({
-          concept: concept.name,
-          from_staleness: heal.from_staleness,
-          to_staleness: heal.to_staleness,
-          from_residual: heal.from_residual,
-          to_residual: heal.to_residual,
+          concept: plan.concept,
+          from_residual: plan.from_residual,
+          to_residual: plan.from_residual,
+          from_staleness: plan.from_staleness,
+          to_staleness: plan.from_staleness,
+          ungrounded_before: plan.ungrounded_before,
+          ungrounded_after: plan.ungrounded_before,
+          bindings_added: 0,
+          bindings_verified: 0,
+          bindings_still_drifted: plan.bindings_still_drifted,
+          e_embed: null,
+          still_drifted_reasons: [],
+          plan: [
+            ...(plan.ungrounded_before ? ["extract bindings (ungrounded)"] : []),
+            ...(plan.bindings_still_drifted > 0
+              ? [`verify ${plan.bindings_still_drifted} drifted binding(s) against current code`]
+              : []),
+            plan.e_embed_measured ? "re-measure e_embed" : "measure e_embed (never measured)",
+          ],
         });
       }
     } else {
+      const deps: HealConceptDeps = {
+        db,
+        config,
+        codePath: entry.code_path ?? null,
+        embedder: await this.embedderFor(config, name),
+        codeEmbedder: await this.codeEmbedderFor(config, name),
+        generator: await this.generatorFor(config, name),
+      };
+
       queueConceptHealLeases(db, {
         lorePath: entry.lore_path,
         runId,
-        conceptIds: signals.map((signal) => signal.concept_id),
+        conceptIds: candidates.map((concept) => concept.id),
       });
+      type ClaimedLease = NonNullable<ReturnType<typeof claimConceptHealLease>>;
 
       const processLease = async (lease: ClaimedLease): Promise<void> => {
         const owner = lease.owner ?? "worker";
-        const finalStale = signalByConceptId.get(lease.concept_id);
-        if (finalStale === undefined) {
-          skipConceptHealLease(db, {
-            lorePath: entry.lore_path,
-            runId,
-            conceptId: lease.concept_id,
-            owner,
-            reason: "missing health signal for concept",
-          });
-          return;
-        }
-
-        const concept = getConcept(db, lease.concept_id);
-        if (!concept || !this.isActiveConcept(concept)) {
-          skipConceptHealLease(db, {
-            lorePath: entry.lore_path,
-            runId,
-            conceptId: lease.concept_id,
-            owner,
-            reason: "concept is no longer active",
-          });
-          return;
-        }
-
-        const heal = healSignal({ concept, finalStale });
-        let mutated = false;
-
         try {
-          insertConceptVersion(db, concept.id, {
-            staleness: heal.to_staleness,
-            residual: heal.to_residual,
-          });
-          mutated = true;
-
-          await this.updateActiveChunkMetadata(db, concept, {
-            fl_staleness: heal.to_staleness,
-            fl_residual: heal.to_residual,
-          });
-
+          const outcome = await healConcept(deps, lease.concept_id);
+          if (!outcome) {
+            skipConceptHealLease(db, {
+              lorePath: entry.lore_path,
+              runId,
+              conceptId: lease.concept_id,
+              owner,
+              reason: "concept is no longer active",
+            });
+            return;
+          }
           completeConceptHealLease(db, {
             lorePath: entry.lore_path,
             runId,
             conceptId: lease.concept_id,
             owner,
           });
-
-          healed.push({
-            concept: concept.name,
-            from_staleness: heal.from_staleness,
-            to_staleness: heal.to_staleness,
-            from_residual: heal.from_residual,
-            to_residual: heal.to_residual,
-          });
+          healed.push({ ...outcome, plan: [] });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const fail = failConceptHealLease(db, {
@@ -3023,7 +2991,7 @@ export class LoreEngine {
             conceptId: lease.concept_id,
             owner,
             error: message,
-            retry: !mutated,
+            retry: true,
             maxRetries,
           });
           if (fail.requeued) retried += 1;
@@ -3044,7 +3012,6 @@ export class LoreEngine {
           if (!lease) break;
           leasedBatch.push(lease);
         }
-
         if (leasedBatch.length === 0) break;
         batchesProcessed += 1;
 
@@ -3059,19 +3026,11 @@ export class LoreEngine {
           }
         });
         await Promise.all(lanes);
-
-        postDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
-        if (postDebt > preDebt + stopLossDelta) {
-          partial = true;
-          haltedAtBatch = batchesProcessed;
-          haltReason =
-            `stop-loss triggered after batch ${batchesProcessed}: ` +
-            `debt increased ${(postDebt - preDebt).toFixed(3)} ` +
-            `(threshold ${stopLossDelta.toFixed(3)})`;
-          break;
-        }
       }
 
+      // No stop-loss: heal measures, and a measurement that raises debt has
+      // found debt that was already there. Halting on it would be the silent-
+      // evidence failure the spec forbids.
       postDebt = computeExpectedDebt(db, getActiveConcepts(db)).debt ?? 0;
       upsertManifest(db, {
         debt: postDebt,
@@ -3082,15 +3041,12 @@ export class LoreEngine {
 
     const leaseCounts = dry
       ? null
-      : getConceptHealLeaseStatusCounts(db, {
-          lorePath: entry.lore_path,
-          runId,
-        });
+      : getConceptHealLeaseStatusCounts(db, { lorePath: entry.lore_path, runId });
 
-    const result: HealConceptsResult = {
+    return {
       run_id: runId,
       dry,
-      considered: signals.length,
+      considered: candidates.length,
       healed,
       worker_stats: {
         configured: workers,
@@ -3099,21 +3055,12 @@ export class LoreEngine {
         retried,
       },
       batch_stats: {
-        processed: dry
-          ? signals.length === 0
-            ? 0
-            : Math.ceil(signals.length / batchSize)
-          : batchesProcessed,
-        halted_at_batch: haltedAtBatch,
+        processed: dry ? Math.ceil(candidates.length / batchSize) : batchesProcessed,
+        halted_at_batch: null,
         pre_debt: preDebt,
         post_debt: postDebt,
       },
     };
-
-    if (partial) result.partial = true;
-    if (haltReason) result.halt_reason = haltReason;
-
-    return result;
   }
 
   // ─── CLI-Only Operations ──────────────────────────────

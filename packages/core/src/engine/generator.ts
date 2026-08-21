@@ -544,6 +544,56 @@ Example: ["What invariant did X enforce that no longer holds?", "Why was Y remov
     }
   }
 
+  /**
+   * Heal's evidence step: does the concept's prose still hold after a bound
+   * symbol changed? A "yes" re-verifies the binding (the prose was checked
+   * against the new code); a "no" leaves it drifted and says why, so the
+   * reader knows a narrative is needed. Errors are a "no" — an unverified
+   * binding must never be re-verified by exception.
+   */
+  async verifyBindingStillAccurate(input: {
+    conceptName: string;
+    prose: string;
+    symbolName: string;
+    oldBody: string | null;
+    newBody: string;
+  }): Promise<{ accurate: boolean; reason: string }> {
+    const system = `You audit whether a concept's prose is still an accurate description of a code symbol after that symbol changed.
+Answer ONLY with a JSON object: {"accurate": true|false, "reason": "<one sentence>"}.
+"accurate" is true only if nothing the prose claims about this symbol is contradicted or made misleading by the NEW body.
+Cosmetic or unrelated changes (renames the prose does not mention, formatting, comments, internal refactors with the same behavior) keep the prose accurate.
+Changed behavior, signatures, invariants, or responsibilities that the prose describes make it inaccurate.
+When unsure, answer false.`;
+    const parts = [
+      `Concept: ${input.conceptName}`,
+      `Symbol: ${input.symbolName}`,
+      "",
+      "PROSE:",
+      input.prose.slice(0, 4000),
+      "",
+      input.oldBody != null ? `OLD BODY:
+${input.oldBody.slice(0, 2500)}` : "OLD BODY: (not recorded)",
+      "",
+      `NEW BODY:
+${input.newBody.slice(0, 2500)}`,
+    ];
+    try {
+      const raw = await this.generate(system, parts.join("\n"), { scope: "verify_binding" });
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { accurate: false, reason: "verifier returned no JSON" };
+      const parsed = JSON.parse(match[0]) as { accurate?: unknown; reason?: unknown };
+      return {
+        accurate: parsed.accurate === true,
+        reason: typeof parsed.reason === "string" ? parsed.reason : "",
+      };
+    } catch (error) {
+      return {
+        accurate: false,
+        reason: `verifier failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   async generateIntegration(
     journalEntries: string[],
     existingState: string[],

@@ -52,7 +52,8 @@ export type GenerationReasoningScope =
   | "propose_split"
   | "three_way_merge"
   | "generate_integration"
-  | "executive_summary";
+  | "executive_summary"
+  | "verify_binding";
 
 // ─── Frontmatter ──────────────────────────────────────────
 export interface StateChunkFrontmatter {
@@ -1082,12 +1083,24 @@ export interface HealConceptsResult {
   run_id: string;
   dry: boolean;
   considered: number;
+  /** One entry per healed concept. Values are R(c) and σ(c) measured before and after. */
   healed: Array<{
     concept: string;
-    from_staleness: number;
-    to_staleness: number;
     from_residual: number;
     to_residual: number;
+    from_staleness: number;
+    to_staleness: number;
+    ungrounded_before: boolean;
+    ungrounded_after: boolean;
+    bindings_added: number;
+    bindings_verified: number;
+    bindings_still_drifted: number;
+    /** e_embed after re-measurement; null when it could not be measured. */
+    e_embed: number | null;
+    /** Per rejected drifted binding: "symbol: reason" — the cue to open a narrative. */
+    still_drifted_reasons: string[];
+    /** Dry run only: the evidence steps heal would take. */
+    plan: string[];
   }>;
   partial?: boolean;
   halt_reason?: string;
