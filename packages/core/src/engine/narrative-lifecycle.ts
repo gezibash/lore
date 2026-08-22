@@ -85,11 +85,7 @@ import { webSearch } from "./web-search.ts";
 import { cosineDistance, averageVectors } from "./residuals.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
-import {
-  computeDebtTrend,
-  recordResiduals,
-  computeStaleness,
-} from "./residuals.ts";
+import { computeDebtTrend, recordResiduals, computeStaleness } from "./residuals.ts";
 import { loadSymbolLinesByConceptIds, measureGroundResiduals } from "./ground-residual.ts";
 import {
   computeExpectedDebt,
@@ -383,9 +379,7 @@ export async function openNarrative(
   if (dangling.length > 0 && !resolveDangling) {
     const described = dangling.map((d) => ({
       name: d.name,
-      age_days: Math.floor(
-        (Date.now() - new Date(d.opened_at).getTime()) / (24 * 60 * 60 * 1000),
-      ),
+      age_days: Math.floor((Date.now() - new Date(d.opened_at).getTime()) / (24 * 60 * 60 * 1000)),
     }));
     // Name them and state the remedy in the message: details ride on the error
     // object but no surface renders them, so the bare "dangling detected" left
@@ -543,7 +537,6 @@ function inferStatusHeuristic(text: string): "finding" | "dead-end" | "confirmed
   return "finding";
 }
 
-
 export interface LogEntryOpts {
   topics?: string[];
   codePath?: string;
@@ -637,31 +630,40 @@ export async function logEntry(
     refs: refs && refs.length > 0 ? refs : null,
   });
 
-  // Insert into DB
-  insertChunk(db, {
-    id,
-    filePath,
-    flType: "journal",
-    narrativeId: narrative.id,
-    status,
-    topics: effectiveTopics,
-    convergence: null,
-    theta: null,
-    magnitude: null,
-    createdAt: new Date().toISOString(),
-    conceptDesignations,
-    conceptRefs: resolvedConceptIds.length > 0 ? resolvedConceptIds : null,
-    symbolRefs: resolvedSymbolIds.length > 0 ? resolvedSymbolIds : null,
-    fileRefs: refs && refs.length > 0 ? refs : null,
-  });
+  // One transaction: the chunk row, its FTS entry and the narrative's entry
+  // count move together. The file write above is not covered — on rollback an
+  // orphan journal file may remain, but the DB (authoritative) stays whole.
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    insertChunk(db, {
+      id,
+      filePath,
+      flType: "journal",
+      narrativeId: narrative.id,
+      status,
+      topics: effectiveTopics,
+      convergence: null,
+      theta: null,
+      magnitude: null,
+      createdAt: new Date().toISOString(),
+      conceptDesignations,
+      conceptRefs: resolvedConceptIds.length > 0 ? resolvedConceptIds : null,
+      symbolRefs: resolvedSymbolIds.length > 0 ? resolvedSymbolIds : null,
+      fileRefs: refs && refs.length > 0 ? refs : null,
+    });
 
-  // FTS indexed now so query() can find via BM25; embedding added at close time
-  insertFtsContent(db, text, id);
+    // FTS indexed now so query() can find via BM25; embedding added at close time
+    insertFtsContent(db, text, id);
 
-  // Update narrative entry count
-  updateNarrativeMetrics(db, narrative.id, {
-    entry_count: narrative.entry_count + 1,
-  });
+    // Update narrative entry count
+    updateNarrativeMetrics(db, narrative.id, {
+      entry_count: narrative.entry_count + 1,
+    });
+    db.run("COMMIT");
+  } catch (error) {
+    db.run("ROLLBACK");
+    throw error;
+  }
 
   // Generate note
   const notes: string[] = [];
@@ -1267,7 +1269,6 @@ export async function queryConcepts(
     rerankedResults = deduped;
   }
 
-
   // Build concept ID→name map for relation resolution
   const finalChunkMap = batchLoadChunksByIds(
     db,
@@ -1522,7 +1523,10 @@ export async function queryConcepts(
     for (const item of summaryInput) {
       const row = finalChunkMap.get(item.chunkId);
       if (row?.fl_type === "source" && row.source_file_path) {
-        selectedSourceFiles.set(row.source_file_path, (selectedSourceFiles.get(row.source_file_path) ?? 0) + 1);
+        selectedSourceFiles.set(
+          row.source_file_path,
+          (selectedSourceFiles.get(row.source_file_path) ?? 0) + 1,
+        );
       }
     }
     if (selectedSourceFiles.size > 0) {
@@ -1701,10 +1705,7 @@ export async function queryConcepts(
         .filter((conceptId): conceptId is string => conceptId != null),
     ),
   ];
-  const summarySymbolLinesByConceptId = loadSymbolLinesByConceptIds(
-    db,
-    summaryInputConceptIds,
-  );
+  const summarySymbolLinesByConceptId = loadSymbolLinesByConceptIds(db, summaryInputConceptIds);
   const groundingMatches = summaryInput.map((result) => {
     const chunk = finalChunkMap.get(result.chunkId);
     const concept = chunk?.concept_id ? finalConceptMap.get(chunk.concept_id) : null;
@@ -2756,9 +2757,7 @@ ${context}`;
 const DOC_EVIDENCE_HEADER = /^\[Doc: ([^\]>]+?)(?: > [^\]]*)?\]/;
 
 /** File(:line) provenance carried by a source or doc chunk's own content header. */
-export function parseEvidenceProvenance(
-  content: string,
-): { file: string; line: number } | null {
+export function parseEvidenceProvenance(content: string): { file: string; line: number } | null {
   const source = SOURCE_EVIDENCE_HEADER.exec(content);
   if (source) return { file: source[1]!, line: Number(source[2]) };
   const doc = DOC_EVIDENCE_HEADER.exec(content);
@@ -2811,7 +2810,11 @@ function keepRelevantWindow(content: string, maxChars: number, query?: string): 
   const windowLines = Math.max(20, Math.floor(maxChars / avgLineLen));
   let best = 0;
   let bestScore = -1;
-  for (let start = 0; start + 1 <= lines.length; start += Math.max(1, Math.floor(windowLines / 4))) {
+  for (
+    let start = 0;
+    start + 1 <= lines.length;
+    start += Math.max(1, Math.floor(windowLines / 4))
+  ) {
     let score = 0;
     for (let i = start; i < Math.min(start + windowLines, lines.length); i++) score += scores[i]!;
     if (score > bestScore) {

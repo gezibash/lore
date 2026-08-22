@@ -128,7 +128,10 @@ export function snapshotCurrentTree(db: Database, message: string) {
   return commit;
 }
 
-export function updateManifestForLifecycle(db: Database, debtBefore: number): { debtAfter: number } {
+export function updateManifestForLifecycle(
+  db: Database,
+  debtBefore: number,
+): { debtAfter: number } {
   const concepts = getActiveConcepts(db);
   const debtAfter = computeExpectedDebt(db, concepts).debt ?? 0;
   upsertManifest(db, {
@@ -186,6 +189,20 @@ export async function appendStateChunkForConcept(
     }
   }
 
+  // Embed before any state moves. The embedding call is network I/O; it must
+  // not sit between the dependent DB writes below, or a failure mid-sequence
+  // leaves chunks, FTS and concept versions disagreeing about what exists.
+  const embedding = await embedder.embed(content);
+
+  let residual = 0;
+  if (supersedesId) {
+    const oldEmb = getEmbeddingForChunk(db, supersedesId);
+    if (oldEmb) {
+      const oldVec = new Float32Array(oldEmb.embedding.buffer);
+      residual = cosineDistance(oldVec, embedding);
+    }
+  }
+
   const { id, filePath } = await writeStateChunk({
     lorePath,
     concept: concept.name,
@@ -196,58 +213,64 @@ export async function appendStateChunkForConcept(
     content,
   });
 
+  // One transaction for every dependent write: the new chunk row, its FTS
+  // entry, its embedding and the concept version that points at it exist
+  // together or not at all.
+  db.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    insertChunk(db, {
+      id,
+      filePath,
+      flType: "chunk",
+      conceptId: concept.id,
+      narrativeId: null,
+      supersedesId: supersedesId ?? null,
+      createdAt: new Date().toISOString(),
+    });
+    insertFtsContent(db, content, id);
+    insertEmbedding(db, id, embedding, embeddingModel);
+
+    insertConceptVersion(db, concept.id, {
+      active_chunk_id: id,
+      residual,
+      staleness: 0,
+      lifecycle_status: "active",
+      archived_at: null,
+      lifecycle_reason: null,
+      merged_into_concept_id: null,
+    });
+    db.run("COMMIT");
+  } catch (error) {
+    db.run("ROLLBACK");
+    throw error;
+  }
+
+  // File mirrors happen after commit and are best-effort: the DB row is
+  // authoritative, so a crash here leaves stale metadata on disk, never a
+  // half-applied state change. markSuperseded after commit means a rollback
+  // can no longer leave the old chunk marked superseded in the file while
+  // the DB still considers it active.
   if (supersedesId) {
     const oldChunk = getChunk(db, supersedesId);
     if (oldChunk) {
       await markSuperseded(oldChunk.file_path, id);
     }
   }
-
-  insertChunk(db, {
-    id,
-    filePath,
-    flType: "chunk",
-    conceptId: concept.id,
-    narrativeId: null,
-    supersedesId: supersedesId ?? null,
-    createdAt: new Date().toISOString(),
-  });
-  insertFtsContent(db, content, id);
-
-  const embedding = await embedder.embed(content);
-  insertEmbedding(db, id, embedding, embeddingModel);
   await writeEmbeddingFile(embeddingFilePath(filePath), embeddingModel, embedding);
-
-  const embeddedAt = new Date().toISOString();
-  let residual = 0;
-  if (supersedesId) {
-    const oldEmb = getEmbeddingForChunk(db, supersedesId);
-    if (oldEmb) {
-      const oldVec = new Float32Array(oldEmb.embedding.buffer);
-      residual = cosineDistance(oldVec, embedding);
-    }
+  try {
+    await updateChunkFrontmatter(filePath, {
+      fl_embedding_model: embeddingModel,
+      fl_embedded_at: new Date().toISOString(),
+      fl_residual: residual,
+      fl_staleness: 0,
+      fl_lifecycle_status: "active",
+      fl_archived_at: null,
+      fl_lifecycle_reason: null,
+      fl_merged_into_concept_id: null,
+    });
+  } catch {
+    // Frontmatter mirror is advisory only.
   }
-
-  await updateChunkFrontmatter(filePath, {
-    fl_embedding_model: embeddingModel,
-    fl_embedded_at: embeddedAt,
-    fl_residual: residual,
-    fl_staleness: 0,
-    fl_lifecycle_status: "active",
-    fl_archived_at: null,
-    fl_lifecycle_reason: null,
-    fl_merged_into_concept_id: null,
-  });
-
-  insertConceptVersion(db, concept.id, {
-    active_chunk_id: id,
-    residual,
-    staleness: 0,
-    lifecycle_status: "active",
-    archived_at: null,
-    lifecycle_reason: null,
-    merged_into_concept_id: null,
-  });
 
   return { chunkId: id, residual };
 }
@@ -432,10 +455,7 @@ export async function mergeConcept(
   });
 
   await discoverConcepts(db, await deps.getGenerator());
-  const commit = snapshotCurrentTree(
-    db,
-    `lifecycle: merge ${source.name} -> ${target.name}`,
-  );
+  const commit = snapshotCurrentTree(db, `lifecycle: merge ${source.name} -> ${target.name}`);
   updateManifestForLifecycle(db, debtBefore);
 
   return {
@@ -455,7 +475,9 @@ export async function splitConcept(
   const source = resolveConceptByNameCi(db, name, { activeOnly: true });
   const parts = Math.max(2, opts?.parts ?? 2);
   const sourceContent = await readConceptContent(db, source);
-  const proposals = await (await deps.getGenerator()).proposeSplit(source.name, sourceContent, parts);
+  const proposals = await (
+    await deps.getGenerator()
+  ).proposeSplit(source.name, sourceContent, parts);
 
   const uniqueProposalNames = new Set<string>();
   for (const proposal of proposals) {
@@ -547,9 +569,7 @@ export async function patchConcept(
     newContent = text.trim();
   } else {
     const topicsSuffix =
-      opts?.topics && opts.topics.length > 0
-        ? `\n\nRelated topics: ${opts.topics.join(", ")}`
-        : "";
+      opts?.topics && opts.topics.length > 0 ? `\n\nRelated topics: ${opts.topics.join(", ")}` : "";
     newContent = await (
       await deps.getGenerator()
     ).generateIntegration(
