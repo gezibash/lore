@@ -28,7 +28,6 @@ import {
   type ReasoningLevel,
   type WebSearchResult,
   type TreeDiff,
-  type CommitRow,
   type CommitLogEntry,
   type RelationType,
   type ConceptHealthComputeResult,
@@ -66,28 +65,16 @@ import {
   getPreviousConceptMetrics,
   getConcepts,
   getActiveConceptByName,
-  getConceptsByNameCaseInsensitive,
-  isConceptNameTaken,
-  insertConceptVersion,
-  insertConcept,
-  getActiveConceptCount,
   getChunksForConcept,
   getChunk,
-  insertChunk,
-  getChunkCount,
   getNarrative,
   getEmbeddingForChunk,
-  insertEmbedding,
   getJournalChunksForNarrative,
   updateJournalChunkRouting,
   getAllNarratives,
   rebuildFromDisk,
-  insertFtsContent,
   repairSchema,
   walkHistory,
-  getHeadCommit,
-  insertCommit,
-  insertCommitTree,
   resolveRef,
   diffCommitTrees,
   getCommitTreeAsMap,
@@ -144,14 +131,7 @@ import {
   getProviderConfig,
   updateProviderConfig,
 } from "@/storage/registry.ts";
-import {
-  ensureDir,
-  writeStateChunk,
-  markSuperseded,
-  updateChunkFrontmatter,
-  writeEmbeddingFile,
-  embeddingFilePath,
-} from "@/storage/index.ts";
+import { ensureDir, updateChunkFrontmatter } from "@/storage/index.ts";
 import { readChunk } from "@/storage/chunk-reader.ts";
 import { rmSync } from "fs";
 import { GENERATION_PROMPT_KEYS, type GenerationPromptKey } from "@/config/prompts.ts";
@@ -168,7 +148,6 @@ import {
   closeNarrativeOp,
   runCloseMaintenanceJob,
   discardNarrative,
-  createGenesisCommit,
 } from "./narrative-lifecycle.ts";
 import type { CloseMaintenancePayload } from "./narrative-lifecycle.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
@@ -176,8 +155,19 @@ import { resolveJournalConceptDesignations } from "./journal-routing.ts";
 import { cosineDistance } from "./residuals.ts";
 import { computeExpectedDebt } from "./measurement.ts";
 import { computeDebtTrend } from "./residuals.ts";
-import { discoverConcepts } from "./concept-discovery.ts";
 import { healConcept, planHealConcept, type HealConceptDeps } from "./heal.ts";
+import {
+  applyLifecycleTarget,
+  archiveConcept,
+  mergeConcept,
+  patchConcept,
+  renameConcept,
+  resolveConceptByNameCi,
+  restoreConcept,
+  splitConcept,
+  type LifecycleDeps,
+  type LifecycleResult,
+} from "./concept-lifecycle.ts";
 import { recomputeGraph } from "./graph.ts";
 import {
   computeDebtSnapshot,
@@ -250,20 +240,6 @@ import {
   getLastDocIndexedAt,
   getJournalEntryCount,
 } from "@/db/chunks.ts";
-
-interface LifecycleResult {
-  action: "rename" | "archive" | "restore" | "merge" | "split" | "patch";
-  commit_id: string | null;
-  summary: string;
-  affected: string[];
-  preview?: boolean;
-  proposal?: {
-    source?: string;
-    target?: string;
-    merged_content?: string;
-    splits?: Array<{ name: string; content: string }>;
-  };
-}
 
 interface CloseJobPayload {
   mergeStrategy?: MergeStrategy;
@@ -1144,187 +1120,26 @@ export class LoreEngine {
     );
   }
 
+  private lifecycleDeps(entry: RegistryEntry, db: Database, config: LoreConfig): LifecycleDeps {
+    const loreName = this.loreNameFor(entry);
+    return {
+      db,
+      lorePath: entry.lore_path,
+      embeddingModel: config.ai.embedding.model,
+      getEmbedder: () => this.embedderFor(config, loreName),
+      getGenerator: () => this.generatorFor(config, loreName),
+    };
+  }
+
   private buildLifecycleTargetHandler(
     entry: RegistryEntry,
     db: Database,
     config: LoreConfig,
-    embedder: Embedder,
-    generator: Generator,
   ): (target: NarrativeTarget) => Promise<void> {
+    const deps = this.lifecycleDeps(entry, db, config);
     return async (target: NarrativeTarget): Promise<void> => {
-      const debtBefore = getManifest(db)?.debt ?? 0;
-      switch (target.op) {
-        case "rename": {
-          const concept = this.resolveConceptByNameCi(db, target.from, { activeOnly: true });
-          this.assertConceptNameAvailable(db, target.to, { excludeId: concept.id });
-          insertConceptVersion(db, concept.id, { name: target.to });
-          await this.updateActiveChunkMetadata(db, concept, { fl_concept: target.to });
-          this.snapshotCurrentTree(db, `lifecycle: rename ${concept.name} -> ${target.to}`);
-          this.updateManifestForLifecycle(db, debtBefore);
-          break;
-        }
-        case "archive": {
-          const concept = this.resolveConceptByNameCi(db, target.concept, { activeOnly: true });
-          const now = new Date().toISOString();
-          insertConceptVersion(db, concept.id, {
-            active_chunk_id: null,
-            lifecycle_status: "archived",
-            archived_at: now,
-            lifecycle_reason: target.reason ?? "archived",
-            merged_into_concept_id: null,
-          });
-          await this.updateActiveChunkMetadata(db, concept, {
-            fl_lifecycle_status: "archived",
-            fl_archived_at: now,
-            fl_lifecycle_reason: target.reason ?? "archived",
-            fl_merged_into_concept_id: null,
-          });
-          this.snapshotCurrentTree(db, `lifecycle: archive ${concept.name}`);
-          this.updateManifestForLifecycle(db, debtBefore);
-          break;
-        }
-        case "restore": {
-          const concept = this.resolveConceptByNameCi(db, target.concept);
-          if (this.isActiveConcept(concept)) {
-            throw new LoreError(
-              "CONCEPT_INVALID_STATE",
-              `Concept '${concept.name}' is already active`,
-            );
-          }
-          this.assertConceptNameAvailable(db, concept.name, { excludeId: concept.id });
-          const latestChunk = db
-            .query<{ id: string }, [string]>(
-              `SELECT id FROM chunks WHERE concept_id = ? AND fl_type = 'chunk' ORDER BY created_at DESC LIMIT 1`,
-            )
-            .get(concept.id);
-          if (!latestChunk?.id) {
-            throw new LoreError(
-              "CONCEPT_INVALID_STATE",
-              `Concept '${concept.name}' has no state chunks to restore`,
-            );
-          }
-          insertConceptVersion(db, concept.id, {
-            active_chunk_id: latestChunk.id,
-            lifecycle_status: "active",
-            archived_at: null,
-            lifecycle_reason: null,
-            merged_into_concept_id: null,
-          });
-          const restoredChunk = getChunk(db, latestChunk.id);
-          if (restoredChunk) {
-            await updateChunkFrontmatter(restoredChunk.file_path, {
-              fl_lifecycle_status: "active",
-              fl_archived_at: null,
-              fl_lifecycle_reason: null,
-              fl_merged_into_concept_id: null,
-            });
-          }
-          await discoverConcepts(db, generator);
-          this.snapshotCurrentTree(db, `lifecycle: restore ${concept.name}`);
-          this.updateManifestForLifecycle(db, debtBefore);
-          break;
-        }
-        case "merge": {
-          const source = this.resolveConceptByNameCi(db, target.source, { activeOnly: true });
-          const mergeTarget = this.resolveConceptByNameCi(db, target.into, { activeOnly: true });
-          if (source.id === mergeTarget.id) {
-            throw new LoreError(
-              "CONCEPT_INVALID_STATE",
-              "Source and target must be different concepts",
-            );
-          }
-          const sourceContent = await this.readConceptContent(db, source);
-          const targetContent = await this.readConceptContent(db, mergeTarget);
-          const mergedContent = await generator.generateIntegration(
-            [
-              `Merge findings from concept "${source.name}" into "${mergeTarget.name}".\n\n${sourceContent}`,
-            ],
-            targetContent ? [targetContent] : [],
-            mergeTarget.name,
-          );
-          await this.appendStateChunkForConcept(
-            db,
-            entry.lore_path,
-            mergeTarget,
-            mergedContent,
-            `lifecycle-merge:${source.name}`,
-            embedder,
-            config.ai.embedding.model,
-            { supersedesId: mergeTarget.active_chunk_id },
-          );
-          const now = new Date().toISOString();
-          insertConceptVersion(db, source.id, {
-            active_chunk_id: null,
-            lifecycle_status: "merged",
-            archived_at: now,
-            lifecycle_reason: target.reason ?? `merged into ${mergeTarget.name}`,
-            merged_into_concept_id: mergeTarget.id,
-          });
-          await this.updateActiveChunkMetadata(db, source, {
-            fl_lifecycle_status: "merged",
-            fl_archived_at: now,
-            fl_lifecycle_reason: target.reason ?? `merged into ${mergeTarget.name}`,
-            fl_merged_into_concept_id: mergeTarget.id,
-          });
-          await discoverConcepts(db, generator);
-          this.snapshotCurrentTree(db, `lifecycle: merge ${source.name} -> ${mergeTarget.name}`);
-          this.updateManifestForLifecycle(db, debtBefore);
-          break;
-        }
-        case "split": {
-          const source = this.resolveConceptByNameCi(db, target.concept, { activeOnly: true });
-          const parts = Math.max(2, target.parts ?? 2);
-          const sourceContent = await this.readConceptContent(db, source);
-          const proposals = await generator.proposeSplit(source.name, sourceContent, parts);
-          const uniqueProposalNames = new Set<string>();
-          for (const proposal of proposals) {
-            if (uniqueProposalNames.has(proposal.name.toLowerCase())) {
-              throw new LoreError(
-                "CONCEPT_NAME_CONFLICT",
-                `Split generated duplicate concept name '${proposal.name}'`,
-              );
-            }
-            uniqueProposalNames.add(proposal.name.toLowerCase());
-            this.assertConceptNameAvailable(db, proposal.name);
-          }
-          const created: string[] = [];
-          for (const proposal of proposals) {
-            const newConcept = insertConcept(db, proposal.name);
-            await this.appendStateChunkForConcept(
-              db,
-              entry.lore_path,
-              newConcept,
-              proposal.content,
-              `lifecycle-split:${source.name}`,
-              embedder,
-              config.ai.embedding.model,
-              { supersedesId: null },
-            );
-            created.push(proposal.name);
-          }
-          const now = new Date().toISOString();
-          insertConceptVersion(db, source.id, {
-            active_chunk_id: null,
-            lifecycle_status: "archived",
-            archived_at: now,
-            lifecycle_reason: `split into ${created.join(", ")}`,
-            merged_into_concept_id: null,
-          });
-          await this.updateActiveChunkMetadata(db, source, {
-            fl_lifecycle_status: "archived",
-            fl_archived_at: now,
-            fl_lifecycle_reason: `split into ${created.join(", ")}`,
-            fl_merged_into_concept_id: null,
-          });
-          await discoverConcepts(db, generator);
-          this.snapshotCurrentTree(
-            db,
-            `lifecycle: split ${source.name} -> ${created.length} concepts`,
-          );
-          this.updateManifestForLifecycle(db, debtBefore);
-          break;
-        }
-      }
+      // Result discarded — the close job reports via its own CloseResult.
+      await applyLifecycleTarget(deps, target);
     };
   }
 
@@ -1357,13 +1172,7 @@ export class LoreEngine {
         generator,
         entry.code_path,
         {
-          lifecycleTargetHandler: this.buildLifecycleTargetHandler(
-            entry,
-            db,
-            config,
-            embedder,
-            generator,
-          ),
+          lifecycleTargetHandler: this.buildLifecycleTargetHandler(entry, db, config),
           mergeStrategy: payload.mergeStrategy,
           codeEmbedder,
         },
@@ -2175,297 +1984,26 @@ export class LoreEngine {
     }
   }
 
-  private isActiveConcept(concept: ConceptRow): boolean {
-    return concept.lifecycle_status == null || concept.lifecycle_status === "active";
-  }
-
-  private resolveConceptByNameCi(
-    db: Database,
-    name: string,
-    opts?: { activeOnly?: boolean },
-  ): ConceptRow {
-    const matches = getConceptsByNameCaseInsensitive(db, name);
-    if (matches.length === 0) {
-      throw new LoreError("CONCEPT_NOT_FOUND", `Concept '${name}' not found`);
-    }
-
-    const exact = matches.filter((m) => m.name === name);
-    const concept = exact.length === 1 ? exact[0]! : matches.length === 1 ? matches[0]! : null;
-    if (!concept) {
-      throw new LoreError("CONCEPT_NAME_CONFLICT", `Concept name '${name}' is ambiguous`);
-    }
-
-    if (opts?.activeOnly && !this.isActiveConcept(concept)) {
-      throw new LoreError("CONCEPT_INVALID_STATE", `Concept '${concept.name}' is not active`);
-    }
-
-    return concept;
-  }
-
-  private assertConceptNameAvailable(
-    db: Database,
-    name: string,
-    opts?: { excludeId?: string },
-  ): void {
-    if (!isConceptNameTaken(db, name, { excludeId: opts?.excludeId })) return;
-    throw new LoreError("CONCEPT_NAME_CONFLICT", `Concept name '${name}' already exists`);
-  }
-
-  private ensureHeadCommit(db: Database): CommitRow {
-    let head = getHeadCommit(db);
-    if (!head) {
-      head = createGenesisCommit(db);
-    }
-    return head;
-  }
-
-  private snapshotCurrentTree(db: Database, message: string): CommitRow {
-    const head = this.ensureHeadCommit(db);
-    const activeConcepts = getActiveConcepts(db);
-    const treeEntries = activeConcepts
-      .filter((c) => c.active_chunk_id)
-      .map((c) => ({ conceptId: c.id, chunkId: c.active_chunk_id!, conceptName: c.name }));
-    const commit = insertCommit(db, null, head.id, null, message);
-    insertCommitTree(db, commit.id, treeEntries);
-    return commit;
-  }
-
-  private updateManifestForLifecycle(db: Database, debtBefore: number): { debtAfter: number } {
-    const manifest = getManifest(db);
-    const fiedlerValue = manifest?.fiedler_value ?? 0;
-    const concepts = getActiveConcepts(db);
-    const debtAfter = computeExpectedDebt(db, concepts).debt ?? 0;
-    upsertManifest(db, {
-      chunk_count: getChunkCount(db),
-      concept_count: getActiveConceptCount(db),
-      debt: debtAfter,
-      debt_trend: computeDebtTrend(debtAfter, debtBefore),
-      last_integrated: new Date().toISOString(),
-    });
-    return { debtAfter };
-  }
-
-  private async updateActiveChunkMetadata(
-    db: Database,
-    concept: ConceptRow,
-    updates: Record<string, unknown>,
-  ): Promise<void> {
-    if (!concept.active_chunk_id) return;
-    const chunk = getChunk(db, concept.active_chunk_id);
-    if (!chunk) return;
-    await updateChunkFrontmatter(chunk.file_path, updates);
-  }
-
-  private async readConceptContent(db: Database, concept: ConceptRow): Promise<string> {
-    if (!concept.active_chunk_id) return "";
-    const chunk = getChunk(db, concept.active_chunk_id);
-    if (!chunk) return "";
-    const parsed = await readChunk(chunk.file_path);
-    return parsed.content;
-  }
-
-  private async appendStateChunkForConcept(
-    db: Database,
-    lorePath: string,
-    concept: ConceptRow,
-    content: string,
-    narrativeOrigin: string,
-    embedder: Embedder,
-    embeddingModel: string,
-    opts?: { supersedesId?: string | null },
-  ): Promise<{ chunkId: string; residual: number }> {
-    const supersedesId =
-      opts?.supersedesId !== undefined ? opts.supersedesId : concept.active_chunk_id;
-
-    let nextVersion = 1;
-    if (supersedesId) {
-      const currentChunk = getChunk(db, supersedesId);
-      if (currentChunk) {
-        const parsed = await readChunk(currentChunk.file_path);
-        const currentVersion =
-          "fl_version" in parsed.frontmatter
-            ? ((parsed.frontmatter as { fl_version: number }).fl_version ?? 0)
-            : 0;
-        nextVersion = currentVersion + 1;
-      }
-    }
-
-    const { id, filePath } = await writeStateChunk({
-      lorePath,
-      concept: concept.name,
-      conceptId: concept.id,
-      narrativeOrigin,
-      version: nextVersion,
-      supersedes: supersedesId ?? null,
-      content,
-    });
-
-    if (supersedesId) {
-      const oldChunk = getChunk(db, supersedesId);
-      if (oldChunk) {
-        await markSuperseded(oldChunk.file_path, id);
-      }
-    }
-
-    insertChunk(db, {
-      id,
-      filePath,
-      flType: "chunk",
-      conceptId: concept.id,
-      narrativeId: null,
-      supersedesId: supersedesId ?? null,
-      createdAt: new Date().toISOString(),
-    });
-    insertFtsContent(db, content, id);
-
-    const embedding = await embedder.embed(content);
-    insertEmbedding(db, id, embedding, embeddingModel);
-    await writeEmbeddingFile(embeddingFilePath(filePath), embeddingModel, embedding);
-
-    const embeddedAt = new Date().toISOString();
-    let residual = 0;
-    if (supersedesId) {
-      const oldEmb = getEmbeddingForChunk(db, supersedesId);
-      if (oldEmb) {
-        const oldVec = new Float32Array(oldEmb.embedding.buffer);
-        residual = cosineDistance(oldVec, embedding);
-      }
-    }
-
-    await updateChunkFrontmatter(filePath, {
-      fl_embedding_model: embeddingModel,
-      fl_embedded_at: embeddedAt,
-      fl_residual: residual,
-      fl_staleness: 0,
-      fl_lifecycle_status: "active",
-      fl_archived_at: null,
-      fl_lifecycle_reason: null,
-      fl_merged_into_concept_id: null,
-    });
-
-    insertConceptVersion(db, concept.id, {
-      active_chunk_id: id,
-      residual,
-      staleness: 0,
-      lifecycle_status: "active",
-      archived_at: null,
-      lifecycle_reason: null,
-      merged_into_concept_id: null,
-    });
-
-    return { chunkId: id, residual };
-  }
-
   async conceptRename(
     from: string,
     to: string,
     opts?: { codePath?: string },
   ): Promise<LifecycleResult> {
-    const { db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, from, { activeOnly: true });
-    this.assertConceptNameAvailable(db, to, { excludeId: concept.id });
-    const debtBefore = getManifest(db)?.debt ?? 0;
-
-    insertConceptVersion(db, concept.id, { name: to });
-    await this.updateActiveChunkMetadata(db, concept, { fl_concept: to });
-
-    const commit = this.snapshotCurrentTree(db, `lifecycle: rename ${concept.name} -> ${to}`);
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "rename",
-      commit_id: commit.id,
-      summary: `Renamed concept '${concept.name}' to '${to}'.`,
-      affected: [concept.name, to],
-    };
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    return renameConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), from, to);
   }
 
   async conceptArchive(
     name: string,
     opts?: { codePath?: string; reason?: string },
   ): Promise<LifecycleResult> {
-    const { db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, name, { activeOnly: true });
-    const debtBefore = getManifest(db)?.debt ?? 0;
-    const now = new Date().toISOString();
-
-    insertConceptVersion(db, concept.id, {
-      active_chunk_id: null,
-      lifecycle_status: "archived",
-      archived_at: now,
-      lifecycle_reason: opts?.reason ?? "archived",
-      merged_into_concept_id: null,
-    });
-    await this.updateActiveChunkMetadata(db, concept, {
-      fl_lifecycle_status: "archived",
-      fl_archived_at: now,
-      fl_lifecycle_reason: opts?.reason ?? "archived",
-      fl_merged_into_concept_id: null,
-    });
-
-    const commit = this.snapshotCurrentTree(db, `lifecycle: archive ${concept.name}`);
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "archive",
-      commit_id: commit.id,
-      summary: `Archived concept '${concept.name}'.`,
-      affected: [concept.name],
-    };
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    return archiveConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), name, opts?.reason);
   }
 
   async conceptRestore(name: string, opts?: { codePath?: string }): Promise<LifecycleResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, name);
-    if (this.isActiveConcept(concept)) {
-      throw new LoreError("CONCEPT_INVALID_STATE", `Concept '${concept.name}' is already active`);
-    }
-    this.assertConceptNameAvailable(db, concept.name, { excludeId: concept.id });
-    const debtBefore = getManifest(db)?.debt ?? 0;
-
-    const latestChunk = db
-      .query<{ id: string }, [string]>(
-        `SELECT id FROM chunks
-         WHERE concept_id = ? AND fl_type = 'chunk'
-         ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(concept.id);
-    if (!latestChunk?.id) {
-      throw new LoreError(
-        "CONCEPT_INVALID_STATE",
-        `Concept '${concept.name}' has no state chunks to restore`,
-      );
-    }
-
-    insertConceptVersion(db, concept.id, {
-      active_chunk_id: latestChunk.id,
-      lifecycle_status: "active",
-      archived_at: null,
-      lifecycle_reason: null,
-      merged_into_concept_id: null,
-    });
-
-    const restoredChunk = getChunk(db, latestChunk.id);
-    if (restoredChunk) {
-      await updateChunkFrontmatter(restoredChunk.file_path, {
-        fl_lifecycle_status: "active",
-        fl_archived_at: null,
-        fl_lifecycle_reason: null,
-        fl_merged_into_concept_id: null,
-      });
-    }
-
-    const config = this.configFor(entry);
-    await discoverConcepts(db, await this.generatorFor(config, this.loreNameFor(entry)));
-    const commit = this.snapshotCurrentTree(db, `lifecycle: restore ${concept.name}`);
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "restore",
-      commit_id: commit.id,
-      summary: `Restored concept '${concept.name}'.`,
-      affected: [concept.name],
-    };
+    return restoreConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), name);
   }
 
   async conceptMerge(
@@ -2474,77 +2012,10 @@ export class LoreEngine {
     opts?: { codePath?: string; reason?: string; preview?: boolean },
   ): Promise<LifecycleResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    const source = this.resolveConceptByNameCi(db, sourceName, { activeOnly: true });
-    const target = this.resolveConceptByNameCi(db, targetName, { activeOnly: true });
-    if (source.id === target.id) {
-      throw new LoreError("CONCEPT_INVALID_STATE", "Source and target must be different concepts");
-    }
-
-    const config = this.configFor(entry);
-    const generator = await this.generatorFor(config, this.loreNameFor(entry));
-    const sourceContent = await this.readConceptContent(db, source);
-    const targetContent = await this.readConceptContent(db, target);
-    const mergedContent = await generator.generateIntegration(
-      [`Merge findings from concept "${source.name}" into "${target.name}".\n\n${sourceContent}`],
-      targetContent ? [targetContent] : [],
-      target.name,
-    );
-
-    if (opts?.preview) {
-      return {
-        action: "merge",
-        commit_id: null,
-        preview: true,
-        summary: `Preview merge '${source.name}' -> '${target.name}'.`,
-        affected: [source.name, target.name],
-        proposal: {
-          source: source.name,
-          target: target.name,
-          merged_content: mergedContent,
-        },
-      };
-    }
-
-    const debtBefore = getManifest(db)?.debt ?? 0;
-    await this.appendStateChunkForConcept(
-      db,
-      entry.lore_path,
-      target,
-      mergedContent,
-      `lifecycle-merge:${source.name}`,
-      await this.embedderFor(config, this.loreNameFor(entry)),
-      config.ai.embedding.model,
-      { supersedesId: target.active_chunk_id },
-    );
-
-    const now = new Date().toISOString();
-    insertConceptVersion(db, source.id, {
-      active_chunk_id: null,
-      lifecycle_status: "merged",
-      archived_at: now,
-      lifecycle_reason: opts?.reason ?? `merged into ${target.name}`,
-      merged_into_concept_id: target.id,
+    return mergeConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), sourceName, targetName, {
+      reason: opts?.reason,
+      preview: opts?.preview,
     });
-    await this.updateActiveChunkMetadata(db, source, {
-      fl_lifecycle_status: "merged",
-      fl_archived_at: now,
-      fl_lifecycle_reason: opts?.reason ?? `merged into ${target.name}`,
-      fl_merged_into_concept_id: target.id,
-    });
-
-    await discoverConcepts(db, generator);
-    const commit = this.snapshotCurrentTree(
-      db,
-      `lifecycle: merge ${source.name} -> ${target.name}`,
-    );
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "merge",
-      commit_id: commit.id,
-      summary: `Merged '${source.name}' into '${target.name}'.`,
-      affected: [source.name, target.name],
-    };
   }
 
   async conceptSplit(
@@ -2552,85 +2023,10 @@ export class LoreEngine {
     opts?: { codePath?: string; parts?: number; preview?: boolean },
   ): Promise<LifecycleResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    const source = this.resolveConceptByNameCi(db, name, { activeOnly: true });
-    const parts = Math.max(2, opts?.parts ?? 2);
-    const config = this.configFor(entry);
-    const generator = await this.generatorFor(config, this.loreNameFor(entry));
-    const sourceContent = await this.readConceptContent(db, source);
-    const proposals = await generator.proposeSplit(source.name, sourceContent, parts);
-
-    const uniqueProposalNames = new Set<string>();
-    for (const proposal of proposals) {
-      if (uniqueProposalNames.has(proposal.name.toLowerCase())) {
-        throw new LoreError(
-          "CONCEPT_NAME_CONFLICT",
-          `Split generated duplicate concept name '${proposal.name}'`,
-        );
-      }
-      uniqueProposalNames.add(proposal.name.toLowerCase());
-      this.assertConceptNameAvailable(db, proposal.name);
-    }
-
-    if (opts?.preview) {
-      return {
-        action: "split",
-        commit_id: null,
-        preview: true,
-        summary: `Preview split '${source.name}' into ${proposals.length} concepts.`,
-        affected: [source.name],
-        proposal: {
-          source: source.name,
-          splits: proposals,
-        },
-      };
-    }
-
-    const debtBefore = getManifest(db)?.debt ?? 0;
-    const embedder = await this.embedderFor(config, this.loreNameFor(entry));
-    const created: string[] = [];
-    for (const proposal of proposals) {
-      const concept = insertConcept(db, proposal.name);
-      await this.appendStateChunkForConcept(
-        db,
-        entry.lore_path,
-        concept,
-        proposal.content,
-        `lifecycle-split:${source.name}`,
-        embedder,
-        config.ai.embedding.model,
-        { supersedesId: null },
-      );
-      created.push(proposal.name);
-    }
-
-    const now = new Date().toISOString();
-    insertConceptVersion(db, source.id, {
-      active_chunk_id: null,
-      lifecycle_status: "archived",
-      archived_at: now,
-      lifecycle_reason: `split into ${created.join(", ")}`,
-      merged_into_concept_id: null,
+    return splitConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), name, {
+      parts: opts?.parts,
+      preview: opts?.preview,
     });
-    await this.updateActiveChunkMetadata(db, source, {
-      fl_lifecycle_status: "archived",
-      fl_archived_at: now,
-      fl_lifecycle_reason: `split into ${created.join(", ")}`,
-      fl_merged_into_concept_id: null,
-    });
-
-    await discoverConcepts(db, generator);
-    const commit = this.snapshotCurrentTree(
-      db,
-      `lifecycle: split ${source.name} -> ${created.length} concepts`,
-    );
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "split",
-      commit_id: commit.id,
-      summary: `Split '${source.name}' into ${created.length} concepts.`,
-      affected: [source.name, ...created],
-    };
   }
 
   async conceptPatch(
@@ -2639,58 +2035,10 @@ export class LoreEngine {
     opts?: { codePath?: string; topics?: string[]; direct?: boolean },
   ): Promise<LifecycleResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, name, { activeOnly: true });
-    const config = this.configFor(entry);
-
-    const generator = await this.generatorFor(config, this.loreNameFor(entry));
-    const currentContent = await this.readConceptContent(db, concept);
-
-    let newContent: string;
-    if (opts?.direct) {
-      newContent = text.trim();
-    } else {
-      const topicsSuffix =
-        opts?.topics && opts.topics.length > 0
-          ? `\n\nRelated topics: ${opts.topics.join(", ")}`
-          : "";
-      newContent = await generator.generateIntegration(
-        [text + topicsSuffix],
-        currentContent ? [currentContent] : [],
-        concept.name,
-      );
-    }
-
-    if (newContent.trim() === currentContent.trim()) {
-      return {
-        action: "patch",
-        commit_id: null,
-        summary: `No patch changes produced for '${concept.name}'.`,
-        affected: [concept.name],
-      };
-    }
-
-    const debtBefore = getManifest(db)?.debt ?? 0;
-    await this.appendStateChunkForConcept(
-      db,
-      entry.lore_path,
-      concept,
-      newContent,
-      `lifecycle-patch:${concept.name}`,
-      await this.embedderFor(config, this.loreNameFor(entry)),
-      config.ai.embedding.model,
-      { supersedesId: concept.active_chunk_id },
-    );
-
-    await discoverConcepts(db, generator);
-    const commit = this.snapshotCurrentTree(db, `lifecycle: patch ${concept.name}`);
-    this.updateManifestForLifecycle(db, debtBefore);
-
-    return {
-      action: "patch",
-      commit_id: commit.id,
-      summary: `Patched concept '${concept.name}'.`,
-      affected: [concept.name],
-    };
+    return patchConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), name, text, {
+      topics: opts?.topics,
+      direct: opts?.direct,
+    });
   }
 
   setConceptRelation(
@@ -2700,8 +2048,8 @@ export class LoreEngine {
     opts?: { codePath?: string; weight?: number },
   ): ConceptRelationSummary {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const from = this.resolveConceptByNameCi(db, fromConceptName, { activeOnly: true });
-    const to = this.resolveConceptByNameCi(db, toConceptName, { activeOnly: true });
+    const from = resolveConceptByNameCi(db, fromConceptName, { activeOnly: true });
+    const to = resolveConceptByNameCi(db, toConceptName, { activeOnly: true });
     if (from.id === to.id) {
       throw new LoreError("CONCEPT_INVALID_STATE", "Relation source and target must be different");
     }
@@ -2724,8 +2072,8 @@ export class LoreEngine {
     opts?: { codePath?: string; relationType?: RelationType },
   ): { removed: number } {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const from = this.resolveConceptByNameCi(db, fromConceptName, { activeOnly: true });
-    const to = this.resolveConceptByNameCi(db, toConceptName, { activeOnly: true });
+    const from = resolveConceptByNameCi(db, fromConceptName, { activeOnly: true });
+    const to = resolveConceptByNameCi(db, toConceptName, { activeOnly: true });
     const removed = deactivateConceptRelation(db, from.id, to.id, opts?.relationType);
     if (removed > 0) markGraphStale(db);
     return { removed };
@@ -2738,7 +2086,7 @@ export class LoreEngine {
   }): ConceptRelationSummary[] {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptId = opts?.concept
-      ? this.resolveConceptByNameCi(db, opts.concept, { activeOnly: false }).id
+      ? resolveConceptByNameCi(db, opts.concept, { activeOnly: false }).id
       : undefined;
     const relations = getConceptRelations(db, {
       conceptId,
@@ -2766,7 +2114,7 @@ export class LoreEngine {
 
   tagConcept(conceptName: string, tag: string, opts?: { codePath?: string }): ConceptTagSummary {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, conceptName, { activeOnly: true });
+    const concept = resolveConceptByNameCi(db, conceptName, { activeOnly: true });
     const row = upsertConceptTag(db, concept.id, tag);
     return {
       concept: concept.name,
@@ -2781,7 +2129,7 @@ export class LoreEngine {
     opts?: { codePath?: string },
   ): { concept: string; tag: string; removed: number } {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, conceptName, { activeOnly: false });
+    const concept = resolveConceptByNameCi(db, conceptName, { activeOnly: false });
     const removed = removeConceptTag(db, concept.id, tag);
     return {
       concept: concept.name,
@@ -2793,7 +2141,7 @@ export class LoreEngine {
   listConceptTags(opts?: { codePath?: string; concept?: string }): ConceptTagSummary[] {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptId = opts?.concept
-      ? this.resolveConceptByNameCi(db, opts.concept, { activeOnly: false }).id
+      ? resolveConceptByNameCi(db, opts.concept, { activeOnly: false }).id
       : undefined;
     const tags = getConceptTags(db, conceptId);
     const conceptById = new Map(getConcepts(db).map((concept) => [concept.id, concept.name]));
@@ -2831,7 +2179,7 @@ export class LoreEngine {
     opts?: { codePath?: string; neighborLimit?: number; recompute?: boolean },
   ): Promise<ConceptHealthExplainResult> {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const concept = this.resolveConceptByNameCi(db, conceptName, { activeOnly: true });
+    const concept = resolveConceptByNameCi(db, conceptName, { activeOnly: true });
     if (opts?.recompute || !getCurrentConceptHealthSignal(db, concept.id)) {
       await this.computeConceptHealth({ codePath: opts?.codePath });
     }
@@ -4217,7 +3565,7 @@ export class LoreEngine {
 
   conceptBindings(concept: string, opts?: { codePath?: string }): ConceptBindingSummary[] {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const row = this.resolveConceptByNameCi(db, concept, { activeOnly: true });
+    const row = resolveConceptByNameCi(db, concept, { activeOnly: true });
     return getBindingSummariesForConcept(db, row.id);
   }
 
@@ -4227,7 +3575,7 @@ export class LoreEngine {
     opts?: { codePath?: string; confidence?: number },
   ): ConceptBindingSummary {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const conceptRow = this.resolveConceptByNameCi(db, concept, { activeOnly: true });
+    const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
     const symbolRow = getSymbolByQualifiedName(db, symbolQualifiedName);
     if (!symbolRow) {
       throw new LoreError(
@@ -4253,7 +3601,7 @@ export class LoreEngine {
     opts?: { codePath?: string },
   ): { removed: boolean } {
     const { db } = this.resolveLoreMind(opts?.codePath);
-    const conceptRow = this.resolveConceptByNameCi(db, concept, { activeOnly: true });
+    const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
     const symbolRow = getSymbolByQualifiedName(db, symbolQualifiedName);
     if (!symbolRow) {
       return { removed: false };
