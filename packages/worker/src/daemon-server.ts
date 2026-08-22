@@ -45,17 +45,172 @@ import type {
   SerializedDaemonError,
 } from "./daemon-protocol.ts";
 
+/** The server-handled methods also accept a trailing/leading options object
+ *  that must receive the caller's cwd as codePath — the proxy table above
+ *  covers only SDK-proxied methods. */
+const SERVER_HANDLED_INJECT: Record<string, { inject: number | "last" }> = {
+  status: { inject: 0 },
+  close: { inject: 1 },
+  ingestDoc: { inject: 1 },
+  ingestAll: { inject: 0 },
+  rebuild: { inject: 0 },
+  listJobs: { inject: 0 },
+  getJobDetail: { inject: 1 },
+  waitForJob: { inject: 1 },
+  runCloseWorker: { inject: 0 },
+};
+
 type DirectClient = ReturnType<typeof createLoreClient>;
 
-/** Methods safe to run concurrently against one mind: pure reads plus asks,
- *  whose only writes are single-statement interaction/cache inserts. */
-const CONCURRENT_READ_METHODS = new Set<string>([
-  "ask",
-  "query",
-  "show",
-  "showNarrativeTrail",
-  "recall",
-]);
+/** Methods the server implements itself instead of proxying to @lore/sdk. */
+type ServerHandledClientMethod =
+  | "shutdown"
+  | "status"
+  | "close"
+  | "ingestDoc"
+  | "ingestAll"
+  | "rebuild"
+  | "runCloseWorker";
+
+/**
+ * Argument contract for every proxied SDK method. One table replaces the
+ * three hand-maintained lists it used to live behind (concurrency set,
+ * routing switch, cwd-injection switch) which desynced from the SDK one
+ * signature at a time:
+ *
+ * - `maxArgs`   — reject calls carrying more arguments than the client
+ *                 method accepts (defensive bound on socket input).
+ * - `inject`    — index of the options object that receives the caller's
+ *                 cwd as `codePath` when absent ("last" = variadic tail,
+ *                 appended when missing). Omitted = no injection.
+ * - `concurrent`— pure reads that may bypass the per-mind write chain;
+ *                 their only writes are single-statement inserts.
+ *
+ * The `satisfies` clause makes this a compile-time contract: a method added
+ * to the SDK client must be classified here (or added to
+ * ServerHandledClientMethod) or the worker package stops compiling.
+ */
+/** Default cap on how long a caller may block inside the daemon waiting for
+ *  a job. Long LLM closes are normal; forever is not. Override per call with
+ *  `timeoutMs`, or globally with LORE_JOB_WAIT_TIMEOUT_MS (0 disables). */
+export const DEFAULT_JOB_WAIT_TIMEOUT_MS = 15 * 60_000;
+
+interface ProxyMethodSpec {
+  maxArgs: number;
+  inject?: number | "last";
+  concurrent?: true;
+}
+
+const PROXY_METHODS = {
+  register: { maxArgs: 2 },
+  open: { maxArgs: 3, inject: 2 },
+  write: { maxArgs: 3, inject: 2 },
+  log: { maxArgs: 3, inject: 2 },
+  designateJournalEntry: { maxArgs: 3, inject: 2 },
+  ask: { maxArgs: 2, inject: 1, concurrent: true },
+  query: { maxArgs: 2, inject: 1, concurrent: true },
+  queryForOrchestration: { maxArgs: 2 },
+  searchWeb: { maxArgs: 2 },
+  summarizeMatches: { maxArgs: 3 },
+  listCloseJobs: { maxArgs: 1 },
+  getCloseJobDetail: { maxArgs: 2 },
+  waitForCloseJob: { maxArgs: 2 },
+  healthSnapshot: { maxArgs: 1 },
+  ls: { maxArgs: 1 },
+  show: { maxArgs: 2, inject: 1, concurrent: true },
+  history: { maxArgs: 2 },
+  showNarrativeTrail: { maxArgs: 2, inject: 1, concurrent: true },
+  diff: { maxArgs: 3 },
+  diffCommits: { maxArgs: 3 },
+  conceptRename: { maxArgs: 3, inject: 2 },
+  conceptArchive: { maxArgs: 2, inject: 1 },
+  conceptRestore: { maxArgs: 2, inject: 1 },
+  conceptMerge: { maxArgs: 3, inject: 2 },
+  conceptSplit: { maxArgs: 2, inject: 1 },
+  conceptPatch: { maxArgs: 3, inject: 2 },
+  setConceptRelation: { maxArgs: 4, inject: 3 },
+  unsetConceptRelation: { maxArgs: 3, inject: 2 },
+  listConceptRelations: { maxArgs: 1 },
+  tagConcept: { maxArgs: 3, inject: 2 },
+  untagConcept: { maxArgs: 3, inject: 2 },
+  listConceptTags: { maxArgs: 1 },
+  computeConceptHealth: { maxArgs: 1, inject: 0 },
+  explainConceptHealth: { maxArgs: 2, inject: 1 },
+  healConcepts: { maxArgs: 1, inject: 0 },
+  refreshEmbeddings: { maxArgs: 1, inject: 0 },
+  reEmbed: { maxArgs: 1, inject: 0 },
+  dryRunClose: { maxArgs: 2 },
+  migrate: { maxArgs: 1, inject: "last" },
+  migrateStatus: { maxArgs: 1, inject: "last" },
+  repair: { maxArgs: 1, inject: "last" },
+  commitLog: { maxArgs: 1 },
+  listLoreMinds: { maxArgs: 0 },
+  removeLoreMind: { maxArgs: 2 },
+  resetLoreMind: { maxArgs: 1, inject: "last" },
+  listProviderCredentials: { maxArgs: 0 },
+  getProviderCredential: { maxArgs: 1 },
+  setProviderCredential: { maxArgs: 2 },
+  unsetProviderCredential: { maxArgs: 2 },
+  getLoreMindConfig: { maxArgs: 1 },
+  setLoreMindConfig: { maxArgs: 3, inject: 2 },
+  unsetLoreMindConfig: { maxArgs: 2, inject: 1 },
+  cloneLoreMindConfig: { maxArgs: 2, inject: 1 },
+  getPromptPreview: { maxArgs: 2 },
+  suggest: { maxArgs: 1 },
+  conceptBindings: { maxArgs: 2 },
+  bindSymbol: { maxArgs: 3, inject: 2 },
+  unbindSymbol: { maxArgs: 3, inject: 2 },
+  symbolDrift: { maxArgs: 1 },
+  rebindAll: { maxArgs: 1, inject: 0 },
+  rescan: { maxArgs: 1, inject: 0 },
+  autoBind: { maxArgs: 1, inject: 0 },
+  symbolSearch: { maxArgs: 2 },
+  fileSymbols: { maxArgs: 2 },
+  scanStats: { maxArgs: 1 },
+  coverageReport: { maxArgs: 1 },
+  bootstrapPlan: { maxArgs: 1 },
+  recall: { maxArgs: 2, inject: 1, concurrent: true },
+  scoreResult: { maxArgs: 3, inject: 2 },
+} as const satisfies Record<
+  Exclude<keyof DirectClient, ServerHandledClientMethod>,
+  ProxyMethodSpec
+>;
+
+type ProxyMethod = keyof typeof PROXY_METHODS;
+
+/** Merge the caller's cwd into the options object at `index` unless it
+ *  already carries an explicit codePath. No cwd → leave args untouched. */
+function applyCallerCodePath(
+  spec: ProxyMethodSpec | { inject: number | "last" },
+  args: unknown[],
+  fallbackCwd?: string,
+): unknown[] {
+  const codePath = fallbackCwd ? resolve(fallbackCwd) : undefined;
+  if (!codePath || spec.inject === undefined) return args;
+  const withCodePath = <T extends Record<string, unknown> | undefined>(value: T): T | { codePath: string } => {
+    if (!value) return { codePath };
+    if ("codePath" in value && typeof value.codePath === "string") return value;
+    return { ...value, codePath };
+  };
+  if (spec.inject === "last") {
+    // Variadic tail (migrate/repair family): append options when absent.
+    return args.length === 0
+      ? [withCodePath(undefined)]
+      : [...args.slice(0, -1), withCodePath(args.at(-1) as Record<string, unknown> | undefined)];
+  }
+  const next = [...args];
+  next[spec.inject] = withCodePath(next[spec.inject] as Record<string, unknown> | undefined);
+  return next;
+}
+
+/** Routing key source for serialization: explicit string codePath argument
+ *  (register) else the trailing options object, else the caller's cwd. */
+function routeCodePathFor(method: ProxyMethod, args: unknown[], fallbackCwd?: string): string | undefined {
+  if (method === "register") {
+    return typeof args[0] === "string" ? (args[0] as string) : fallbackCwd;
+  }
+  return getCodePathFromOptions(args.at(-1)) ?? fallbackCwd;
+}
 
 interface CloseJobPayload {
   narrative: string;
@@ -158,56 +313,6 @@ function getCodePathFromOptions(value: unknown): string | undefined {
     : undefined;
 }
 
-function getRequestCodePath(method: string, args: unknown[], fallbackCwd?: string): string | undefined {
-  switch (method) {
-    case "register":
-      return typeof args[0] === "string" ? (args[0] as string) : fallbackCwd;
-    case "close":
-    case "status":
-    case "ask":
-    case "query":
-    case "recall":
-    case "show":
-    case "showNarrativeTrail":
-    case "scoreResult":
-    case "open":
-    case "write":
-    case "log":
-    case "designateJournalEntry":
-    case "setLoreMindConfig":
-    case "unsetLoreMindConfig":
-    case "cloneLoreMindConfig":
-    case "conceptRename":
-    case "conceptArchive":
-    case "conceptRestore":
-    case "conceptMerge":
-    case "conceptSplit":
-    case "conceptPatch":
-    case "setConceptRelation":
-    case "unsetConceptRelation":
-    case "tagConcept":
-    case "untagConcept":
-    case "bindSymbol":
-    case "unbindSymbol":
-    case "migrate":
-    case "migrateStatus":
-    case "repair":
-    case "resetLoreMind":
-    case "removeLoreMind":
-    case "getJobDetail":
-    case "waitForJob":
-    case "listJobs":
-    case "runCloseWorker":
-      return getCodePathFromOptions(args.at(-1)) ?? fallbackCwd;
-    case "ingestDoc":
-    case "ingestAll":
-    case "rebuild":
-      return getCodePathFromOptions(args[0]) ?? fallbackCwd;
-    default:
-      return getCodePathFromOptions(args.at(-1)) ?? fallbackCwd;
-  }
-}
-
 export class LoreDaemonServer {
   private client!: DirectClient;
   private readonly paths: LoreDaemonPaths;
@@ -305,11 +410,16 @@ export class LoreDaemonServer {
     socket.setEncoding("utf-8");
     socket.on("data", (chunk) => {
       buffer += chunk;
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) return;
-      const raw = buffer.slice(0, newlineIndex);
-      buffer = "";
-      void this.respond(socket, raw);
+      // Newline framing with remainder retention: bytes after the last
+      // complete request stay buffered instead of being discarded, so
+      // requests written back-to-back are each answered in order.
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const raw = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf("\n");
+        void this.respond(socket, raw);
+      }
     });
     socket.on("error", () => {
       socket.destroy();
@@ -326,13 +436,16 @@ export class LoreDaemonServer {
         ok: true,
         result,
       };
-      socket.end(`${JSON.stringify(response)}\n`);
+      if (!socket.write(`${JSON.stringify(response)}\n`)) {
+        await new Promise<void>((resolve) => socket.once("drain", resolve));
+      }
     } catch (error) {
       const response: DaemonResponse = {
         id: request?.id ?? randomUUID(),
         ok: false,
         error: serializeError(error),
       };
+      // A malformed frame desyncs the stream — answer and hang up.
       socket.end(`${JSON.stringify(response)}\n`);
     }
   }
@@ -363,11 +476,11 @@ export class LoreDaemonServer {
       case "waitForJob":
         return this.waitForJob(
           args[0] as string,
-          args[1] as { codePath?: string; pollMs?: number } | undefined,
+          args[1] as { codePath?: string; pollMs?: number; timeoutMs?: number } | undefined,
         );
       case "runCloseWorker":
         return this.processJobsForCodePath(
-          routeKeyForCodePath(getRequestCodePath("runCloseWorker", args, request.cwd)),
+          routeKeyForCodePath(getCodePathFromOptions(args.at(-1)) ?? request.cwd),
           {
             mode: (args[0] as { watch?: boolean } | undefined)?.watch ? "watch" : "once",
             pollMs: (args[0] as { pollMs?: number } | undefined)?.pollMs,
@@ -400,10 +513,26 @@ export class LoreDaemonServer {
           args[0] as { codePath?: string } | undefined,
         );
       default: {
+        const methodName = request.method;
+        // hasOwnProperty, not `in`: "constructor"/"toString" must not match
+        // through the prototype chain.
+        const spec: ProxyMethodSpec | undefined = Object.hasOwn(PROXY_METHODS, methodName)
+          ? PROXY_METHODS[methodName as ProxyMethod]
+          : undefined;
+        if (!spec) {
+          throw new Error(`Unknown daemon method '${methodName}'`);
+        }
+        if (Array.isArray(args) && args.length > spec.maxArgs) {
+          throw new Error(
+            `Daemon method '${request.method}' accepts at most ${spec.maxArgs} argument(s), got ${args.length}`,
+          );
+        }
         const invoke = async () => {
-          const fn = (this.client as unknown as Record<string, (...args: unknown[]) => unknown>)[
-            request.method
-          ];
+          // Allowlist-checked above; this cast only bridges the SDK's
+          // heterogeneous method signatures.
+          const fn = this.client[request.method as keyof DirectClient] as
+            | ((...callArgs: unknown[]) => unknown)
+            | undefined;
           if (typeof fn !== "function") {
             throw new Error(`Unknown daemon method '${request.method}'`);
           }
@@ -412,100 +541,25 @@ export class LoreDaemonServer {
         // Read-path methods run concurrently — the per-mind chain exists to keep
         // multi-step mutations (open/write/close/merge/rebuild) from interleaving,
         // and was serializing every ask behind every other ask.
-        if (CONCURRENT_READ_METHODS.has(request.method)) {
+        if (spec.concurrent) {
           return invoke();
         }
-        const codePath = getRequestCodePath(request.method, args, request.cwd);
+        const codePath = routeCodePathFor(
+          request.method as ProxyMethod,
+          args,
+          request.cwd,
+        );
         return this.runSerialized(routeKeyForCodePath(codePath), invoke);
       }
     }
   }
 
   private withCallerCodePath(method: string, args: unknown[], cwd?: string): unknown[] {
-    const codePath = cwd ? resolve(cwd) : undefined;
-    const withCodePath = <T extends Record<string, unknown> | undefined>(
-      value: T,
-    ): T | { codePath: string } => {
-      if (!codePath) return (value ?? {}) as T;
-      if (!value) return { codePath };
-      if ("codePath" in value && typeof value.codePath === "string") return value;
-      return { ...value, codePath };
-    };
-    switch (method) {
-      case "open":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "write":
-      case "log":
-      case "designateJournalEntry":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "status":
-        return [withCodePath(args[0] as Record<string, unknown> | undefined)];
-      case "close":
-      case "ask":
-      case "query":
-      case "recall":
-      case "show":
-      case "showNarrativeTrail":
-        return [args[0], withCodePath(args[1] as Record<string, unknown> | undefined)];
-      case "scoreResult":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "setLoreMindConfig":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "unsetLoreMindConfig":
-      case "cloneLoreMindConfig":
-      case "conceptArchive":
-      case "conceptRestore":
-      case "conceptSplit":
-        return [args[0], withCodePath(args[1] as Record<string, unknown> | undefined)];
-      case "conceptRename":
-      case "conceptMerge":
-      case "conceptPatch":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "setConceptRelation":
-        return [
-          args[0],
-          args[1],
-          args[2],
-          withCodePath(args[3] as Record<string, unknown> | undefined),
-        ];
-      case "unsetConceptRelation":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "tagConcept":
-      case "untagConcept":
-      case "bindSymbol":
-      case "unbindSymbol":
-        return [args[0], args[1], withCodePath(args[2] as Record<string, unknown> | undefined)];
-      case "migrate":
-      case "migrateStatus":
-      case "repair":
-      case "resetLoreMind":
-        return args.length === 0
-          ? [withCodePath(undefined)]
-          : [...args.slice(0, -1), withCodePath(args.at(-1) as Record<string, unknown> | undefined)];
-      case "ingestDoc":
-        return [args[0], withCodePath(args[1] as Record<string, unknown> | undefined)];
-      case "ingestAll":
-      case "rebuild":
-      case "computeConceptHealth":
-      case "healConcepts":
-      case "refreshEmbeddings":
-      case "reEmbed":
-      case "rebindAll":
-      case "rescan":
-      case "autoBind":
-        return [withCodePath(args[0] as Record<string, unknown> | undefined)];
-      case "explainConceptHealth":
-        return [args[0], withCodePath(args[1] as Record<string, unknown> | undefined)];
-      case "listJobs":
-        return [withCodePath(args[0] as Record<string, unknown> | undefined)];
-      case "getJobDetail":
-      case "waitForJob":
-        return [args[0], withCodePath(args[1] as Record<string, unknown> | undefined)];
-      case "runCloseWorker":
-        return [withCodePath(args[0] as Record<string, unknown> | undefined)];
-      default:
-        return args;
-    }
+    const spec = Object.hasOwn(PROXY_METHODS, method)
+      ? PROXY_METHODS[method as ProxyMethod]
+      : SERVER_HANDLED_INJECT[method];
+    if (!spec) return args;
+    return applyCallerCodePath(spec, args, cwd);
   }
 
   private getDaemonStatus(): LoreDaemonStatus {
@@ -671,14 +725,27 @@ export class LoreDaemonServer {
 
   private async waitForJob(
     jobId: string,
-    opts?: { codePath?: string; pollMs?: number },
+    opts?: { codePath?: string; pollMs?: number; timeoutMs?: number },
   ): Promise<LoreJobDetail> {
     const codePath = routeKeyForCodePath(opts?.codePath);
+    const timeoutMs =
+      opts?.timeoutMs ??
+      (process.env.LORE_JOB_WAIT_TIMEOUT_MS
+        ? Number(process.env.LORE_JOB_WAIT_TIMEOUT_MS)
+        : DEFAULT_JOB_WAIT_TIMEOUT_MS);
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : null;
     while (true) {
       const detail = await this.getJobDetail(jobId, { codePath });
       if (detail.job.status === "done") return detail;
       if (detail.job.status === "failed") {
         throw new Error(detail.job.last_error ?? `Daemon job '${jobId}' failed`);
+      }
+      if (deadline != null && Date.now() > deadline) {
+        throw new LoreError(
+          "JOB_WAIT_TIMEOUT",
+          `Timed out waiting for daemon job '${jobId}' after ${Math.round(timeoutMs / 1000)}s ` +
+            `(status: ${detail.job.status}); it may still be running — check 'lore jobs'`,
+        );
       }
       this.scheduleProcessing(codePath);
       await sleep(Math.max(50, opts?.pollMs ?? 250));

@@ -1396,7 +1396,8 @@ export type LoreErrorCode =
   | "ASK_RERANK_FAILED"
   | "ASK_EXEC_SUMMARY_FAILED"
   | "CODE_MODEL_NOT_CONFIGURED"
-  | "LANCE_INDEX_UNAVAILABLE";
+  | "LANCE_INDEX_UNAVAILABLE"
+  | "JOB_WAIT_TIMEOUT";
 
 export class LoreError extends Error {
   constructor(

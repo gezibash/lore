@@ -26,6 +26,9 @@ export interface LoreJobDetail {
 export interface LoreJobWaitOptions {
   codePath?: string;
   pollMs?: number;
+  /** Give up after this long; defaults to the daemon's 15-minute cap,
+   *  overridable via LORE_JOB_WAIT_TIMEOUT_MS. 0 waits indefinitely. */
+  timeoutMs?: number;
 }
 
 export interface LoreDaemonStatus {

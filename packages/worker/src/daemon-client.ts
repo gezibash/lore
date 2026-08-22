@@ -54,28 +54,39 @@ async function sendRequest(
   return new Promise((resolve, reject) => {
     const socket = connect(socketPath);
     let buffer = "";
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
     socket.setEncoding("utf-8");
     socket.on("connect", () => {
       socket.write(`${JSON.stringify(request)}\n`);
     });
     socket.on("data", (chunk) => {
       buffer += chunk;
-    });
-    socket.on("end", () => {
+      // The daemon keeps the connection open after answering, so resolve on
+      // the first complete newline-framed response instead of waiting for
+      // end-of-stream.
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) return;
+      settled = true;
+      socket.destroy();
       try {
-        const response = JSON.parse(buffer.trim()) as DaemonResponse;
+        const response = JSON.parse(buffer.slice(0, newlineIndex)) as DaemonResponse;
         if (!response.ok) {
           reject(new Error(response.error.message));
           return;
         }
         resolve(response.result);
       } catch (error) {
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    socket.on("error", (error) => {
-      reject(error);
-    });
+    socket.on("end", () => fail(new Error("Lore daemon closed the connection without a response")));
+    socket.on("error", fail);
   });
 }
 
@@ -195,7 +206,7 @@ export class LoreDaemonRpcClient {
 
   async waitForJob(
     jobId: string,
-    opts?: { codePath?: string; pollMs?: number },
+    opts?: { codePath?: string; pollMs?: number; timeoutMs?: number },
   ): Promise<LoreJobDetail> {
     return (await this.call("waitForJob", [jobId, opts ?? {}])) as LoreJobDetail;
   }

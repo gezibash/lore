@@ -1421,7 +1421,10 @@ export type LoreErrorCode =
   | "ASK_EMBEDDING_FAILED"
   | "ASK_SEARCH_FAILED"
   | "ASK_RERANK_FAILED"
-  | "ASK_EXEC_SUMMARY_FAILED";
+  | "ASK_EXEC_SUMMARY_FAILED"
+  | "CODE_MODEL_NOT_CONFIGURED"
+  | "LANCE_INDEX_UNAVAILABLE"
+  | "JOB_WAIT_TIMEOUT";
 
 // ─── Config ───────────────────────────────────────────────
 export interface LoreConfig {
