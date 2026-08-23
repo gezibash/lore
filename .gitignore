@@ -37,7 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .lore/
 
 # Benchmark suite (local only)
-tests/
 
 # Claude Code user config
 .claude/
