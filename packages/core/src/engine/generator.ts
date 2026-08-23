@@ -127,6 +127,7 @@ Rules:
 - If a journal entry contradicts the existing state, always use the journal entry's version
 - If a section of the existing state is not addressed by any journal entry, OMIT it
 - Do not invent information beyond what the journal entries establish
+- Give each distinct subject its own section; never append an unrelated subject to an existing paragraph
 - Be concise but complete`;
       } else {
         // "replace" (default) — tightened: preserve sections not addressed by journal entries
@@ -137,6 +138,7 @@ Rules:
 - Dead ends: note briefly as warnings only if they help future readers avoid the same mistake
 - The output replaces the existing state entirely — it must be self-contained and accurate
 - If the existing state covers topics NOT addressed by any journal entry, preserve those sections as-is
+- Add a new section for a wholly new topic introduced by journal entries; never append an unrelated subject to an existing paragraph
 - Be concise but complete`;
       }
 

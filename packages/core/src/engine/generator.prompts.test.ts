@@ -27,3 +27,22 @@ test("buildGenerationSystemPrompt appends project guidance for configured prompt
     "Bias toward fewer, broader concepts unless entries are clearly unrelated.",
   );
 });
+
+test("every integration strategy says where a new topic goes", () => {
+  // The default 'replace' strategy shipped without a placement rule while
+  // 'extend' and 'patch' had one. Integrating a finding about citation
+  // injection into a concept then spliced it into the middle of a paragraph
+  // about MCP cleanup, and lore's own phase-transition check flagged the
+  // result as a 63% restructure.
+  for (const mergeStrategy of ["extend", "patch", "correct", "replace"] as const) {
+    const system = buildGenerationSystemPrompt(
+      "generate_integration",
+      defaultConfig.ai.generation.prompts,
+      { conceptName: "citation-provenance", mergeStrategy },
+    );
+    expect(system).toMatch(/(new|own) (section|paragraph)/i);
+    expect(system).toMatch(
+      /never append an unrelated|new sections? (at the end )?for wholly new|new paragraphs? only for wholly new/i,
+    );
+  }
+});
