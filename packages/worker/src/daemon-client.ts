@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "fs";
+import { dirname, join, resolve } from "path";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { connect } from "net";
@@ -38,6 +39,81 @@ function daemonEntryScript(): string {
 
 function daemonDisabled(): boolean {
   return process.env.LORE_DAEMON_DISABLE === "1";
+}
+
+/** Directory whose TypeScript sources decide whether the daemon is current:
+ *  the workspace root when running from a checkout, else the installed
+ *  package root. Returns null when neither can be located. */
+export function sourceRootForEntry(entry: string): string | null {
+  let dir = dirname(resolve(entry));
+  for (let depth = 0; depth < 8; depth++) {
+    const manifest = join(dir, "package.json");
+    if (existsSync(manifest)) {
+      try {
+        const parsed = JSON.parse(readFileSync(manifest, "utf-8")) as { workspaces?: unknown };
+        if (parsed.workspaces) return dir;
+      } catch {
+        // Unreadable manifest: keep walking rather than guessing a root.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Newest mtime across the installation's own .ts sources, or null when the
+ *  root cannot be resolved. A long-lived daemon keeps serving the code it was
+ *  spawned with, so an edit made after `started_at` is invisible until it is
+ *  restarted — the failure mode is silent, and looks like the edit did
+ *  nothing. */
+export function newestSourceMtimeMs(root: string): number | null {
+  let newest: number | null = null;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 6) return;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const name = entry.name;
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const full = join(dir, name);
+      if (entry.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
+      if (!name.endsWith(".ts")) continue;
+      try {
+        const mtime = statSync(full).mtimeMs;
+        if (newest === null || mtime > newest) newest = mtime;
+      } catch {
+        // Raced with a delete; the remaining files still bound the answer.
+      }
+    }
+  };
+  walk(root, 0);
+  return newest;
+}
+
+/** True when the running daemon was spawned before the newest source edit. */
+function daemonIsStale(status: LoreDaemonStatus): boolean {
+  if (process.env.LORE_DAEMON_STALE_CHECK === "0") return false;
+  if (!status.started_at) return false;
+  const startedAt = Date.parse(status.started_at);
+  if (Number.isNaN(startedAt)) return false;
+  let root: string | null;
+  try {
+    root = sourceRootForEntry(daemonEntryScript());
+  } catch {
+    return false;
+  }
+  if (!root) return false;
+  const newest = newestSourceMtimeMs(root);
+  return newest !== null && newest > startedAt;
 }
 
 async function sendRequest(socketPath: string, method: string, args: unknown[]): Promise<unknown> {
@@ -98,7 +174,13 @@ export class LoreDaemonRpcClient {
       throw new Error("Lore daemon usage is disabled by LORE_DAEMON_DISABLE=1");
     }
     const current = await this.status();
-    if (current.running) return current;
+    if (current.running) {
+      if (!daemonIsStale(current)) return current;
+      // Never cut a job off mid-flight: a leased job holds state the restart
+      // would strand. Serving stale code for the rest of this run beats it.
+      if (current.leased_jobs > 0) return current;
+      await this.stop();
+    }
 
     // Concurrent CLI invocations all see "not running" at once and each spawn a
     // daemon — a benchmark at 10-way parallelism left seven of them competing

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createWorkerClient, type WorkerClientOptions } from "./index.ts";
+import { newestSourceMtimeMs, sourceRootForEntry } from "./daemon-client.ts";
 import {
   acquireLoreLock,
   loreDaemonLockPath,
@@ -133,4 +134,40 @@ test("createWorkerClient delegates to provided client", async () => {
   const queried = await client.query("q");
   expect(called).toBeTrue();
   expect(queried.meta.query).toBe("q");
+});
+
+test("stale-daemon detection: workspace root wins, node_modules is ignored", () => {
+  const root = mkdtempSync(join(tmpdir(), "lore-srcroot-"));
+  mkdirSync(join(root, "packages/cli/src"), { recursive: true });
+  mkdirSync(join(root, "packages/cli/node_modules/dep"), { recursive: true });
+  writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"] }));
+  // A nested package.json without `workspaces` must not be mistaken for the root,
+  // or the scan misses every sibling package and the daemon looks fresh forever.
+  writeFileSync(join(root, "packages/cli/package.json"), JSON.stringify({ name: "@lore/cli" }));
+  const entry = join(root, "packages/cli/src/index.ts");
+  writeFileSync(entry, "export const a = 1;\n");
+
+  expect(sourceRootForEntry(entry)).toBe(root);
+
+  const baseline = newestSourceMtimeMs(root);
+  expect(baseline).not.toBeNull();
+
+  // A dependency changing must not read as our own code changing.
+  const vendored = join(root, "packages/cli/node_modules/dep/index.ts");
+  writeFileSync(vendored, "export const vendored = 1;\n");
+  utimesSync(vendored, new Date(), new Date(Date.now() + 60_000));
+  expect(newestSourceMtimeMs(root)).toBe(baseline);
+
+  // An edit to a sibling package is what should move the needle.
+  mkdirSync(join(root, "packages/core/src"), { recursive: true });
+  const sibling = join(root, "packages/core/src/engine.ts");
+  writeFileSync(sibling, "export const b = 2;\n");
+  utimesSync(sibling, new Date(), new Date(Date.now() + 60_000));
+  expect(newestSourceMtimeMs(root)!).toBeGreaterThan(baseline!);
+
+  // Non-TypeScript files are not code the daemon serves.
+  const readme = join(root, "packages/core/src/NOTES.md");
+  writeFileSync(readme, "notes\n");
+  utimesSync(readme, new Date(), new Date(Date.now() + 120_000));
+  expect(newestSourceMtimeMs(root)).toBeLessThan(Date.now() + 120_000);
 });
