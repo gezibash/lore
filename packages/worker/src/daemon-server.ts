@@ -171,6 +171,9 @@ const PROXY_METHODS = {
   bootstrapPlan: { maxArgs: 1 },
   recall: { maxArgs: 2, inject: 1, concurrent: true },
   scoreResult: { maxArgs: 3, inject: 2 },
+  kpiLog: { maxArgs: 3, inject: 2 },
+  kpiGoal: { maxArgs: 3, inject: 2 },
+  kpiStatus: { maxArgs: 1, inject: 0 },
 } as const satisfies Record<
   Exclude<keyof DirectClient, ServerHandledClientMethod>,
   ProxyMethodSpec

@@ -163,6 +163,9 @@ type DirectWorkerClientDeps = Pick<
   | "bootstrapPlan"
   | "recall"
   | "scoreResult"
+  | "kpiLog"
+  | "kpiGoal"
+  | "kpiStatus"
   | "register"
   | "migrate"
   | "migrateStatus"
@@ -190,6 +193,8 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "showNarrativeTrail",
   "recall",
   "scoreResult",
+  "kpiLog",
+  "kpiGoal",
   "conceptRename",
   "conceptArchive",
   "conceptRestore",
@@ -677,6 +682,18 @@ export class WorkerClient {
 
   async scoreResult(...args: Parameters<DirectWorkerClientDeps["scoreResult"]>) {
     return this.call("scoreResult", args);
+  }
+
+  async kpiLog(...args: Parameters<DirectWorkerClientDeps["kpiLog"]>) {
+    return this.call("kpiLog", args);
+  }
+
+  async kpiGoal(...args: Parameters<DirectWorkerClientDeps["kpiGoal"]>) {
+    return this.call("kpiGoal", args);
+  }
+
+  async kpiStatus(...args: Parameters<DirectWorkerClientDeps["kpiStatus"]>) {
+    return this.call("kpiStatus", args);
   }
 
   async register(...args: Parameters<DirectWorkerClientDeps["register"]>) {

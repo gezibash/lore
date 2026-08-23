@@ -60,6 +60,10 @@ import type {
   ConceptHealthExplainResult,
   ConceptRelationSummary,
   ConceptTagSummary,
+  KpiDirection,
+  KpiGoalResult,
+  KpiLogResult,
+  KpiStatus,
   HealConceptsResult,
   RelationType,
   OrchestrationQueryOptions,
@@ -416,6 +420,21 @@ interface LoreClientEngine {
     score: number,
     opts?: { codePath?: string; scoredBy?: string },
   ): void;
+  kpiLog(name: string, value: number, opts?: KpiLogOptions): Promise<KpiLogResult>;
+  kpiGoal(name: string, target: number, opts?: KpiGoalOptions): KpiGoalResult;
+  kpiStatus(opts?: { codePath?: string; name?: string; limit?: number }): KpiStatus[];
+}
+
+export interface KpiGoalOptions {
+  codePath?: string;
+  direction?: KpiDirection;
+  unit?: string | null;
+  note?: string | null;
+}
+
+export interface KpiLogOptions extends KpiGoalOptions {
+  narrative?: string;
+  meta?: Record<string, unknown> | null;
 }
 
 export interface LoreClientOptions {
@@ -923,6 +942,18 @@ export class LoreClient {
     opts?: { codePath?: string; scoredBy?: string },
   ): void {
     return this.engine.scoreResult(resultId, score, opts);
+  }
+
+  kpiLog(name: string, value: number, opts?: KpiLogOptions): Promise<KpiLogResult> {
+    return this.engine.kpiLog(name, value, opts);
+  }
+
+  kpiGoal(name: string, target: number, opts?: KpiGoalOptions): KpiGoalResult {
+    return this.engine.kpiGoal(name, target, opts);
+  }
+
+  kpiStatus(opts?: { codePath?: string; name?: string; limit?: number }): KpiStatus[] {
+    return this.engine.kpiStatus(opts);
   }
 }
 

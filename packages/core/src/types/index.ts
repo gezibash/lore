@@ -1079,6 +1079,49 @@ export interface ConceptTagSummary {
   created_at: string;
 }
 
+// ─── KPIs ─────────────────────────────────────────────────
+export type KpiDirection = "up" | "down";
+
+export interface KpiReadingSummary {
+  id: string;
+  value: number;
+  narrative: string | null;
+  git_head: string | null;
+  lore_commit_id: string | null;
+  meta: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface KpiStatus {
+  name: string;
+  unit: string | null;
+  direction: KpiDirection;
+  note: string | null;
+  goal: number | null;
+  goal_set_at: string | null;
+  latest: KpiReadingSummary | null;
+  previous: KpiReadingSummary | null;
+  /** latest − previous, signed so that positive always means "toward the goal". */
+  delta_toward_goal: number | null;
+  /** Remaining distance to the goal in KPI units; 0 when met. Null when no goal or no reading. */
+  gap: number | null;
+  goal_met: boolean | null;
+  reading_count: number;
+  /** Newest first. */
+  recent: KpiReadingSummary[];
+}
+
+export interface KpiLogResult {
+  kpi: KpiStatus;
+  reading: KpiReadingSummary;
+  created_kpi: boolean;
+}
+
+export interface KpiGoalResult {
+  kpi: KpiStatus;
+  created_kpi: boolean;
+}
+
 export interface HealConceptsResult {
   run_id: string;
   dry: boolean;
@@ -1397,7 +1440,9 @@ export type LoreErrorCode =
   | "ASK_EXEC_SUMMARY_FAILED"
   | "CODE_MODEL_NOT_CONFIGURED"
   | "LANCE_INDEX_UNAVAILABLE"
-  | "JOB_WAIT_TIMEOUT";
+  | "JOB_WAIT_TIMEOUT"
+  | "KPI_NOT_FOUND"
+  | "KPI_INVALID_VALUE";
 
 export class LoreError extends Error {
   constructor(

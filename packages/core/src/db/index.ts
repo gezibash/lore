@@ -201,6 +201,18 @@ export {
 } from "./interaction-events.ts";
 export type { InteractionEventRow, InteractionEventType } from "./interaction-events.ts";
 export {
+  normalizeKpiName,
+  getKpi,
+  listKpis,
+  insertKpi,
+  insertKpiGoal,
+  getCurrentKpiGoal,
+  insertKpiReading,
+  listKpiReadings,
+  getKpiReadingsForNarrative,
+} from "./kpis.ts";
+export type { KpiRow, KpiGoalRow, KpiReadingRow } from "./kpis.ts";
+export {
   insertCallSiteBatch,
   deleteCallSitesForSourceFile,
   getCallSitesForCallee,

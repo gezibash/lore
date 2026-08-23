@@ -35,6 +35,11 @@ import {
   type HealConceptsResult,
   type ConceptRelationSummary,
   type ConceptTagSummary,
+  type KpiDirection,
+  type KpiReadingSummary,
+  type KpiStatus,
+  type KpiLogResult,
+  type KpiGoalResult,
   type NarrativeTarget,
   type DebtTrend,
   type LoreHealthSnapshot,
@@ -84,6 +89,17 @@ import {
   upsertConceptTag,
   removeConceptTag,
   getConceptTags,
+  getOpenNarratives,
+  getHeadCommit,
+  getKpi,
+  listKpis,
+  insertKpi,
+  insertKpiGoal,
+  getCurrentKpiGoal,
+  insertKpiReading,
+  listKpiReadings,
+  type KpiRow,
+  type KpiReadingRow,
   insertConceptHealthSignal,
   getCurrentConceptHealthSignal,
   getCurrentConceptHealthSignals,
@@ -195,6 +211,7 @@ import type {
   IngestResult,
 } from "@/types/index.ts";
 import type { SchemaRepairOptions, SchemaRepairResult } from "@/db/index.ts";
+import { getHeadSha } from "@/engine/git.ts";
 import {
   buildConceptHealthNeighbors,
   computeConceptHealthSignals,
@@ -2158,6 +2175,168 @@ export class LoreEngine {
     }
 
     return rows;
+  }
+
+  // ─── KPIs ───────────────────────────────────────────────
+
+  private kpiReadingSummary(db: Database, row: KpiReadingRow): KpiReadingSummary {
+    let meta: Record<string, unknown> | null = null;
+    if (row.meta_json) {
+      try {
+        meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+      } catch {
+        meta = null;
+      }
+    }
+    const narrative = row.narrative_id ? (getNarrative(db, row.narrative_id)?.name ?? null) : null;
+    return {
+      id: row.id,
+      value: row.value,
+      narrative,
+      git_head: row.git_head,
+      lore_commit_id: row.lore_commit_id,
+      meta,
+      created_at: row.created_at,
+    };
+  }
+
+  private kpiStatusFor(db: Database, kpi: KpiRow, recentLimit: number): KpiStatus {
+    const goal = getCurrentKpiGoal(db, kpi.name);
+    const recentRows = listKpiReadings(db, kpi.name, Math.max(recentLimit, 2));
+    const recent = recentRows.slice(0, recentLimit).map((row) => this.kpiReadingSummary(db, row));
+    const latest = recent[0] ?? null;
+    const previousRow = recentRows[1];
+    const previous = previousRow ? this.kpiReadingSummary(db, previousRow) : null;
+    const sign = kpi.direction === "up" ? 1 : -1;
+    const count =
+      db
+        .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM kpi_readings WHERE kpi_name = ?")
+        .get(kpi.name)?.n ?? 0;
+
+    let gap: number | null = null;
+    let goalMet: boolean | null = null;
+    if (goal && latest) {
+      const remaining = sign * (goal.target - latest.value);
+      gap = Math.max(0, remaining);
+      goalMet = remaining <= 0;
+    }
+
+    return {
+      name: kpi.name,
+      unit: kpi.unit,
+      direction: kpi.direction,
+      note: kpi.note,
+      goal: goal?.target ?? null,
+      goal_set_at: goal?.set_at ?? null,
+      latest,
+      previous,
+      delta_toward_goal: latest && previous ? sign * (latest.value - previous.value) : null,
+      gap,
+      goal_met: goalMet,
+      reading_count: count,
+      recent,
+    };
+  }
+
+  /** Resolve or create the KPI row. Creation needs a direction so "toward the
+   *  goal" is well-defined from the first reading. */
+  private ensureKpi(
+    db: Database,
+    name: string,
+    opts: { direction?: KpiDirection; unit?: string | null; note?: string | null },
+  ): { kpi: KpiRow; created: boolean } {
+    const existing = getKpi(db, name);
+    if (existing) return { kpi: existing, created: false };
+    if (!opts.direction) {
+      throw new LoreError(
+        "KPI_NOT_FOUND",
+        `KPI '${name}' does not exist yet. Pass --direction up|down to create it (which way is better?).`,
+      );
+    }
+    return {
+      kpi: insertKpi(db, { name, direction: opts.direction, unit: opts.unit, note: opts.note }),
+      created: true,
+    };
+  }
+
+  /** Narrative a reading belongs to: the named one, else the sole open one, else none. */
+  private resolveKpiNarrativeId(db: Database, narrativeName?: string): string | null {
+    if (narrativeName) {
+      const narrative = getNarrativeByName(db, narrativeName);
+      if (!narrative) {
+        throw new LoreError("LORE_NOT_FOUND", `Narrative '${narrativeName}' not found`);
+      }
+      return narrative.id;
+    }
+    const open = getOpenNarratives(db);
+    return open.length === 1 ? (open[0]?.id ?? null) : null;
+  }
+
+  async kpiLog(
+    name: string,
+    value: number,
+    opts?: {
+      codePath?: string;
+      direction?: KpiDirection;
+      unit?: string | null;
+      note?: string | null;
+      narrative?: string;
+      meta?: Record<string, unknown> | null;
+    },
+  ): Promise<KpiLogResult> {
+    if (!Number.isFinite(value)) {
+      throw new LoreError("KPI_INVALID_VALUE", `KPI value must be a finite number, got '${value}'`);
+    }
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const gitHead = await getHeadSha(entry.code_path);
+    const narrativeId = this.resolveKpiNarrativeId(db, opts?.narrative);
+
+    const { kpi, created, reading } = db.transaction(() => {
+      const ensured = this.ensureKpi(db, name, opts ?? {});
+      const row = insertKpiReading(db, {
+        kpiName: ensured.kpi.name,
+        value,
+        narrativeId,
+        gitHead,
+        loreCommitId: getHeadCommit(db)?.id ?? null,
+        meta: opts?.meta,
+      });
+      return { kpi: ensured.kpi, created: ensured.created, reading: row };
+    })();
+
+    return {
+      kpi: this.kpiStatusFor(db, kpi, 10),
+      reading: this.kpiReadingSummary(db, reading),
+      created_kpi: created,
+    };
+  }
+
+  kpiGoal(
+    name: string,
+    target: number,
+    opts?: { codePath?: string; direction?: KpiDirection; unit?: string | null; note?: string | null },
+  ): KpiGoalResult {
+    if (!Number.isFinite(target)) {
+      throw new LoreError("KPI_INVALID_VALUE", `KPI goal must be a finite number, got '${target}'`);
+    }
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    const { kpi, created } = db.transaction(() => {
+      const ensured = this.ensureKpi(db, name, opts ?? {});
+      insertKpiGoal(db, { kpiName: ensured.kpi.name, target });
+      return ensured;
+    })();
+    return { kpi: this.kpiStatusFor(db, kpi, 10), created_kpi: created };
+  }
+
+  kpiStatus(opts?: { codePath?: string; name?: string; limit?: number }): KpiStatus[] {
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    const limit = opts?.limit ?? 10;
+    if (opts?.name) {
+      const kpi = getKpi(db, opts.name);
+      if (!kpi) throw new LoreError("KPI_NOT_FOUND", `KPI '${opts.name}' not found`);
+      return [this.kpiStatusFor(db, kpi, limit)];
+    }
+    return listKpis(db).map((kpi) => this.kpiStatusFor(db, kpi, limit));
   }
 
   async computeConceptHealth(opts?: {

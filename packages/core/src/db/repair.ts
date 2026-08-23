@@ -83,6 +83,8 @@ const RECONCILABLE_MIGRATIONS = new Set([
   "026_close_jobs",
   // Pure DDL: drops always-null columns via a column-preserving table rebuild.
   "027_drop_dead_narrative_metrics",
+  // Pure DDL: new kpis / kpi_goals / kpi_readings tables and a view.
+  "028_kpis",
 ]);
 
 function quoteSqliteIdentifier(name: string): string {

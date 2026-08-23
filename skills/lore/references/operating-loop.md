@@ -64,6 +64,26 @@ lore write add-webhooks "Webhook delivery hangs off EventBus fan-out rather than
 - Write findings as they are discovered, including failed leads.
 - Use `lore trail <narrative>` later to reconstruct the investigation history.
 
+## Chasing A Number
+
+- Track a metric as a KPI so each reading carries provenance (narrative, git
+  head, lore commit) instead of living in a scratch CSV.
+- First reading (or first goal) must say which way is better with
+  `--direction up|down`; later readings only need the name and value.
+- Readings attach to the sole open narrative automatically; pass
+  `--narrative <name>` when several are open.
+- `lore kpi status` shows latest, delta toward the goal, and remaining gap;
+  `lore kpi status <name>` adds recent readings with their provenance.
+
+Example:
+
+```bash
+lore kpi log recall@10 0.518 --direction up --meta bench=httpx
+lore kpi goal recall@10 0.8
+lore kpi log recall@10 0.61
+lore kpi status recall@10
+```
+
 ## Maintenance And Drift Work
 
 - Start with `lore status` and `lore suggest`.

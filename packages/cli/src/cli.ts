@@ -50,6 +50,7 @@ import {
   relationsListCommand,
 } from "./commands/relations.ts";
 import { conceptTagCommand, conceptUntagCommand, conceptTagsListCommand } from "./commands/tags.ts";
+import { kpiGoalCommand, kpiLogCommand, kpiStatusCommand } from "./commands/kpi.ts";
 import {
   healthComputeCommand,
   healthExplainCommand,
@@ -86,6 +87,12 @@ export function getVersionString(): string {
     if (ref) return `${semver} (${ref})`;
   } catch {}
   return semver;
+}
+
+function parseKpiDirection(raw: string | undefined): "up" | "down" | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "up" || raw === "down") return raw;
+  throw new Error(`Invalid --direction '${raw}'. Use up or down.`);
 }
 
 function handleCliError(error: unknown, exit: (code: number) => void | never): void {
@@ -344,6 +351,73 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           throw new Error(`Invalid score '${args.score}'. Use an integer from 1 to 5.`);
         }
         await scoreCommand(getWorker(), args["result-id"], args.score);
+      },
+    }),
+    kpi: defineCommand({
+      name: "kpi",
+      description: "Track progress metrics as a timeseries with goals",
+      subcommands: {
+        log: defineCommand({
+          name: "log",
+          description: "Record a KPI reading (creates the KPI on first use with --direction)",
+          arguments: {
+            name: { type: "string", required: true, description: "KPI name" },
+            value: { type: "number", required: true, description: "Measured value" },
+          },
+          options: {
+            direction: { type: "string", description: "Which way is better: up|down (required on first log)" },
+            unit: { type: "string", description: "Unit label, e.g. ms, %, auc" },
+            note: { type: "string", description: "What this KPI measures" },
+            narrative: { type: "string", description: "Attach to this narrative (default: the sole open one)" },
+            meta: { type: "string", repeatable: true, description: "Extra key=value dimension (repeatable)" },
+          },
+          async action({ args, options }) {
+            await kpiLogCommand(getWorker(), args.name, args.value, {
+              direction: parseKpiDirection(options.direction as string | undefined),
+              unit: options.unit as string | undefined,
+              note: options.note as string | undefined,
+              narrative: options.narrative as string | undefined,
+              meta: options.meta === undefined ? undefined : ([] as string[]).concat(options.meta as string | string[]),
+            });
+          },
+        }),
+        goal: defineCommand({
+          name: "goal",
+          description: "Set (or replace) the target for a KPI",
+          arguments: {
+            name: { type: "string", required: true, description: "KPI name" },
+            target: { type: "number", required: true, description: "Target value" },
+          },
+          options: {
+            direction: { type: "string", description: "Which way is better: up|down (required on first use)" },
+            unit: { type: "string", description: "Unit label" },
+            note: { type: "string", description: "What this KPI measures" },
+          },
+          async action({ args, options }) {
+            await kpiGoalCommand(getWorker(), args.name, args.target, {
+              direction: parseKpiDirection(options.direction as string | undefined),
+              unit: options.unit as string | undefined,
+              note: options.note as string | undefined,
+            });
+          },
+        }),
+        status: defineCommand({
+          name: "status",
+          description: "Show KPIs: latest value, delta, gap to goal (with history for one KPI)",
+          arguments: {
+            name: { type: "string", description: "KPI name (omit for all)" },
+          },
+          options: {
+            limit: { type: "number", description: "Readings to show for one KPI (default 10)" },
+          },
+          async action({ args, options }) {
+            await kpiStatusCommand(
+              getWorker(),
+              args.name as string | undefined,
+              options.limit as number | undefined,
+            );
+          },
+        }),
       },
     }),
     trail: defineCommand({

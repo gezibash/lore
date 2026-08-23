@@ -7,6 +7,7 @@ import type {
   LsResult,
   ConceptRow,
   ConceptTagSummary,
+  KpiStatus,
   NarrativeRow,
   HealConceptsResult,
   QueryResult,
@@ -261,6 +262,58 @@ export function formatConceptTagsCli(tags: ConceptTagSummary[]): string {
   lines.push(`${BOLD}Concept Tags${RESET}`);
   for (const tag of tags) {
     lines.push(`- ${CYAN}${tag.concept}${RESET}: ${tag.tag}`);
+  }
+  return lines.join("\n");
+}
+
+function fmtNum(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+export function formatKpiStatusCli(kpis: KpiStatus[], opts?: { history?: boolean }): string {
+  if (kpis.length === 0) {
+    return `${DIM}No KPIs yet. Start one with: lore kpi log <name> <value> --direction up|down${RESET}`;
+  }
+
+  const lines: string[] = [];
+  for (const kpi of kpis) {
+    const unit = kpi.unit ? ` ${kpi.unit}` : "";
+    const arrow = kpi.direction === "up" ? "↑" : "↓";
+    const latest = kpi.latest ? `${fmtNum(kpi.latest.value)}${unit}` : `${DIM}no readings${RESET}`;
+
+    let delta = "";
+    if (kpi.delta_toward_goal != null) {
+      const d = kpi.delta_toward_goal;
+      const color = d > 0 ? GREEN : d < 0 ? RED : DIM;
+      delta = `  ${color}${d > 0 ? "+" : ""}${fmtNum(d)}${RESET}`;
+    }
+
+    let goal = "";
+    if (kpi.goal != null) {
+      if (kpi.goal_met) goal = `  ${GREEN}goal ${fmtNum(kpi.goal)} met${RESET}`;
+      else if (kpi.gap != null) goal = `  ${YELLOW}goal ${fmtNum(kpi.goal)} (gap ${fmtNum(kpi.gap)})${RESET}`;
+      else goal = `  ${DIM}goal ${fmtNum(kpi.goal)}${RESET}`;
+    }
+
+    const when = kpi.latest ? `  ${DIM}${timeAgo(kpi.latest.created_at)}${RESET}` : "";
+    const count = `  ${DIM}(${kpi.reading_count} readings)${RESET}`;
+    lines.push(`${BOLD}${CYAN}${kpi.name}${RESET} ${arrow}  ${latest}${delta}${goal}${when}${count}`);
+    if (kpi.note) lines.push(`  ${DIM}${kpi.note}${RESET}`);
+
+    if (opts?.history) {
+      for (const reading of kpi.recent) {
+        const prov = [
+          reading.narrative ? `narrative ${reading.narrative}` : null,
+          reading.git_head ? reading.git_head.slice(0, 7) : null,
+          reading.meta ? Object.entries(reading.meta).map(([k, v]) => `${k}=${String(v)}`).join(" ") : null,
+        ]
+          .filter(Boolean)
+          .join("  ");
+        lines.push(
+          `  ${reading.created_at.slice(0, 16).replace("T", " ")}  ${fmtNum(reading.value)}${unit}${prov ? `  ${DIM}${prov}${RESET}` : ""}`,
+        );
+      }
+    }
   }
   return lines.join("\n");
 }

@@ -352,7 +352,7 @@ line numbers are as of commit `5d49d2a` — re-locate by symbol name if drifted.
 | Bindings, drift, coverage queries (`getDriftedBindings`, `getBindingCounts`, `getCoverageStats`, `getFileCoverage`) | `packages/core/src/db/concept-symbols.ts`; tables `concept_symbols` → `symbols` → `source_files` |
 | Interaction events; `recordInteraction` wrapper | `packages/core/src/db/interaction-events.ts`; `packages/core/src/engine/index.ts` (~459, call sites ~809–3261) |
 | Manifest (`debt`, `debt_trend`, `fiedler_value`, `graph_stale`) | `packages/core/src/db/manifest.ts` |
-| Migrations | `packages/core/src/db/migrations/` (latest `026_close_jobs.sql`; next is 027), applied by `db/migrator.ts` |
+| Migrations | `packages/core/src/db/migrations/` (latest `028_kpis.sql`; next is 029), applied by `db/migrator.ts` |
 | Dead narrative fields (`theta`, `convergence`, `magnitude`) | `db/narratives.ts`, `types/index.ts`, migration 027 |
 | Pressure/residual display | `packages/core/src/formatters.ts` (~568–683), `packages/cli/src/formatters.ts` |
 | Suggestions consuming pressure | `packages/core/src/engine/suggest.ts` |
