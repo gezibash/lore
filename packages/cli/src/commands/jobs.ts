@@ -50,10 +50,7 @@ export async function closeJobsCommand(
   return jobs;
 }
 
-export async function closeJobCommand(
-  client: WorkerClient,
-  jobId: string,
-): Promise<LoreJobDetail> {
+export async function closeJobCommand(client: WorkerClient, jobId: string): Promise<LoreJobDetail> {
   const detail = await client.getJobDetail(jobId);
   emit(detail, formatJobDetail);
   return detail;

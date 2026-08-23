@@ -16,14 +16,33 @@
  */
 
 const VOID_OR_INLINE = new Set([
-  "a", "b", "i", "em", "strong", "span", "code", "small", "sub", "sup",
-  "abbr", "cite", "q", "u", "s", "mark", "br", "wbr", "img", "time",
+  "a",
+  "b",
+  "i",
+  "em",
+  "strong",
+  "span",
+  "code",
+  "small",
+  "sub",
+  "sup",
+  "abbr",
+  "cite",
+  "q",
+  "u",
+  "s",
+  "mark",
+  "br",
+  "wbr",
+  "img",
+  "time",
 ]);
 
 const HTML_HEADING = /^h([1-6])$/i;
 
 /** XML element names that conventionally carry a structural title. */
-const XML_TITLE_TAGS = /^(ti|ti\.art|ti\.cha|ti\.sec|title|sti|sti\.art|subtitle|heading|head|subject|name|caption)$/i;
+const XML_TITLE_TAGS =
+  /^(ti|ti\.art|ti\.cha|ti\.sec|title|sti|sti\.art|subtitle|heading|head|subject|name|caption)$/i;
 
 /**
  * XML elements that are formatting or labels, not structure. Treating these as
@@ -130,7 +149,9 @@ export function extractMarkupMarkdown(source: string, kind: "html" | "xml"): str
       out[out.length - 1] = `${previous} — ${block.text}`;
       continue;
     }
-    out.push(block.level > 0 ? `${"#".repeat(Math.min(6, block.level))} ${block.text}` : block.text);
+    out.push(
+      block.level > 0 ? `${"#".repeat(Math.min(6, block.level))} ${block.text}` : block.text,
+    );
   }
   const text = out.join("\n\n").trim();
   return text.length > 0 ? text : null;

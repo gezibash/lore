@@ -40,11 +40,7 @@ function daemonDisabled(): boolean {
   return process.env.LORE_DAEMON_DISABLE === "1";
 }
 
-async function sendRequest(
-  socketPath: string,
-  method: string,
-  args: unknown[],
-): Promise<unknown> {
+async function sendRequest(socketPath: string, method: string, args: unknown[]): Promise<unknown> {
   const request: DaemonRequest = {
     id: randomUUID(),
     method,
@@ -240,9 +236,7 @@ export function readLoreDaemonLog(limit = 200): LoreDaemonLogSnapshot {
   if (!existsSync(paths.logPath)) {
     return { path: paths.logPath, lines: [] };
   }
-  const lines = readFileSync(paths.logPath, "utf-8")
-    .split(/\r?\n/)
-    .filter(Boolean);
+  const lines = readFileSync(paths.logPath, "utf-8").split(/\r?\n/).filter(Boolean);
   return {
     path: paths.logPath,
     lines: lines.slice(Math.max(0, lines.length - Math.max(1, limit))),

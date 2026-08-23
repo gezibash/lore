@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ConceptRelationRow, ConceptRow } from "@/types/index.ts";
-import {
-  buildConceptHealthNeighbors,
-  computeConceptHealthSignals,
-} from "./concept-health.ts";
+import { buildConceptHealthNeighbors, computeConceptHealthSignals } from "./concept-health.ts";
 
 function concept(overrides?: Partial<ConceptRow>): ConceptRow {
   return {

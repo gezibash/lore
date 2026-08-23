@@ -172,1080 +172,1108 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       },
     },
     commands: {
-    open: defineCommand({
-      name: "open",
-      description: "Open a new narrative",
-      arguments: {
-        narrative: { type: "string", required: true, description: "Narrative name" },
-        intent: { type: "string", required: true, description: "Intent description" },
-      },
-      options: {
-        resolve: {
-          type: "string",
-          repeatable: true,
-          description:
-            "Resolve a dangling narrative (repeatable): name:resume|abandon. Repeat it once per dangling narrative — any unresolved one blocks the open.",
+      open: defineCommand({
+        name: "open",
+        description: "Open a new narrative",
+        arguments: {
+          narrative: { type: "string", required: true, description: "Narrative name" },
+          intent: { type: "string", required: true, description: "Intent description" },
         },
-        "from-result": {
-          type: "string",
-          description: "Associate this follow-up with a prior lore ask result ID",
+        options: {
+          resolve: {
+            type: "string",
+            repeatable: true,
+            description:
+              "Resolve a dangling narrative (repeatable): name:resume|abandon. Repeat it once per dangling narrative — any unresolved one blocks the open.",
+          },
+          "from-result": {
+            type: "string",
+            description: "Associate this follow-up with a prior lore ask result ID",
+          },
+          target: {
+            type: "string",
+            repeatable: true,
+            description:
+              "Declare a concept target (repeatable). Syntax: op:concept, e.g. update:auth-model, rename:old:new, merge:src:into, archive:name[:reason], split:name[:parts], restore:name",
+          },
         },
-        target: {
-          type: "string",
-          repeatable: true,
-          description:
-            "Declare a concept target (repeatable). Syntax: op:concept, e.g. update:auth-model, rename:old:new, merge:src:into, archive:name[:reason], split:name[:parts], restore:name",
+        async action({ args, options }) {
+          const rawTargets = options.target
+            ? (Array.isArray(options.target)
+                ? (options.target as string[])
+                : [options.target as string]
+              ).filter(Boolean)
+            : undefined;
+          const targetSpecs = rawTargets && rawTargets.length > 0 ? rawTargets : undefined;
+          await openCommand(
+            getWorker(),
+            args.narrative,
+            args.intent,
+            options.resolve as string | string[] | undefined,
+            targetSpecs,
+            options["from-result"] as string | undefined,
+          );
         },
-      },
-      async action({ args, options }) {
-        const rawTargets = options.target
-          ? (Array.isArray(options.target)
-              ? (options.target as string[])
-              : [options.target as string]
-            ).filter(Boolean)
-          : undefined;
-        const targetSpecs = rawTargets && rawTargets.length > 0 ? rawTargets : undefined;
-        await openCommand(
-          getWorker(),
-          args.narrative,
-          args.intent,
-          options.resolve as string | string[] | undefined,
-          targetSpecs,
-          options["from-result"] as string | undefined,
-        );
-      },
-    }),
-    write: defineCommand({
-      name: "write",
-      description: "Write a journal entry to an open narrative",
-      arguments: {
-        narrative: { type: "string", required: true, description: "Narrative name" },
-        entry: { type: "string", required: true, description: "Journal entry" },
-      },
-      options: {
-        concept: {
-          type: "string",
-          repeatable: true,
-          description:
-            "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+      }),
+      write: defineCommand({
+        name: "write",
+        description: "Write a journal entry to an open narrative",
+        arguments: {
+          narrative: { type: "string", required: true, description: "Narrative name" },
+          entry: { type: "string", required: true, description: "Journal entry" },
         },
-        topic: {
-          type: "string",
-          repeatable: true,
-          description:
-            "Optional topic keyword (repeatable). Defaults to the concept names when omitted.",
+        options: {
+          concept: {
+            type: "string",
+            repeatable: true,
+            description:
+              "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+          },
+          topic: {
+            type: "string",
+            repeatable: true,
+            description:
+              "Optional topic keyword (repeatable). Defaults to the concept names when omitted.",
+          },
+          symbol: {
+            type: "string",
+            repeatable: true,
+            description: "Optional symbol qualified name (repeatable).",
+          },
+          ref: {
+            type: "string",
+            description: "File refs (comma-separated: path or path:start-end)",
+          },
         },
-        symbol: {
-          type: "string",
-          repeatable: true,
-          description: "Optional symbol qualified name (repeatable).",
+        async action({ args, options }) {
+          const concepts = options.concept
+            ? (Array.isArray(options.concept)
+                ? (options.concept as string[])
+                : [options.concept as string]
+              )
+                .map((concept: string) => concept.trim())
+                .filter(Boolean)
+            : [];
+          const topics = options.topic
+            ? (Array.isArray(options.topic)
+                ? (options.topic as string[])
+                : [options.topic as string]
+              )
+                .map((topic: string) => topic.trim())
+                .filter(Boolean)
+            : [];
+          const symbols = options.symbol
+            ? (Array.isArray(options.symbol)
+                ? (options.symbol as string[])
+                : [options.symbol as string]
+              )
+                .map((symbol: string) => symbol.trim())
+                .filter(Boolean)
+            : [];
+          const refs = options.ref
+            ? (options.ref as string)
+                .split(",")
+                .map((r: string) => r.trim())
+                .filter(Boolean)
+            : undefined;
+          await logCommand(getWorker(), args.narrative, args.entry, {
+            concepts,
+            topics,
+            symbols,
+            refs,
+          });
         },
-        ref: { type: "string", description: "File refs (comma-separated: path or path:start-end)" },
-      },
-      async action({ args, options }) {
-        const concepts = options.concept
-          ? (Array.isArray(options.concept)
-              ? (options.concept as string[])
-              : [options.concept as string]
-            )
-              .map((concept: string) => concept.trim())
-              .filter(Boolean)
-          : [];
-        const topics = options.topic
-          ? (Array.isArray(options.topic) ? (options.topic as string[]) : [options.topic as string])
-              .map((topic: string) => topic.trim())
-              .filter(Boolean)
-          : [];
-        const symbols = options.symbol
-          ? (Array.isArray(options.symbol)
-              ? (options.symbol as string[])
-              : [options.symbol as string]
-            )
-              .map((symbol: string) => symbol.trim())
-              .filter(Boolean)
-          : [];
-        const refs = options.ref
-          ? (options.ref as string)
-              .split(",")
-              .map((r: string) => r.trim())
-              .filter(Boolean)
-          : undefined;
-        await logCommand(getWorker(), args.narrative, args.entry, {
-          concepts,
-          topics,
-          symbols,
-          refs,
-        });
-      },
-    }),
-    ask: defineCommand({
-      name: "ask",
-      description: "Ask the lore a question",
-      arguments: {
-        query: { type: "string", required: true, description: "Query text" },
-      },
-      options: {
-        search: { type: "boolean", description: "Include external web search results" },
-        brief: { type: "boolean", description: "Return targeted excerpts instead of full dumps" },
-        concise: { type: "boolean", description: "Return a short, direct answer (1-2 sentences)" },
-        sources: { type: "boolean", description: "Include matched sources in output" },
-        mode: {
-          type: "string",
-          description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)",
+      }),
+      ask: defineCommand({
+        name: "ask",
+        description: "Ask the lore a question",
+        arguments: {
+          query: { type: "string", required: true, description: "Query text" },
         },
-        debug: {
-          type: "boolean",
-          description: "Trace the retrieval pipeline and print why this answer was selected",
+        options: {
+          search: { type: "boolean", description: "Include external web search results" },
+          brief: { type: "boolean", description: "Return targeted excerpts instead of full dumps" },
+          concise: {
+            type: "boolean",
+            description: "Return a short, direct answer (1-2 sentences)",
+          },
+          sources: { type: "boolean", description: "Include matched sources in output" },
+          mode: {
+            type: "string",
+            description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)",
+          },
+          debug: {
+            type: "boolean",
+            description: "Trace the retrieval pipeline and print why this answer was selected",
+          },
         },
-      },
-      async action({ args, options }) {
-        await queryCommand(getWorker(), args.query, {
-          search: options.search,
-          brief: options.brief,
-          concise: options.concise,
-          sources: options.sources,
-          mode: options.mode as "arch" | "code" | undefined,
-          debug: options.debug,
-        });
-      },
-    }),
-    recall: defineCommand({
-      name: "recall",
-      description: "Recall a cached ask result by result ID",
-      arguments: {
-        "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
-      },
-      options: {
-        section: {
-          type: "string",
-          description: "Which section to show: sources, journal, symbols, or full",
+        async action({ args, options }) {
+          await queryCommand(getWorker(), args.query, {
+            search: options.search,
+            brief: options.brief,
+            concise: options.concise,
+            sources: options.sources,
+            mode: options.mode as "arch" | "code" | undefined,
+            debug: options.debug,
+          });
         },
-      },
-      async action({ args, options }) {
-        const section = options.section as string | undefined;
-        if (
-          section &&
-          section !== "sources" &&
-          section !== "journal" &&
-          section !== "symbols" &&
-          section !== "full"
-        ) {
-          throw new Error(`Invalid section '${section}'. Use sources|journal|symbols|full.`);
-        }
-        await recallCommand(
-          getWorker(),
-          args["result-id"],
-          section as "sources" | "journal" | "symbols" | "full" | undefined,
-        );
-      },
-    }),
-    score: defineCommand({
-      name: "score",
-      description: "Rate a cached ask result",
-      arguments: {
-        "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
-        score: { type: "number", required: true, description: "Quality score (1-5)" },
-      },
-      async action({ args }) {
-        if (!Number.isInteger(args.score) || args.score < 1 || args.score > 5) {
-          throw new Error(`Invalid score '${args.score}'. Use an integer from 1 to 5.`);
-        }
-        await scoreCommand(getWorker(), args["result-id"], args.score);
-      },
-    }),
-    kpi: defineCommand({
-      name: "kpi",
-      description: "Track progress metrics as a timeseries with goals",
-      subcommands: {
-        log: defineCommand({
-          name: "log",
-          description: "Record a KPI reading (creates the KPI on first use with --direction)",
-          arguments: {
-            name: { type: "string", required: true, description: "KPI name" },
-            value: { type: "number", required: true, description: "Measured value" },
-          },
-          options: {
-            direction: { type: "string", description: "Which way is better: up|down (required on first log)" },
-            unit: { type: "string", description: "Unit label, e.g. ms, %, auc" },
-            note: { type: "string", description: "What this KPI measures" },
-            narrative: { type: "string", description: "Attach to this narrative (default: the sole open one)" },
-            meta: { type: "string", repeatable: true, description: "Extra key=value dimension (repeatable)" },
-          },
-          async action({ args, options }) {
-            await kpiLogCommand(getWorker(), args.name, args.value, {
-              direction: parseKpiDirection(options.direction as string | undefined),
-              unit: options.unit as string | undefined,
-              note: options.note as string | undefined,
-              narrative: options.narrative as string | undefined,
-              meta: options.meta === undefined ? undefined : ([] as string[]).concat(options.meta as string | string[]),
-            });
-          },
-        }),
-        goal: defineCommand({
-          name: "goal",
-          description: "Set (or replace) the target for a KPI",
-          arguments: {
-            name: { type: "string", required: true, description: "KPI name" },
-            target: { type: "number", required: true, description: "Target value" },
-          },
-          options: {
-            direction: { type: "string", description: "Which way is better: up|down (required on first use)" },
-            unit: { type: "string", description: "Unit label" },
-            note: { type: "string", description: "What this KPI measures" },
-          },
-          async action({ args, options }) {
-            await kpiGoalCommand(getWorker(), args.name, args.target, {
-              direction: parseKpiDirection(options.direction as string | undefined),
-              unit: options.unit as string | undefined,
-              note: options.note as string | undefined,
-            });
-          },
-        }),
-        status: defineCommand({
-          name: "status",
-          description: "Show KPIs: latest value, delta, gap to goal (with history for one KPI)",
-          arguments: {
-            name: { type: "string", description: "KPI name (omit for all)" },
-          },
-          options: {
-            limit: { type: "number", description: "Readings to show for one KPI (default 10)" },
-          },
-          async action({ args, options }) {
-            await kpiStatusCommand(
-              getWorker(),
-              args.name as string | undefined,
-              options.limit as number | undefined,
-            );
-          },
-        }),
-      },
-    }),
-    trail: defineCommand({
-      name: "trail",
-      description: "Reconstruct the full investigation trail for a narrative",
-      arguments: {
-        narrative: { type: "string", required: true, description: "Narrative name" },
-      },
-      options: {
-        "from-result": {
-          type: "string",
-          description: "Associate this follow-up with a prior lore ask result ID",
+      }),
+      recall: defineCommand({
+        name: "recall",
+        description: "Recall a cached ask result by result ID",
+        arguments: {
+          "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
         },
-      },
-      async action({ args, options }) {
-        await trailCommand(
-          getWorker(),
-          args.narrative,
-          options["from-result"] as string | undefined,
-        );
-      },
-    }),
-    init: defineCommand({
-      name: "init",
-      description: "Register a codebase into the lore network",
-      arguments: {
-        path: {
-          type: "string",
-          description: "Path to the codebase (defaults to current directory)",
+        options: {
+          section: {
+            type: "string",
+            description: "Which section to show: sources, journal, symbols, or full",
+          },
         },
-        name: { type: "string", description: "Optional lore name" },
-      },
-      async action({ args }) {
-        await registerCommand(getWorker(), args.path, args.name);
-      },
-    }),
-    status: defineCommand({
-      name: "status",
-      description: "Health snapshot for the current lore",
-      options: {
-        details: {
-          type: "boolean",
-          description: "Show the full diagnostic status report",
+        async action({ args, options }) {
+          const section = options.section as string | undefined;
+          if (
+            section &&
+            section !== "sources" &&
+            section !== "journal" &&
+            section !== "symbols" &&
+            section !== "full"
+          ) {
+            throw new Error(`Invalid section '${section}'. Use sources|journal|symbols|full.`);
+          }
+          await recallCommand(
+            getWorker(),
+            args["result-id"],
+            section as "sources" | "journal" | "symbols" | "full" | undefined,
+          );
         },
-      },
-      async action({ options }) {
-        await statusCommand(getWorker(), { details: Boolean(options.details) });
-      },
-    }),
-    suggest: defineCommand({
-      name: "suggest",
-      description: "Get a prioritized, step-by-step healing plan for the lore",
-      options: {
-        limit: { type: "number", description: "Maximum suggestions to return (default: 10)" },
-        kind: {
-          type: "string",
-          description:
-            "Filter suggestions by kind (merge, relate, close-narrative, abandon-narrative, clean-relation, symbol-drift, coverage-gap, review, cluster-drift, archive)",
+      }),
+      score: defineCommand({
+        name: "score",
+        description: "Rate a cached ask result",
+        arguments: {
+          "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
+          score: { type: "number", required: true, description: "Quality score (1-5)" },
         },
-      },
-      async action({ options }) {
-        await suggestCommand(getWorker(), {
-          limit: options.limit as number | undefined,
-          kind: options.kind as string | undefined,
-        });
-      },
-    }),
-    ls: defineCommand({
-      name: "ls",
-      description: "List all concepts in the current lore mind",
-      options: {
-        group: { type: "string", description: "Group output by: cluster" },
-      },
-      async action({ options }) {
-        const groupRaw = options.group as string | undefined;
-        if (groupRaw && groupRaw !== "cluster") {
-          throw new Error(`Invalid group '${groupRaw}'. Use 'cluster'.`);
-        }
-        await lsCommand(getWorker(), {
-          groupBy: groupRaw as "cluster" | undefined,
-        });
-      },
-    }),
-    close: defineCommand({
-      name: "close",
-      description: "Queue a narrative close (merge) or discard it",
-      arguments: {
-        narrative: { type: "string", required: true, description: "Narrative name" },
-      },
-      options: {
-        mode: { type: "string", description: "merge (default) or discard" },
-        wait: { type: "boolean", description: "Block until the close job finishes" },
-        "poll-ms": { type: "number", description: "Polling interval for --wait in milliseconds" },
-        "merge-strategy": {
-          type: "string",
-          description: "replace (default), extend, or patch",
+        async action({ args }) {
+          if (!Number.isInteger(args.score) || args.score < 1 || args.score > 5) {
+            throw new Error(`Invalid score '${args.score}'. Use an integer from 1 to 5.`);
+          }
+          await scoreCommand(getWorker(), args["result-id"], args.score);
         },
-        "from-result": {
-          type: "string",
-          description: "Associate this close with a prior lore ask result ID",
+      }),
+      kpi: defineCommand({
+        name: "kpi",
+        description: "Track progress metrics as a timeseries with goals",
+        subcommands: {
+          log: defineCommand({
+            name: "log",
+            description: "Record a KPI reading (creates the KPI on first use with --direction)",
+            arguments: {
+              name: { type: "string", required: true, description: "KPI name" },
+              value: { type: "number", required: true, description: "Measured value" },
+            },
+            options: {
+              direction: {
+                type: "string",
+                description: "Which way is better: up|down (required on first log)",
+              },
+              unit: { type: "string", description: "Unit label, e.g. ms, %, auc" },
+              note: { type: "string", description: "What this KPI measures" },
+              narrative: {
+                type: "string",
+                description: "Attach to this narrative (default: the sole open one)",
+              },
+              meta: {
+                type: "string",
+                repeatable: true,
+                description: "Extra key=value dimension (repeatable)",
+              },
+            },
+            async action({ args, options }) {
+              await kpiLogCommand(getWorker(), args.name, args.value, {
+                direction: parseKpiDirection(options.direction as string | undefined),
+                unit: options.unit as string | undefined,
+                note: options.note as string | undefined,
+                narrative: options.narrative as string | undefined,
+                meta:
+                  options.meta === undefined
+                    ? undefined
+                    : ([] as string[]).concat(options.meta as string | string[]),
+              });
+            },
+          }),
+          goal: defineCommand({
+            name: "goal",
+            description: "Set (or replace) the target for a KPI",
+            arguments: {
+              name: { type: "string", required: true, description: "KPI name" },
+              target: { type: "number", required: true, description: "Target value" },
+            },
+            options: {
+              direction: {
+                type: "string",
+                description: "Which way is better: up|down (required on first use)",
+              },
+              unit: { type: "string", description: "Unit label" },
+              note: { type: "string", description: "What this KPI measures" },
+            },
+            async action({ args, options }) {
+              await kpiGoalCommand(getWorker(), args.name, args.target, {
+                direction: parseKpiDirection(options.direction as string | undefined),
+                unit: options.unit as string | undefined,
+                note: options.note as string | undefined,
+              });
+            },
+          }),
+          status: defineCommand({
+            name: "status",
+            description: "Show KPIs: latest value, delta, gap to goal (with history for one KPI)",
+            arguments: {
+              name: { type: "string", description: "KPI name (omit for all)" },
+            },
+            options: {
+              limit: { type: "number", description: "Readings to show for one KPI (default 10)" },
+            },
+            async action({ args, options }) {
+              await kpiStatusCommand(
+                getWorker(),
+                args.name as string | undefined,
+                options.limit as number | undefined,
+              );
+            },
+          }),
         },
-      },
-      async action({ args, options }) {
-        const mode = (options.mode === "discard" ? "discard" : "merge") as "merge" | "discard";
-        const rawStrategy = options["merge-strategy"];
-        const mergeStrategy =
-          rawStrategy === "extend" || rawStrategy === "patch" || rawStrategy === "correct"
-            ? (rawStrategy as "extend" | "patch" | "correct")
-            : rawStrategy === "replace"
-              ? ("replace" as const)
-              : undefined;
-        const result = await closeCommand(
-          getWorker(),
-          args.narrative,
-          mode,
-          mergeStrategy,
-          options["from-result"] as string | undefined,
-          {
-            wait: Boolean(options.wait),
-            pollMs: options["poll-ms"] as number | undefined,
-          },
-        );
-      },
-    }),
-    jobs: defineCommand({
-      name: "jobs",
-      description: "List recent daemon jobs",
-      options: {
-        limit: { type: "number", description: "Maximum jobs to show" },
-        type: {
-          type: "string",
-          description: "Filter to close, ingest, or rebuild jobs",
+      }),
+      trail: defineCommand({
+        name: "trail",
+        description: "Reconstruct the full investigation trail for a narrative",
+        arguments: {
+          narrative: { type: "string", required: true, description: "Narrative name" },
         },
-      },
-      async action({ options }) {
-        const type = options.type as "close" | "ingest" | "rebuild" | undefined;
-        if (type && type !== "close" && type !== "ingest" && type !== "rebuild") {
-          throw new Error("Job type must be one of: close, ingest, rebuild");
-        }
-        await closeJobsCommand(getWorker(), {
-          limit: options.limit as number | undefined,
-          type,
-        });
-      },
-    }),
-    job: defineCommand({
-      name: "job",
-      description: "Inspect one daemon job",
-      arguments: {
-        id: { type: "string", required: true, description: "Job ID" },
-      },
-      async action({ args }) {
-        await closeJobCommand(getWorker(), args.id);
-      },
-    }),
-    wait: defineCommand({
-      name: "wait",
-      description: "Wait for a daemon job to finish",
-      arguments: {
-        id: { type: "string", required: true, description: "Job ID" },
-      },
-      options: {
-        "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
-      },
-      async action({ args, options }) {
-        await waitCommand(getWorker(), args.id, {
-          pollMs: options["poll-ms"] as number | undefined,
-        });
-      },
-    }),
-    ingest: defineCommand({
-      name: "ingest",
-      description:
-        "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
-      arguments: {
-        file: { type: "string", required: false, description: "Specific file to ingest" },
-      },
-      options: {
-        force: {
-          type: "boolean",
-          description: "Re-chunk every file, ignoring the unchanged-content check",
+        options: {
+          "from-result": {
+            type: "string",
+            description: "Associate this follow-up with a prior lore ask result ID",
+          },
         },
-      },
-      async action({ args, options }) {
-        const file = args.file as string | undefined;
-        if (file) {
-          await ingestFileCommand(getWorker(), file);
-        } else {
-          await ingestAllCommand(getWorker(), { force: options.force as boolean | undefined });
-        }
-      },
-    }),
-    daemon: defineCommand({
-      name: "daemon",
-      description: "Manage the local Lore daemon",
-      subcommands: {
-        start: defineCommand({
-          name: "start",
-          description: "Start the local Lore daemon",
-          async action() {
-            await daemonStartCommand();
+        async action({ args, options }) {
+          await trailCommand(
+            getWorker(),
+            args.narrative,
+            options["from-result"] as string | undefined,
+          );
+        },
+      }),
+      init: defineCommand({
+        name: "init",
+        description: "Register a codebase into the lore network",
+        arguments: {
+          path: {
+            type: "string",
+            description: "Path to the codebase (defaults to current directory)",
           },
-        }),
-        status: defineCommand({
-          name: "status",
-          description: "Show Lore daemon status",
-          async action() {
-            await daemonStatusCommand();
+          name: { type: "string", description: "Optional lore name" },
+        },
+        async action({ args }) {
+          await registerCommand(getWorker(), args.path, args.name);
+        },
+      }),
+      status: defineCommand({
+        name: "status",
+        description: "Health snapshot for the current lore",
+        options: {
+          details: {
+            type: "boolean",
+            description: "Show the full diagnostic status report",
           },
-        }),
-        stop: defineCommand({
-          name: "stop",
-          description: "Stop the local Lore daemon",
-          async action() {
-            await daemonStopCommand();
+        },
+        async action({ options }) {
+          await statusCommand(getWorker(), { details: Boolean(options.details) });
+        },
+      }),
+      suggest: defineCommand({
+        name: "suggest",
+        description: "Get a prioritized, step-by-step healing plan for the lore",
+        options: {
+          limit: { type: "number", description: "Maximum suggestions to return (default: 10)" },
+          kind: {
+            type: "string",
+            description:
+              "Filter suggestions by kind (merge, relate, close-narrative, abandon-narrative, clean-relation, symbol-drift, coverage-gap, review, cluster-drift, archive)",
           },
-        }),
-        logs: defineCommand({
-          name: "logs",
-          description: "Show recent Lore daemon logs",
-          options: {
-            lines: { type: "number", description: "Number of lines to show" },
+        },
+        async action({ options }) {
+          await suggestCommand(getWorker(), {
+            limit: options.limit as number | undefined,
+            kind: options.kind as string | undefined,
+          });
+        },
+      }),
+      ls: defineCommand({
+        name: "ls",
+        description: "List all concepts in the current lore mind",
+        options: {
+          group: { type: "string", description: "Group output by: cluster" },
+        },
+        async action({ options }) {
+          const groupRaw = options.group as string | undefined;
+          if (groupRaw && groupRaw !== "cluster") {
+            throw new Error(`Invalid group '${groupRaw}'. Use 'cluster'.`);
+          }
+          await lsCommand(getWorker(), {
+            groupBy: groupRaw as "cluster" | undefined,
+          });
+        },
+      }),
+      close: defineCommand({
+        name: "close",
+        description: "Queue a narrative close (merge) or discard it",
+        arguments: {
+          narrative: { type: "string", required: true, description: "Narrative name" },
+        },
+        options: {
+          mode: { type: "string", description: "merge (default) or discard" },
+          wait: { type: "boolean", description: "Block until the close job finishes" },
+          "poll-ms": { type: "number", description: "Polling interval for --wait in milliseconds" },
+          "merge-strategy": {
+            type: "string",
+            description: "replace (default), extend, or patch",
           },
-          async action({ options }) {
-            await daemonLogsCommand((options.lines as number | undefined) ?? 100);
+          "from-result": {
+            type: "string",
+            description: "Associate this close with a prior lore ask result ID",
           },
-        }),
-        serve: defineCommand({
-          name: "serve",
-          description: "Internal daemon entrypoint",
-          options: {
-            socket: { type: "string", description: "Socket path override" },
-            db: { type: "string", description: "Queue DB path override" },
-            log: { type: "string", description: "Log path override" },
-          },
-          async action({ options }) {
-            await serveLoreDaemon({
-              socket: options.socket as string | undefined,
-              db: options.db as string | undefined,
-              log: options.log as string | undefined,
-            });
-          },
-        }),
-      },
-    }),
-    sys: defineCommand({
-      name: "sys",
-      description: "System administration for the current lore",
-      subcommands: {
-        worker: defineCommand({
-          name: "worker",
-          description: "Ask the daemon to drain queued close jobs",
-          options: {
-            once: { type: "boolean", description: "Run until the queue is empty, then exit" },
-            watch: { type: "boolean", description: "Keep polling for new jobs" },
-            "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
-          },
-          async action({ options }) {
-            const watch = Boolean(options.watch) && !options.once;
-            await workerCommand(getWorker(), {
-              watch,
+        },
+        async action({ args, options }) {
+          const mode = (options.mode === "discard" ? "discard" : "merge") as "merge" | "discard";
+          const rawStrategy = options["merge-strategy"];
+          const mergeStrategy =
+            rawStrategy === "extend" || rawStrategy === "patch" || rawStrategy === "correct"
+              ? (rawStrategy as "extend" | "patch" | "correct")
+              : rawStrategy === "replace"
+                ? ("replace" as const)
+                : undefined;
+          const result = await closeCommand(
+            getWorker(),
+            args.narrative,
+            mode,
+            mergeStrategy,
+            options["from-result"] as string | undefined,
+            {
+              wait: Boolean(options.wait),
               pollMs: options["poll-ms"] as number | undefined,
-            });
-          },
-        }),
-        rebuild: defineCommand({
-          name: "rebuild",
-          description: "Rebuild DB from disk for the current lore",
-          async action() {
-            await rebuildCommand(getWorker());
-          },
-        }),
-        coverage: defineCommand({
-          name: "coverage",
-          description: "Show symbol coverage stats for the lore mind",
-          options: {
-            uncovered: {
-              type: "boolean",
-              description: "List uncovered exported symbols",
             },
-            file: {
-              type: "string",
-              description: "Filter to a specific file path",
+          );
+        },
+      }),
+      jobs: defineCommand({
+        name: "jobs",
+        description: "List recent daemon jobs",
+        options: {
+          limit: { type: "number", description: "Maximum jobs to show" },
+          type: {
+            type: "string",
+            description: "Filter to close, ingest, or rebuild jobs",
+          },
+        },
+        async action({ options }) {
+          const type = options.type as "close" | "ingest" | "rebuild" | undefined;
+          if (type && type !== "close" && type !== "ingest" && type !== "rebuild") {
+            throw new Error("Job type must be one of: close, ingest, rebuild");
+          }
+          await closeJobsCommand(getWorker(), {
+            limit: options.limit as number | undefined,
+            type,
+          });
+        },
+      }),
+      job: defineCommand({
+        name: "job",
+        description: "Inspect one daemon job",
+        arguments: {
+          id: { type: "string", required: true, description: "Job ID" },
+        },
+        async action({ args }) {
+          await closeJobCommand(getWorker(), args.id);
+        },
+      }),
+      wait: defineCommand({
+        name: "wait",
+        description: "Wait for a daemon job to finish",
+        arguments: {
+          id: { type: "string", required: true, description: "Job ID" },
+        },
+        options: {
+          "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
+        },
+        async action({ args, options }) {
+          await waitCommand(getWorker(), args.id, {
+            pollMs: options["poll-ms"] as number | undefined,
+          });
+        },
+      }),
+      ingest: defineCommand({
+        name: "ingest",
+        description:
+          "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
+        arguments: {
+          file: { type: "string", required: false, description: "Specific file to ingest" },
+        },
+        options: {
+          force: {
+            type: "boolean",
+            description: "Re-chunk every file, ignoring the unchanged-content check",
+          },
+        },
+        async action({ args, options }) {
+          const file = args.file as string | undefined;
+          if (file) {
+            await ingestFileCommand(getWorker(), file);
+          } else {
+            await ingestAllCommand(getWorker(), { force: options.force as boolean | undefined });
+          }
+        },
+      }),
+      daemon: defineCommand({
+        name: "daemon",
+        description: "Manage the local Lore daemon",
+        subcommands: {
+          start: defineCommand({
+            name: "start",
+            description: "Start the local Lore daemon",
+            async action() {
+              await daemonStartCommand();
             },
-          },
-          async action({ options }) {
-            await coverageCommand(getWorker(), {
-              uncovered: options.uncovered,
-              file: options.file as string | undefined,
-            });
-          },
-        }),
-        embeddings: defineCommand({
-          name: "embeddings",
-          description: "Embedding maintenance commands for the current lore",
-          subcommands: {
-            refresh: defineCommand({
-              name: "refresh",
-              description: "Refresh all embeddings with the current model",
-              async action() {
-                await refreshEmbeddingsCommand(getWorker());
+          }),
+          status: defineCommand({
+            name: "status",
+            description: "Show Lore daemon status",
+            async action() {
+              await daemonStatusCommand();
+            },
+          }),
+          stop: defineCommand({
+            name: "stop",
+            description: "Stop the local Lore daemon",
+            async action() {
+              await daemonStopCommand();
+            },
+          }),
+          logs: defineCommand({
+            name: "logs",
+            description: "Show recent Lore daemon logs",
+            options: {
+              lines: { type: "number", description: "Number of lines to show" },
+            },
+            async action({ options }) {
+              await daemonLogsCommand((options.lines as number | undefined) ?? 100);
+            },
+          }),
+          serve: defineCommand({
+            name: "serve",
+            description: "Internal daemon entrypoint",
+            options: {
+              socket: { type: "string", description: "Socket path override" },
+              db: { type: "string", description: "Queue DB path override" },
+              log: { type: "string", description: "Log path override" },
+            },
+            async action({ options }) {
+              await serveLoreDaemon({
+                socket: options.socket as string | undefined,
+                db: options.db as string | undefined,
+                log: options.log as string | undefined,
+              });
+            },
+          }),
+        },
+      }),
+      sys: defineCommand({
+        name: "sys",
+        description: "System administration for the current lore",
+        subcommands: {
+          worker: defineCommand({
+            name: "worker",
+            description: "Ask the daemon to drain queued close jobs",
+            options: {
+              once: { type: "boolean", description: "Run until the queue is empty, then exit" },
+              watch: { type: "boolean", description: "Keep polling for new jobs" },
+              "poll-ms": { type: "number", description: "Polling interval in milliseconds" },
+            },
+            async action({ options }) {
+              const watch = Boolean(options.watch) && !options.once;
+              await workerCommand(getWorker(), {
+                watch,
+                pollMs: options["poll-ms"] as number | undefined,
+              });
+            },
+          }),
+          rebuild: defineCommand({
+            name: "rebuild",
+            description: "Rebuild DB from disk for the current lore",
+            async action() {
+              await rebuildCommand(getWorker());
+            },
+          }),
+          coverage: defineCommand({
+            name: "coverage",
+            description: "Show symbol coverage stats for the lore mind",
+            options: {
+              uncovered: {
+                type: "boolean",
+                description: "List uncovered exported symbols",
               },
-            }),
-          },
-        }),
-        reset: defineCommand({
-          name: "reset",
-          description: "Wipe all data for the current lore (keeps registration)",
-          options: {
-            force: { type: "boolean", description: "Skip confirmation" },
-          },
-          async action({ options }) {
-            await mindResetCommand(getWorker(), options.force);
-          },
-        }),
-        relations: defineCommand({
-          name: "relations",
-          description: "Manage concept relations in the current lore mind",
-          subcommands: {
-            set: defineCommand({
-              name: "set",
-              description: "Create or update a relation between two concepts",
-              arguments: {
-                from: { type: "string", required: true, description: "Source concept" },
-                to: { type: "string", required: true, description: "Target concept" },
-                type: {
-                  type: "string",
-                  required: true,
-                  description: "Relation type (depends_on|constrains|implements|uses|related_to)",
+              file: {
+                type: "string",
+                description: "Filter to a specific file path",
+              },
+            },
+            async action({ options }) {
+              await coverageCommand(getWorker(), {
+                uncovered: options.uncovered,
+                file: options.file as string | undefined,
+              });
+            },
+          }),
+          embeddings: defineCommand({
+            name: "embeddings",
+            description: "Embedding maintenance commands for the current lore",
+            subcommands: {
+              refresh: defineCommand({
+                name: "refresh",
+                description: "Refresh all embeddings with the current model",
+                async action() {
+                  await refreshEmbeddingsCommand(getWorker());
                 },
-              },
-              options: {
-                weight: { type: "number", description: "Relation weight (0..1)" },
-              },
-              async action({ args, options }) {
-                const relationType = args.type as
-                  | "depends_on"
-                  | "constrains"
-                  | "implements"
-                  | "uses"
-                  | "related_to";
-                if (
-                  relationType !== "depends_on" &&
-                  relationType !== "constrains" &&
-                  relationType !== "implements" &&
-                  relationType !== "uses" &&
-                  relationType !== "related_to"
-                ) {
-                  throw new Error(
-                    `Invalid relation type '${args.type}'. Use depends_on|constrains|implements|uses|related_to.`,
+              }),
+            },
+          }),
+          reset: defineCommand({
+            name: "reset",
+            description: "Wipe all data for the current lore (keeps registration)",
+            options: {
+              force: { type: "boolean", description: "Skip confirmation" },
+            },
+            async action({ options }) {
+              await mindResetCommand(getWorker(), options.force);
+            },
+          }),
+          relations: defineCommand({
+            name: "relations",
+            description: "Manage concept relations in the current lore mind",
+            subcommands: {
+              set: defineCommand({
+                name: "set",
+                description: "Create or update a relation between two concepts",
+                arguments: {
+                  from: { type: "string", required: true, description: "Source concept" },
+                  to: { type: "string", required: true, description: "Target concept" },
+                  type: {
+                    type: "string",
+                    required: true,
+                    description: "Relation type (depends_on|constrains|implements|uses|related_to)",
+                  },
+                },
+                options: {
+                  weight: { type: "number", description: "Relation weight (0..1)" },
+                },
+                async action({ args, options }) {
+                  const relationType = args.type as
+                    | "depends_on"
+                    | "constrains"
+                    | "implements"
+                    | "uses"
+                    | "related_to";
+                  if (
+                    relationType !== "depends_on" &&
+                    relationType !== "constrains" &&
+                    relationType !== "implements" &&
+                    relationType !== "uses" &&
+                    relationType !== "related_to"
+                  ) {
+                    throw new Error(
+                      `Invalid relation type '${args.type}'. Use depends_on|constrains|implements|uses|related_to.`,
+                    );
+                  }
+                  await relationsSetCommand(
+                    getWorker(),
+                    args.from,
+                    args.to,
+                    relationType,
+                    options.weight,
                   );
-                }
-                await relationsSetCommand(
-                  getWorker(),
-                  args.from,
-                  args.to,
-                  relationType,
-                  options.weight,
-                );
-              },
-            }),
-            unset: defineCommand({
-              name: "unset",
-              description: "Remove relation(s) between two concepts",
-              arguments: {
-                from: { type: "string", required: true, description: "Source concept" },
-                to: { type: "string", required: true, description: "Target concept" },
-              },
-              options: {
-                type: {
-                  type: "string",
-                  description:
-                    "Optional relation type (depends_on|constrains|implements|uses|related_to)",
                 },
-              },
-              async action({ args, options }) {
-                const relationType = options.type as
-                  | "depends_on"
-                  | "constrains"
-                  | "implements"
-                  | "uses"
-                  | "related_to"
-                  | undefined;
-                if (
-                  relationType &&
-                  relationType !== "depends_on" &&
-                  relationType !== "constrains" &&
-                  relationType !== "implements" &&
-                  relationType !== "uses" &&
-                  relationType !== "related_to"
-                ) {
-                  throw new Error(
-                    `Invalid relation type '${relationType}'. Use depends_on|constrains|implements|uses|related_to.`,
-                  );
-                }
-                await relationsUnsetCommand(getWorker(), args.from, args.to, relationType);
-              },
-            }),
-            list: defineCommand({
-              name: "list",
-              description: "List concept relations",
-              options: {
-                concept: { type: "string", description: "Filter to one concept" },
-                all: { type: "boolean", description: "Include inactive relations" },
-              },
-              async action({ options }) {
-                await relationsListCommand(getWorker(), {
-                  concept: options.concept as string | undefined,
-                  includeInactive: options.all,
-                });
-              },
-            }),
-          },
-        }),
-        health: defineCommand({
-          name: "health",
-          description: "Compute and manage concept health signals",
-          subcommands: {
-            compute: defineCommand({
-              name: "compute",
-              description: "Compute concept health signals",
-              options: {
-                top: { type: "number", description: "Top stale concepts to return" },
-              },
-              async action({ options }) {
-                await healthComputeCommand(getWorker(), options.top);
-              },
-            }),
-            explain: defineCommand({
-              name: "explain",
-              description: "Explain concept health and neighbors",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-              },
-              options: {
-                "neighbor-limit": { type: "number", description: "Max neighbors to include" },
-                recompute: { type: "boolean", description: "Recompute signals before explaining" },
-              },
-              async action({ args, options }) {
-                await healthExplainCommand(getWorker(), args.concept, {
-                  neighborLimit: options["neighbor-limit"] as number | undefined,
-                  recompute: options.recompute,
-                });
-              },
-            }),
-            heal: defineCommand({
-              name: "heal",
-              description: "Heal high-stale concepts in the current lore",
-              options: {
-                threshold: { type: "number", description: "Final stale threshold (0..1)" },
-                limit: { type: "number", description: "Maximum concepts to heal" },
-                dry: { type: "boolean", description: "Preview only; do not apply" },
-              },
-              async action({ options }) {
-                await healthHealCommand(getWorker(), {
-                  threshold: options.threshold as number | undefined,
-                  limit: options.limit as number | undefined,
-                  dry: options.dry,
-                });
-              },
-            }),
-          },
-        }),
-        config: defineCommand({
-          name: "config",
-          description: "Manage local config overrides",
-          subcommands: {
-            show: defineCommand({
-              name: "show",
-              description: "Show the current resolved config with override annotations",
-              options: {
-                overrides: {
-                  type: "boolean",
-                  description: "Show only keys with local overrides",
+              }),
+              unset: defineCommand({
+                name: "unset",
+                description: "Remove relation(s) between two concepts",
+                arguments: {
+                  from: { type: "string", required: true, description: "Source concept" },
+                  to: { type: "string", required: true, description: "Target concept" },
                 },
-              },
-              async action({ options }) {
-                await configShowCommand(getWorker(), { overridesOnly: options.overrides });
-              },
-            }),
-            get: defineCommand({
-              name: "get",
-              description: "Get a config value",
-              arguments: {
-                key: {
-                  type: "string",
-                  required: true,
-                  description: "Config key (dot-path, e.g. ai.generation.model)",
+                options: {
+                  type: {
+                    type: "string",
+                    description:
+                      "Optional relation type (depends_on|constrains|implements|uses|related_to)",
+                  },
                 },
-              },
-              async action({ args }) {
-                await configGetCommand(getWorker(), args.key);
-              },
-            }),
-            set: defineCommand({
-              name: "set",
-              description: "Set a config value",
-              arguments: {
-                key: { type: "string", required: true, description: "Config key (dot-path)" },
-                value: { type: "string", required: true, description: "Value to set" },
-              },
-              async action({ args }) {
-                await configSetCommand(getWorker(), args.key, args.value);
-              },
-            }),
-            unset: defineCommand({
-              name: "unset",
-              description: "Remove a config override",
-              arguments: {
-                key: { type: "string", required: true, description: "Config key (dot-path)" },
-              },
-              async action({ args }) {
-                await configUnsetCommand(getWorker(), args.key);
-              },
-            }),
-            clone: defineCommand({
-              name: "clone",
-              description: "Clone full config overrides from another lore",
-              arguments: {
-                lore: { type: "string", required: true, description: "Source lore name" },
-              },
-              async action({ args }) {
-                await configCloneCommand(getWorker(), args.lore);
-              },
-            }),
-            "prompt-preview": defineCommand({
-              name: "prompt-preview",
-              description: "Preview effective system prompt contract + project guidance",
-              arguments: {
-                key: { type: "string", required: true, description: "Prompt key or 'all'" },
-              },
-              async action({ args }) {
-                await configPromptPreviewCommand(getWorker(), args.key);
-              },
-            }),
-          },
-        }),
-        concept: defineCommand({
-          name: "concept",
-          description: "Concept management",
-          subcommands: {
-            restore: defineCommand({
-              name: "restore",
-              description: "Emergency restore of an archived concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-              },
-              async action({ args }) {
-                await conceptRestoreCommand(getWorker(), args.concept);
-              },
-            }),
-            tag: defineCommand({
-              name: "tag",
-              description: "Attach a tag to a concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-                tag: { type: "string", required: true, description: "Tag value" },
-              },
-              async action({ args }) {
-                await conceptTagCommand(getWorker(), args.concept, args.tag);
-              },
-            }),
-            untag: defineCommand({
-              name: "untag",
-              description: "Remove a tag from a concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-                tag: { type: "string", required: true, description: "Tag value" },
-              },
-              async action({ args }) {
-                await conceptUntagCommand(getWorker(), args.concept, args.tag);
-              },
-            }),
-            tags: defineCommand({
-              name: "tags",
-              description: "List concept tags",
-              options: {
-                concept: { type: "string", description: "Optional concept filter" },
-              },
-              async action({ options }) {
-                await conceptTagsListCommand(getWorker(), options.concept as string | undefined);
-              },
-            }),
-            history: defineCommand({
-              name: "history",
-              description: "Show concept history",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-              },
-              async action({ args }) {
-                await historyCommand(getWorker(), args.concept);
-              },
-            }),
-            bindings: defineCommand({
-              name: "bindings",
-              description: "List symbol bindings for a concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-              },
-              async action({ args }) {
-                await conceptBindingsCommand(getWorker(), args.concept);
-              },
-            }),
-            bind: defineCommand({
-              name: "bind",
-              description: "Bind a source symbol to a concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-                symbol: { type: "string", required: true, description: "Symbol qualified name" },
-              },
-              options: {
-                confidence: { type: "number", description: "Binding confidence [0–1]" },
-              },
-              async action({ args, options }) {
-                await conceptBindCommand(
-                  getWorker(),
-                  args.concept,
-                  args.symbol,
-                  options.confidence as number | undefined,
-                );
-              },
-            }),
-            unbind: defineCommand({
-              name: "unbind",
-              description: "Remove a symbol binding from a concept",
-              arguments: {
-                concept: { type: "string", required: true, description: "Concept name" },
-                symbol: { type: "string", required: true, description: "Symbol qualified name" },
-              },
-              async action({ args }) {
-                await conceptUnbindCommand(getWorker(), args.concept, args.symbol);
-              },
-            }),
-          },
-        }),
-        narrative: defineCommand({
-          name: "narrative",
-          description: "Narrative repair and maintenance commands",
-          subcommands: {
-            designate: defineCommand({
-              name: "designate",
-              description: "Set explicit concept designations on a journal entry by chunk ID",
-              arguments: {
-                narrative: { type: "string", required: true, description: "Open narrative name" },
-                chunk: { type: "string", required: true, description: "Journal chunk ID" },
-              },
-              options: {
-                concept: {
-                  type: "string",
-                  repeatable: true,
-                  description:
-                    "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+                async action({ args, options }) {
+                  const relationType = options.type as
+                    | "depends_on"
+                    | "constrains"
+                    | "implements"
+                    | "uses"
+                    | "related_to"
+                    | undefined;
+                  if (
+                    relationType &&
+                    relationType !== "depends_on" &&
+                    relationType !== "constrains" &&
+                    relationType !== "implements" &&
+                    relationType !== "uses" &&
+                    relationType !== "related_to"
+                  ) {
+                    throw new Error(
+                      `Invalid relation type '${relationType}'. Use depends_on|constrains|implements|uses|related_to.`,
+                    );
+                  }
+                  await relationsUnsetCommand(getWorker(), args.from, args.to, relationType);
                 },
-              },
-              async action({ args, options }) {
-                const concepts = options.concept
-                  ? (Array.isArray(options.concept)
-                      ? (options.concept as string[])
-                      : [options.concept as string]
-                    )
-                      .map((concept: string) => concept.trim())
-                      .filter(Boolean)
-                  : [];
-                await narrativeDesignateCommand(getWorker(), args.narrative, args.chunk, {
-                  concepts,
-                });
-              },
-            }),
-          },
-        }),
-        migrate: defineCommand({
-          name: "migrate",
-          description: "Run pending database migrations",
-          async action() {
-            await systemMigrateCommand(getWorker());
-          },
-        }),
-        "migrate-status": defineCommand({
-          name: "migrate-status",
-          description: "Show applied and pending migrations",
-          async action() {
-            await systemMigrateStatusCommand(getWorker());
-          },
-        }),
-        repair: defineCommand({
-          name: "repair",
-          description: "Audit and repair database schema inconsistencies",
-          options: {
-            dry: {
-              type: "boolean",
-              description: "Audit only (no changes); exits non-zero on drift",
+              }),
+              list: defineCommand({
+                name: "list",
+                description: "List concept relations",
+                options: {
+                  concept: { type: "string", description: "Filter to one concept" },
+                  all: { type: "boolean", description: "Include inactive relations" },
+                },
+                async action({ options }) {
+                  await relationsListCommand(getWorker(), {
+                    concept: options.concept as string | undefined,
+                    includeInactive: options.all,
+                  });
+                },
+              }),
             },
-          },
-          async action({ options }) {
-            await systemRepairCommand(getWorker(), options.dry);
-          },
-        }),
-        audit: defineCommand({
-          name: "audit",
-          description: "Audit database schema drift (equivalent to repair --dry)",
-          async action() {
-            await systemRepairCommand(getWorker(), true);
-          },
-        }),
-        remove: defineCommand({
-          name: "remove",
-          description: "Remove a registered lore",
-          arguments: {
-            name: { type: "string", required: true, description: "Lore mind name" },
-          },
-          options: {
-            force: { type: "boolean", description: "Skip confirmation" },
-          },
-          async action({ args, options }) {
-            await mindsRemoveCommand(getWorker(), args.name, options.force);
-          },
-        }),
-        provider: defineCommand({
-          name: "provider",
-          description: "Manage shared provider credentials",
-          subcommands: {
-            list: defineCommand({
-              name: "list",
-              description: "List shared provider credentials",
-              async action() {
-                await providerConfigListCommand(getWorker());
+          }),
+          health: defineCommand({
+            name: "health",
+            description: "Compute and manage concept health signals",
+            subcommands: {
+              compute: defineCommand({
+                name: "compute",
+                description: "Compute concept health signals",
+                options: {
+                  top: { type: "number", description: "Top stale concepts to return" },
+                },
+                async action({ options }) {
+                  await healthComputeCommand(getWorker(), options.top);
+                },
+              }),
+              explain: defineCommand({
+                name: "explain",
+                description: "Explain concept health and neighbors",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                },
+                options: {
+                  "neighbor-limit": { type: "number", description: "Max neighbors to include" },
+                  recompute: {
+                    type: "boolean",
+                    description: "Recompute signals before explaining",
+                  },
+                },
+                async action({ args, options }) {
+                  await healthExplainCommand(getWorker(), args.concept, {
+                    neighborLimit: options["neighbor-limit"] as number | undefined,
+                    recompute: options.recompute,
+                  });
+                },
+              }),
+              heal: defineCommand({
+                name: "heal",
+                description: "Heal high-stale concepts in the current lore",
+                options: {
+                  threshold: { type: "number", description: "Final stale threshold (0..1)" },
+                  limit: { type: "number", description: "Maximum concepts to heal" },
+                  dry: { type: "boolean", description: "Preview only; do not apply" },
+                },
+                async action({ options }) {
+                  await healthHealCommand(getWorker(), {
+                    threshold: options.threshold as number | undefined,
+                    limit: options.limit as number | undefined,
+                    dry: options.dry,
+                  });
+                },
+              }),
+            },
+          }),
+          config: defineCommand({
+            name: "config",
+            description: "Manage local config overrides",
+            subcommands: {
+              show: defineCommand({
+                name: "show",
+                description: "Show the current resolved config with override annotations",
+                options: {
+                  overrides: {
+                    type: "boolean",
+                    description: "Show only keys with local overrides",
+                  },
+                },
+                async action({ options }) {
+                  await configShowCommand(getWorker(), { overridesOnly: options.overrides });
+                },
+              }),
+              get: defineCommand({
+                name: "get",
+                description: "Get a config value",
+                arguments: {
+                  key: {
+                    type: "string",
+                    required: true,
+                    description: "Config key (dot-path, e.g. ai.generation.model)",
+                  },
+                },
+                async action({ args }) {
+                  await configGetCommand(getWorker(), args.key);
+                },
+              }),
+              set: defineCommand({
+                name: "set",
+                description: "Set a config value",
+                arguments: {
+                  key: { type: "string", required: true, description: "Config key (dot-path)" },
+                  value: { type: "string", required: true, description: "Value to set" },
+                },
+                async action({ args }) {
+                  await configSetCommand(getWorker(), args.key, args.value);
+                },
+              }),
+              unset: defineCommand({
+                name: "unset",
+                description: "Remove a config override",
+                arguments: {
+                  key: { type: "string", required: true, description: "Config key (dot-path)" },
+                },
+                async action({ args }) {
+                  await configUnsetCommand(getWorker(), args.key);
+                },
+              }),
+              clone: defineCommand({
+                name: "clone",
+                description: "Clone full config overrides from another lore",
+                arguments: {
+                  lore: { type: "string", required: true, description: "Source lore name" },
+                },
+                async action({ args }) {
+                  await configCloneCommand(getWorker(), args.lore);
+                },
+              }),
+              "prompt-preview": defineCommand({
+                name: "prompt-preview",
+                description: "Preview effective system prompt contract + project guidance",
+                arguments: {
+                  key: { type: "string", required: true, description: "Prompt key or 'all'" },
+                },
+                async action({ args }) {
+                  await configPromptPreviewCommand(getWorker(), args.key);
+                },
+              }),
+            },
+          }),
+          concept: defineCommand({
+            name: "concept",
+            description: "Concept management",
+            subcommands: {
+              restore: defineCommand({
+                name: "restore",
+                description: "Emergency restore of an archived concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                },
+                async action({ args }) {
+                  await conceptRestoreCommand(getWorker(), args.concept);
+                },
+              }),
+              tag: defineCommand({
+                name: "tag",
+                description: "Attach a tag to a concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                  tag: { type: "string", required: true, description: "Tag value" },
+                },
+                async action({ args }) {
+                  await conceptTagCommand(getWorker(), args.concept, args.tag);
+                },
+              }),
+              untag: defineCommand({
+                name: "untag",
+                description: "Remove a tag from a concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                  tag: { type: "string", required: true, description: "Tag value" },
+                },
+                async action({ args }) {
+                  await conceptUntagCommand(getWorker(), args.concept, args.tag);
+                },
+              }),
+              tags: defineCommand({
+                name: "tags",
+                description: "List concept tags",
+                options: {
+                  concept: { type: "string", description: "Optional concept filter" },
+                },
+                async action({ options }) {
+                  await conceptTagsListCommand(getWorker(), options.concept as string | undefined);
+                },
+              }),
+              history: defineCommand({
+                name: "history",
+                description: "Show concept history",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                },
+                async action({ args }) {
+                  await historyCommand(getWorker(), args.concept);
+                },
+              }),
+              bindings: defineCommand({
+                name: "bindings",
+                description: "List symbol bindings for a concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                },
+                async action({ args }) {
+                  await conceptBindingsCommand(getWorker(), args.concept);
+                },
+              }),
+              bind: defineCommand({
+                name: "bind",
+                description: "Bind a source symbol to a concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                  symbol: { type: "string", required: true, description: "Symbol qualified name" },
+                },
+                options: {
+                  confidence: { type: "number", description: "Binding confidence [0–1]" },
+                },
+                async action({ args, options }) {
+                  await conceptBindCommand(
+                    getWorker(),
+                    args.concept,
+                    args.symbol,
+                    options.confidence as number | undefined,
+                  );
+                },
+              }),
+              unbind: defineCommand({
+                name: "unbind",
+                description: "Remove a symbol binding from a concept",
+                arguments: {
+                  concept: { type: "string", required: true, description: "Concept name" },
+                  symbol: { type: "string", required: true, description: "Symbol qualified name" },
+                },
+                async action({ args }) {
+                  await conceptUnbindCommand(getWorker(), args.concept, args.symbol);
+                },
+              }),
+            },
+          }),
+          narrative: defineCommand({
+            name: "narrative",
+            description: "Narrative repair and maintenance commands",
+            subcommands: {
+              designate: defineCommand({
+                name: "designate",
+                description: "Set explicit concept designations on a journal entry by chunk ID",
+                arguments: {
+                  narrative: { type: "string", required: true, description: "Open narrative name" },
+                  chunk: { type: "string", required: true, description: "Journal chunk ID" },
+                },
+                options: {
+                  concept: {
+                    type: "string",
+                    repeatable: true,
+                    description:
+                      "Concept designation (repeatable). Required unless the narrative has exactly one create/update target.",
+                  },
+                },
+                async action({ args, options }) {
+                  const concepts = options.concept
+                    ? (Array.isArray(options.concept)
+                        ? (options.concept as string[])
+                        : [options.concept as string]
+                      )
+                        .map((concept: string) => concept.trim())
+                        .filter(Boolean)
+                    : [];
+                  await narrativeDesignateCommand(getWorker(), args.narrative, args.chunk, {
+                    concepts,
+                  });
+                },
+              }),
+            },
+          }),
+          migrate: defineCommand({
+            name: "migrate",
+            description: "Run pending database migrations",
+            async action() {
+              await systemMigrateCommand(getWorker());
+            },
+          }),
+          "migrate-status": defineCommand({
+            name: "migrate-status",
+            description: "Show applied and pending migrations",
+            async action() {
+              await systemMigrateStatusCommand(getWorker());
+            },
+          }),
+          repair: defineCommand({
+            name: "repair",
+            description: "Audit and repair database schema inconsistencies",
+            options: {
+              dry: {
+                type: "boolean",
+                description: "Audit only (no changes); exits non-zero on drift",
               },
-            }),
-            get: defineCommand({
-              name: "get",
-              description: "Get shared provider credential metadata",
-              arguments: {
-                provider: { type: "string", required: true, description: "Provider name" },
-              },
-              async action({ args }) {
-                await providerConfigGetCommand(getWorker(), args.provider);
-              },
-            }),
-            set: defineCommand({
-              name: "set",
-              description: "Set shared provider credential values",
-              arguments: {
-                provider: { type: "string", required: true, description: "Provider name" },
-              },
-              options: {
-                "api-key": { type: "string", description: "Provider API key" },
-                "base-url": { type: "string", description: "Provider base URL" },
-              },
-              async action({ args, options }) {
-                await providerConfigSetCommand(getWorker(), args.provider, {
-                  apiKey: options["api-key"],
-                  baseUrl: options["base-url"],
-                });
-              },
-            }),
-            unset: defineCommand({
-              name: "unset",
-              description: "Unset shared provider credential values",
-              arguments: {
-                provider: { type: "string", required: true, description: "Provider name" },
-              },
-              options: {
-                "api-key": { type: "boolean", description: "Unset api_key field only" },
-                "base-url": { type: "boolean", description: "Unset base_url field only" },
-              },
-              async action({ args, options }) {
-                await providerConfigUnsetCommand(getWorker(), args.provider, {
-                  apiKey: options["api-key"],
-                  baseUrl: options["base-url"],
-                });
-              },
-            }),
-          },
-        }),
-        ls: defineCommand({
-          name: "ls",
-          description: "List all registered lores",
-          async action() {
-            await mindsListCommand(getWorker());
-          },
-        }),
-      },
-    }),
-    show: defineCommand({
-      name: "show",
-      description: "Show concept content (supports concept@ref syntax)",
-      arguments: {
-        target: { type: "string", required: true, description: "Concept name or concept@ref" },
-      },
-      options: {
-        "from-result": {
-          type: "string",
-          description: "Associate this follow-up with a prior lore ask result ID",
+            },
+            async action({ options }) {
+              await systemRepairCommand(getWorker(), options.dry);
+            },
+          }),
+          audit: defineCommand({
+            name: "audit",
+            description: "Audit database schema drift (equivalent to repair --dry)",
+            async action() {
+              await systemRepairCommand(getWorker(), true);
+            },
+          }),
+          remove: defineCommand({
+            name: "remove",
+            description: "Remove a registered lore",
+            arguments: {
+              name: { type: "string", required: true, description: "Lore mind name" },
+            },
+            options: {
+              force: { type: "boolean", description: "Skip confirmation" },
+            },
+            async action({ args, options }) {
+              await mindsRemoveCommand(getWorker(), args.name, options.force);
+            },
+          }),
+          provider: defineCommand({
+            name: "provider",
+            description: "Manage shared provider credentials",
+            subcommands: {
+              list: defineCommand({
+                name: "list",
+                description: "List shared provider credentials",
+                async action() {
+                  await providerConfigListCommand(getWorker());
+                },
+              }),
+              get: defineCommand({
+                name: "get",
+                description: "Get shared provider credential metadata",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                },
+                async action({ args }) {
+                  await providerConfigGetCommand(getWorker(), args.provider);
+                },
+              }),
+              set: defineCommand({
+                name: "set",
+                description: "Set shared provider credential values",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                },
+                options: {
+                  "api-key": { type: "string", description: "Provider API key" },
+                  "base-url": { type: "string", description: "Provider base URL" },
+                },
+                async action({ args, options }) {
+                  await providerConfigSetCommand(getWorker(), args.provider, {
+                    apiKey: options["api-key"],
+                    baseUrl: options["base-url"],
+                  });
+                },
+              }),
+              unset: defineCommand({
+                name: "unset",
+                description: "Unset shared provider credential values",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                },
+                options: {
+                  "api-key": { type: "boolean", description: "Unset api_key field only" },
+                  "base-url": { type: "boolean", description: "Unset base_url field only" },
+                },
+                async action({ args, options }) {
+                  await providerConfigUnsetCommand(getWorker(), args.provider, {
+                    apiKey: options["api-key"],
+                    baseUrl: options["base-url"],
+                  });
+                },
+              }),
+            },
+          }),
+          ls: defineCommand({
+            name: "ls",
+            description: "List all registered lores",
+            async action() {
+              await mindsListCommand(getWorker());
+            },
+          }),
         },
-      },
-      async action({ args, options }) {
-        await showCommand(getWorker(), args.target, options["from-result"] as string | undefined);
-      },
-    }),
-    diff: defineCommand({
-      name: "diff",
-      description: "Preview close or compare commits (narrative or ref..ref)",
-      arguments: {
-        target: {
-          type: "string",
-          required: true,
-          description: "Narrative name or ref..ref range",
+      }),
+      show: defineCommand({
+        name: "show",
+        description: "Show concept content (supports concept@ref syntax)",
+        arguments: {
+          target: { type: "string", required: true, description: "Concept name or concept@ref" },
         },
-      },
-      async action({ args }) {
-        await diffCommand(getWorker(), args.target);
-      },
-    }),
-    log: defineCommand({
-      name: "log",
-      description: "Walk commit history",
-      arguments: {
-        limit: { type: "number", default: 20, description: "Number of commits to show" },
-        since: {
-          type: "string",
-          description: "Time filter: duration (2w, 3d, 12h), ULID, or main~N",
+        options: {
+          "from-result": {
+            type: "string",
+            description: "Associate this follow-up with a prior lore ask result ID",
+          },
         },
-      },
-      async action({ args }) {
-        await commitlogCommand(getWorker(), args.limit, args.since);
-      },
-    }),
-  },
+        async action({ args, options }) {
+          await showCommand(getWorker(), args.target, options["from-result"] as string | undefined);
+        },
+      }),
+      diff: defineCommand({
+        name: "diff",
+        description: "Preview close or compare commits (narrative or ref..ref)",
+        arguments: {
+          target: {
+            type: "string",
+            required: true,
+            description: "Narrative name or ref..ref range",
+          },
+        },
+        async action({ args }) {
+          await diffCommand(getWorker(), args.target);
+        },
+      }),
+      log: defineCommand({
+        name: "log",
+        description: "Walk commit history",
+        arguments: {
+          limit: { type: "number", default: 20, description: "Number of commits to show" },
+          since: {
+            type: "string",
+            description: "Time filter: duration (2w, 3d, 12h), ULID, or main~N",
+          },
+        },
+        async action({ args }) {
+          await commitlogCommand(getWorker(), args.limit, args.since);
+        },
+      }),
+    },
     onError(error) {
       handleCliError(error, exit);
     },

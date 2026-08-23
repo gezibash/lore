@@ -158,7 +158,10 @@ function renderProgressEntries(): void {
   renderedProgressLines = progressEntries.length;
 }
 
-export function createProgressBar(label: string, opts: { total: number }): {
+export function createProgressBar(
+  label: string,
+  opts: { total: number },
+): {
   update(current: number, nextLabel?: string): void;
   complete(message: string): void;
   fail(message: string): void;

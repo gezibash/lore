@@ -217,7 +217,9 @@ test("ingest routes to ingestDoc when the optional file positional is present", 
     },
   });
 
-  const result = await runCliForTest(["ingest", "README.md", "--json"], { createWorker: () => worker });
+  const result = await runCliForTest(["ingest", "README.md", "--json"], {
+    createWorker: () => worker,
+  });
 
   expect(result.exitCode).toBeUndefined();
   expect(files).toEqual(["README.md"]);
@@ -240,7 +242,18 @@ test("nested sys narrative designate accumulates repeated --concept values", asy
   });
 
   const result = await runCliForTest(
-    ["sys", "narrative", "designate", "story", "chunk-1", "--concept", "auth-model", "--concept", "session-store", "--json"],
+    [
+      "sys",
+      "narrative",
+      "designate",
+      "story",
+      "chunk-1",
+      "--concept",
+      "auth-model",
+      "--concept",
+      "session-store",
+      "--json",
+    ],
     { createWorker: () => worker },
   );
 

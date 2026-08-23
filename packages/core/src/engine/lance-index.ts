@@ -162,7 +162,11 @@ async function syncTextTable(db: Database, connection: lancedb.Connection): Prom
     await created.createIndex("text", { config: lancedb.Index.fts() });
     // Whitespace tokenizer, no stemming: identifiers must survive whole.
     await created.createIndex("identifiers", {
-      config: lancedb.Index.fts({ baseTokenizer: "whitespace", stem: false, removeStopWords: false }),
+      config: lancedb.Index.fts({
+        baseTokenizer: "whitespace",
+        stem: false,
+        removeStopWords: false,
+      }),
     });
     return;
   }
@@ -172,11 +176,7 @@ async function syncTextTable(db: Database, connection: lancedb.Connection): Prom
     await table.delete(`id IN (${list})`);
   }
   if (toAdd.length > 0) {
-    await table
-      .mergeInsert("id")
-      .whenMatchedUpdateAll()
-      .whenNotMatchedInsertAll()
-      .execute(toAdd);
+    await table.mergeInsert("id").whenMatchedUpdateAll().whenNotMatchedInsertAll().execute(toAdd);
   }
 }
 
@@ -223,11 +223,7 @@ async function syncVecTables(db: Database, connection: lancedb.Connection): Prom
     }
     const toAdd = group.filter((r) => !existing.has(r.chunk_id)).map(toRow);
     if (toAdd.length > 0) {
-      await table
-        .mergeInsert("id")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
-        .execute(toAdd);
+      await table.mergeInsert("id").whenMatchedUpdateAll().whenNotMatchedInsertAll().execute(toAdd);
     }
   }
 }
@@ -306,7 +302,8 @@ export async function lanceVectorSearch(
       for (const name of names) {
         for (const hit of await searchOneVecTable(index, name, queryEmbedding, opts)) {
           const current = merged.get(hit.chunkId);
-          if (current === undefined || hit.distance < current) merged.set(hit.chunkId, hit.distance);
+          if (current === undefined || hit.distance < current)
+            merged.set(hit.chunkId, hit.distance);
         }
       }
       return [...merged.entries()]

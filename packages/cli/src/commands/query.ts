@@ -111,7 +111,9 @@ function renderAskDebug(tracePath: string | undefined): void {
   const lanes = events.filter((e) => String(e.stage).startsWith("lane."));
   const laneParts = lanes.map((l) => {
     const name = String(l.stage).slice(5);
-    return l.skipped ? `${name} ${DIM}skipped (${String(l.reason ?? "?")})${RESET}` : `${name} ${num(l.candidates)}`;
+    return l.skipped
+      ? `${name} ${DIM}skipped (${String(l.reason ?? "?")})${RESET}`
+      : `${name} ${num(l.candidates)}`;
   });
   if (laneParts.length) console.log(`lanes     ${laneParts.join(" · ")}`);
 

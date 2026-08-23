@@ -267,7 +267,9 @@ export function formatConceptTagsCli(tags: ConceptTagSummary[]): string {
 }
 
 function fmtNum(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 export function formatKpiStatusCli(kpis: KpiStatus[], opts?: { history?: boolean }): string {
@@ -291,13 +293,16 @@ export function formatKpiStatusCli(kpis: KpiStatus[], opts?: { history?: boolean
     let goal = "";
     if (kpi.goal != null) {
       if (kpi.goal_met) goal = `  ${GREEN}goal ${fmtNum(kpi.goal)} met${RESET}`;
-      else if (kpi.gap != null) goal = `  ${YELLOW}goal ${fmtNum(kpi.goal)} (gap ${fmtNum(kpi.gap)})${RESET}`;
+      else if (kpi.gap != null)
+        goal = `  ${YELLOW}goal ${fmtNum(kpi.goal)} (gap ${fmtNum(kpi.gap)})${RESET}`;
       else goal = `  ${DIM}goal ${fmtNum(kpi.goal)}${RESET}`;
     }
 
     const when = kpi.latest ? `  ${DIM}${timeAgo(kpi.latest.created_at)}${RESET}` : "";
     const count = `  ${DIM}(${kpi.reading_count} readings)${RESET}`;
-    lines.push(`${BOLD}${CYAN}${kpi.name}${RESET} ${arrow}  ${latest}${delta}${goal}${when}${count}`);
+    lines.push(
+      `${BOLD}${CYAN}${kpi.name}${RESET} ${arrow}  ${latest}${delta}${goal}${when}${count}`,
+    );
     if (kpi.note) lines.push(`  ${DIM}${kpi.note}${RESET}`);
 
     if (opts?.history) {
@@ -305,7 +310,11 @@ export function formatKpiStatusCli(kpis: KpiStatus[], opts?: { history?: boolean
         const prov = [
           reading.narrative ? `narrative ${reading.narrative}` : null,
           reading.git_head ? reading.git_head.slice(0, 7) : null,
-          reading.meta ? Object.entries(reading.meta).map(([k, v]) => `${k}=${String(v)}`).join(" ") : null,
+          reading.meta
+            ? Object.entries(reading.meta)
+                .map(([k, v]) => `${k}=${String(v)}`)
+                .join(" ")
+            : null,
         ]
           .filter(Boolean)
           .join("  ");

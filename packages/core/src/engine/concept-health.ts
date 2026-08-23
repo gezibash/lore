@@ -59,9 +59,7 @@ function conceptBaseStale(concept: ConceptRow, axes: AxisLookup): number {
 }
 
 function conceptResidualBase(concept: ConceptRow, axes: AxisLookup): number {
-  return clamp(
-    axes.residualByConcept.get(concept.id)?.residual ?? concept.ground_residual ?? 0,
-  );
+  return clamp(axes.residualByConcept.get(concept.id)?.residual ?? concept.ground_residual ?? 0);
 }
 
 function relationWeight(relation: ConceptRelationRow): number {

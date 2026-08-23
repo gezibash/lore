@@ -31,14 +31,14 @@ async function withInteractiveTimers<T>(
   process.env.CI = "false";
   setJsonOutput(false);
 
-  globalThis.setInterval = (((...args: Parameters<typeof setInterval>) => {
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
     state.intervalCalls += 1;
     return originalSetInterval(...args);
-  }) as typeof setInterval);
-  globalThis.clearInterval = (((timer: Parameters<typeof clearInterval>[0]) => {
+  }) as typeof setInterval;
+  globalThis.clearInterval = ((timer: Parameters<typeof clearInterval>[0]) => {
     state.clearCalls += 1;
     return originalClearInterval(timer);
-  }) as typeof clearInterval);
+  }) as typeof clearInterval;
 
   try {
     return await run(state);

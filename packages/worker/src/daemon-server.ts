@@ -190,7 +190,9 @@ function applyCallerCodePath(
 ): unknown[] {
   const codePath = fallbackCwd ? resolve(fallbackCwd) : undefined;
   if (!codePath || spec.inject === undefined) return args;
-  const withCodePath = <T extends Record<string, unknown> | undefined>(value: T): T | { codePath: string } => {
+  const withCodePath = <T extends Record<string, unknown> | undefined>(
+    value: T,
+  ): T | { codePath: string } => {
     if (!value) return { codePath };
     if ("codePath" in value && typeof value.codePath === "string") return value;
     return { ...value, codePath };
@@ -208,7 +210,11 @@ function applyCallerCodePath(
 
 /** Routing key source for serialization: explicit string codePath argument
  *  (register) else the trailing options object, else the caller's cwd. */
-function routeCodePathFor(method: ProxyMethod, args: unknown[], fallbackCwd?: string): string | undefined {
+function routeCodePathFor(
+  method: ProxyMethod,
+  args: unknown[],
+  fallbackCwd?: string,
+): string | undefined {
   if (method === "register") {
     return typeof args[0] === "string" ? (args[0] as string) : fallbackCwd;
   }
@@ -466,16 +472,16 @@ export class LoreDaemonServer {
         }, 10);
         return { stopped: true };
       case "listJobs":
-        return listDaemonJobs(this.queueDb, args[0] as {
-          codePath?: string;
-          limit?: number;
-          type?: LoreJobType;
-        });
-      case "getJobDetail":
-        return this.getJobDetail(
-          args[0] as string,
-          args[1] as { codePath?: string } | undefined,
+        return listDaemonJobs(
+          this.queueDb,
+          args[0] as {
+            codePath?: string;
+            limit?: number;
+            type?: LoreJobType;
+          },
         );
+      case "getJobDetail":
+        return this.getJobDetail(args[0] as string, args[1] as { codePath?: string } | undefined);
       case "waitForJob":
         return this.waitForJob(
           args[0] as string,
@@ -508,13 +514,9 @@ export class LoreDaemonServer {
           args[0] as { codePath?: string; wait?: boolean; force?: boolean } | undefined,
         );
       case "rebuild":
-        return this.handleRebuild(
-          args[0] as { codePath?: string; wait?: boolean } | undefined,
-        );
+        return this.handleRebuild(args[0] as { codePath?: string; wait?: boolean } | undefined);
       case "status":
-        return this.handleStatus(
-          args[0] as { codePath?: string } | undefined,
-        );
+        return this.handleStatus(args[0] as { codePath?: string } | undefined);
       default: {
         const methodName = request.method;
         // hasOwnProperty, not `in`: "constructor"/"toString" must not match
@@ -547,11 +549,7 @@ export class LoreDaemonServer {
         if (spec.concurrent) {
           return invoke();
         }
-        const codePath = routeCodePathFor(
-          request.method as ProxyMethod,
-          args,
-          request.cwd,
-        );
+        const codePath = routeCodePathFor(request.method as ProxyMethod, args, request.cwd);
         return this.runSerialized(routeKeyForCodePath(codePath), invoke);
       }
     }
@@ -628,7 +626,10 @@ export class LoreDaemonServer {
           close_job: legacyCloseJobFromJob(waited.job),
         };
       }
-      throw new LoreError("CLOSE_JOB_FAILED", `Close job '${job.id}' did not produce a close result`);
+      throw new LoreError(
+        "CLOSE_JOB_FAILED",
+        `Close job '${job.id}' did not produce a close result`,
+      );
     }
     return buildQueuedCloseResult(job);
   }
@@ -663,9 +664,11 @@ export class LoreDaemonServer {
     return detail.result as IngestResult;
   }
 
-  private async handleIngestAll(
-    opts?: { codePath?: string; wait?: boolean; force?: boolean },
-  ): Promise<{ scan: unknown; ingest: IngestResult } | LoreJobDetail> {
+  private async handleIngestAll(opts?: {
+    codePath?: string;
+    wait?: boolean;
+    force?: boolean;
+  }): Promise<{ scan: unknown; ingest: IngestResult } | LoreJobDetail> {
     const codePath = routeKeyForCodePath(opts?.codePath);
     const existing = getLatestPendingDaemonJob(this.queueDb, {
       codePath,
@@ -691,9 +694,10 @@ export class LoreDaemonServer {
     return detail.result as { scan: unknown; ingest: IngestResult };
   }
 
-  private async handleRebuild(
-    opts?: { codePath?: string; wait?: boolean },
-  ): Promise<RebuildResult | LoreJobDetail> {
+  private async handleRebuild(opts?: {
+    codePath?: string;
+    wait?: boolean;
+  }): Promise<RebuildResult | LoreJobDetail> {
     const codePath = routeKeyForCodePath(opts?.codePath);
     const existing = getLatestPendingDaemonJob(this.queueDb, {
       codePath,
@@ -836,7 +840,10 @@ export class LoreDaemonServer {
       return { status: "failed" };
     }
     try {
-      const payload = JSON.parse(raw.payload_json) as CloseJobPayload | IngestJobPayload | RebuildJobPayload;
+      const payload = JSON.parse(raw.payload_json) as
+        | CloseJobPayload
+        | IngestJobPayload
+        | RebuildJobPayload;
       let result: unknown;
       switch (raw.type) {
         case "close": {
@@ -890,9 +897,7 @@ export class LoreDaemonServer {
     });
     this.chains.set(
       key,
-      previous
-        .catch(() => {})
-        .then(() => next),
+      previous.catch(() => {}).then(() => next),
     );
     await previous.catch(() => {});
     try {

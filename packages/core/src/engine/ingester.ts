@@ -245,7 +245,8 @@ export async function ingestTextFiles(
   const prepared = await mapConcurrent(
     discovered,
     Math.min(DOC_PREPARE_CONCURRENCY, Math.max(1, discovered.length)),
-    (file: DiscoveredTextFile) => prepareDocIngest(db, codePath, lorePath, file.absolutePath, opts?.force),
+    (file: DiscoveredTextFile) =>
+      prepareDocIngest(db, codePath, lorePath, file.absolutePath, opts?.force),
   );
 
   let filesIngested = 0;

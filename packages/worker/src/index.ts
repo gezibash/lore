@@ -291,7 +291,9 @@ export class WorkerClient {
     method: K,
     args: Parameters<DirectWorkerClientDeps[K]>,
   ): AwaitedReturn<ReturnType<DirectWorkerClientDeps[K]>> {
-    const fn = this.client[method] as ((...args: Parameters<DirectWorkerClientDeps[K]>) => unknown) | undefined;
+    const fn = this.client[method] as
+      | ((...args: Parameters<DirectWorkerClientDeps[K]>) => unknown)
+      | undefined;
     if (typeof fn !== "function") {
       throw new Error(`Worker client method '${String(method)}' is unavailable`);
     }
@@ -305,9 +307,9 @@ export class WorkerClient {
     if (!this.useDaemon(String(method))) {
       return this.callDirect(method, args);
     }
-    return (await this.daemon.call(String(method), args)) as Awaited<ReturnType<
-      DirectWorkerClientDeps[K]
-    >>;
+    return (await this.daemon.call(String(method), args)) as Awaited<
+      ReturnType<DirectWorkerClientDeps[K]>
+    >;
   }
 
   async open(
@@ -331,7 +333,9 @@ export class WorkerClient {
     return this.call("log", args);
   }
 
-  async designateJournalEntry(...args: Parameters<DirectWorkerClientDeps["designateJournalEntry"]>) {
+  async designateJournalEntry(
+    ...args: Parameters<DirectWorkerClientDeps["designateJournalEntry"]>
+  ) {
     return this.call("designateJournalEntry", args);
   }
 
@@ -349,7 +353,9 @@ export class WorkerClient {
 
   async listJobs(opts?: { codePath?: string; limit?: number; type?: LoreJobType }) {
     if (!this.useDaemon("listJobs")) {
-      const closeJobs = await this.callDirect("listCloseJobs", [{ codePath: opts?.codePath, limit: opts?.limit }]);
+      const closeJobs = await this.callDirect("listCloseJobs", [
+        { codePath: opts?.codePath, limit: opts?.limit },
+      ]);
       return closeJobs.map((job) => ({
         id: job.id,
         code_path: opts?.codePath ?? process.cwd(),
@@ -396,20 +402,22 @@ export class WorkerClient {
     if (!this.useDaemon("waitForJob")) {
       const result = await this.callDirect("waitForCloseJob", [jobId, opts]);
       return {
-        job: ((result.close_job as unknown as LoreJob) ?? {
-          id: jobId,
-          code_path: opts?.codePath ?? process.cwd(),
-          type: "close",
-          subject: result.close_job?.narrative_name ?? "close",
-          status: "done",
-          owner: null,
-          attempt: 1,
-          lease_expires_at: null,
-          last_error: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          completed_at: new Date().toISOString(),
-        } as LoreJob),
+        job:
+          (result.close_job as unknown as LoreJob) ??
+          ({
+            id: jobId,
+            code_path: opts?.codePath ?? process.cwd(),
+            type: "close",
+            subject: result.close_job?.narrative_name ?? "close",
+            status: "done",
+            owner: null,
+            attempt: 1,
+            lease_expires_at: null,
+            last_error: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: new Date().toISOString(),
+          } as LoreJob),
         result,
       } satisfies LoreJobDetail;
     }
@@ -637,7 +645,10 @@ export class WorkerClient {
 
   async ingestDoc(...args: Parameters<DirectWorkerClientDeps["ingestDoc"]>) {
     if (this.useDaemon("ingestDoc")) {
-      return (await this.daemon.call("ingestDoc", [args[0], { ...(args[1] ?? {}), wait: true }])) as IngestResult;
+      return (await this.daemon.call("ingestDoc", [
+        args[0],
+        { ...(args[1] ?? {}), wait: true },
+      ])) as IngestResult;
     }
     return this.callDirect("ingestDoc", args);
   }
@@ -720,19 +731,27 @@ export class WorkerClient {
     return this.call("removeLoreMind", args);
   }
 
-  async listProviderCredentials(...args: Parameters<DirectWorkerClientDeps["listProviderCredentials"]>) {
+  async listProviderCredentials(
+    ...args: Parameters<DirectWorkerClientDeps["listProviderCredentials"]>
+  ) {
     return this.call("listProviderCredentials", args);
   }
 
-  async getProviderCredential(...args: Parameters<DirectWorkerClientDeps["getProviderCredential"]>) {
+  async getProviderCredential(
+    ...args: Parameters<DirectWorkerClientDeps["getProviderCredential"]>
+  ) {
     return this.call("getProviderCredential", args);
   }
 
-  async setProviderCredential(...args: Parameters<DirectWorkerClientDeps["setProviderCredential"]>) {
+  async setProviderCredential(
+    ...args: Parameters<DirectWorkerClientDeps["setProviderCredential"]>
+  ) {
     return this.call("setProviderCredential", args);
   }
 
-  async unsetProviderCredential(...args: Parameters<DirectWorkerClientDeps["unsetProviderCredential"]>) {
+  async unsetProviderCredential(
+    ...args: Parameters<DirectWorkerClientDeps["unsetProviderCredential"]>
+  ) {
     return this.call("unsetProviderCredential", args);
   }
 }

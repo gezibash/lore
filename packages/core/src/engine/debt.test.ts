@@ -55,7 +55,10 @@ test("conceptDebtShare is p(c) · R(c) · fraction", () => {
   const c = concept({ id: "c-hot" });
   const snapshot = {
     residualByConcept: new Map([
-      ["c-hot", { residual: 0.5, eDrift: 0.5, eEmbed: 0.1, eEmbedMeasured: true, ungrounded: false }],
+      [
+        "c-hot",
+        { residual: 0.5, eDrift: 0.5, eEmbed: 0.1, eEmbedMeasured: true, ungrounded: false },
+      ],
     ]),
     consultShareByConcept: new Map([["c-hot", 0.4]]),
   };

@@ -175,12 +175,7 @@ test("rescanFiles reports files it dropped instead of silently skipping them", a
 
     // Change the file so the rescan actually processes it (unchanged hashes skip).
     writeTextFile(`${codeDir}/src/ok.ts`, "export function ok() { return 2; }\n");
-    const result = await rescanFiles(
-      db,
-      codeDir,
-      ["src/ok.ts", "src/does-not-exist.ts"],
-      loreDir,
-    );
+    const result = await rescanFiles(db, codeDir, ["src/ok.ts", "src/does-not-exist.ts"], loreDir);
     expect(result.rescanned).toBe(1);
     expect(result.filesFailed).toEqual(["src/does-not-exist.ts"]);
   } finally {

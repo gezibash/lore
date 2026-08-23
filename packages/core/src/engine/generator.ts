@@ -571,8 +571,10 @@ When unsure, answer false.`;
       "PROSE:",
       input.prose.slice(0, 4000),
       "",
-      input.oldBody != null ? `OLD BODY:
-${input.oldBody.slice(0, 2500)}` : "OLD BODY: (not recorded)",
+      input.oldBody != null
+        ? `OLD BODY:
+${input.oldBody.slice(0, 2500)}`
+        : "OLD BODY: (not recorded)",
       "",
       `NEW BODY:
 ${input.newBody.slice(0, 2500)}`,

@@ -212,10 +212,7 @@ import type {
 } from "@/types/index.ts";
 import type { SchemaRepairOptions, SchemaRepairResult } from "@/db/index.ts";
 import { getHeadSha } from "@/engine/git.ts";
-import {
-  buildConceptHealthNeighbors,
-  computeConceptHealthSignals,
-} from "./concept-health.ts";
+import { buildConceptHealthNeighbors, computeConceptHealthSignals } from "./concept-health.ts";
 import { ulid } from "ulid";
 import { computeSuggestions } from "./suggest.ts";
 import type { SuggestResult, SuggestionKind } from "@/types/index.ts";
@@ -510,15 +507,21 @@ export class LoreEngine {
           ]);
         }
         const { rescanFailed } = await runCloseMaintenanceJob(
-          db, payload, config, embedder, generator, codeEmbedder,
+          db,
+          payload,
+          config,
+          embedder,
+          generator,
+          codeEmbedder,
         );
         completeCloseMaintenanceJob(db, {
           lorePath: entry.lore_path,
           id: job.id,
           owner,
-          note: rescanFailed.length > 0
-            ? `refresh incomplete: ${rescanFailed.length} file(s) failed rescan: ${rescanFailed.join(", ")}`
-            : undefined,
+          note:
+            rescanFailed.length > 0
+              ? `refresh incomplete: ${rescanFailed.length} file(s) failed rescan: ${rescanFailed.join(", ")}`
+              : undefined,
         });
         completed += 1;
       } catch (error) {
@@ -2029,10 +2032,15 @@ export class LoreEngine {
     opts?: { codePath?: string; reason?: string; preview?: boolean },
   ): Promise<LifecycleResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
-    return mergeConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), sourceName, targetName, {
-      reason: opts?.reason,
-      preview: opts?.preview,
-    });
+    return mergeConcept(
+      this.lifecycleDeps(entry, db, this.configFor(entry)),
+      sourceName,
+      targetName,
+      {
+        reason: opts?.reason,
+        preview: opts?.preview,
+      },
+    );
   }
 
   async conceptSplit(
@@ -2314,7 +2322,12 @@ export class LoreEngine {
   kpiGoal(
     name: string,
     target: number,
-    opts?: { codePath?: string; direction?: KpiDirection; unit?: string | null; note?: string | null },
+    opts?: {
+      codePath?: string;
+      direction?: KpiDirection;
+      unit?: string | null;
+      note?: string | null;
+    },
   ): KpiGoalResult {
     if (!Number.isFinite(target)) {
       throw new LoreError("KPI_INVALID_VALUE", `KPI goal must be a finite number, got '${target}'`);
@@ -2443,7 +2456,12 @@ export class LoreEngine {
         considered: 0,
         healed: [],
         worker_stats: { configured: workers, completed: 0, failed: 0, retried: 0 },
-        batch_stats: { processed: 0, halted_at_batch: null, pre_debt: preDebt, post_debt: postDebt },
+        batch_stats: {
+          processed: 0,
+          halted_at_batch: null,
+          pre_debt: preDebt,
+          post_debt: postDebt,
+        },
       };
     }
 
@@ -3617,7 +3635,9 @@ export class LoreEngine {
   }): Promise<{ scan: ScanResult; ingest: IngestResult }> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
     const scan = await rescanProject(db, entry.code_path, entry.lore_path, { force: opts?.force });
-    const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path, { force: opts?.force });
+    const ingest = await ingestTextFiles(db, entry.code_path, entry.lore_path, {
+      force: opts?.force,
+    });
     await this.embedMissingChunks(db, entry);
     markLanceDirty(db);
     return { scan, ingest };
@@ -3667,11 +3687,7 @@ export class LoreEngine {
     // collection, a lockfile) otherwise 400s its whole batch. A vector of the
     // first 8k chars is still a useful retrieval key for such a file.
     const EMBED_INPUT_MAX = 8_000;
-    const embedRows = async (
-      batchRows: typeof rows,
-      embedderInstance: Embedder,
-      model: string,
-    ) => {
+    const embedRows = async (batchRows: typeof rows, embedderInstance: Embedder, model: string) => {
       let failed = 0;
       for (let i = 0; i < batchRows.length; i += BATCH) {
         const batch = batchRows.slice(i, i + BATCH);

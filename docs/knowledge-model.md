@@ -13,14 +13,14 @@ storage policy, migration mechanics, and the done-checklist are in §9.
 
 ## 1. Objects
 
-| Object | Definition |
-| --- | --- |
-| **Symbol** `s` | A code unit (function, class, method) with identity, location, and a `body_hash` capturing its current implementation. |
-| **Concept** `c` | A named prose knowledge unit. Has an active state chunk, embeddings, a binding set `B(c)`, and a lifecycle status. |
+| Object                  | Definition                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Symbol** `s`          | A code unit (function, class, method) with identity, location, and a `body_hash` capturing its current implementation.                                                                                        |
+| **Concept** `c`         | A named prose knowledge unit. Has an active state chunk, embeddings, a binding set `B(c)`, and a lifecycle status.                                                                                            |
 | **Binding** `(c, s, w)` | A claim that `c` describes `s`, with confidence `w ∈ (0,1]` and the `bound_body_hash` recorded at verification time. A binding is **drifted** when the symbol's current body hash differs from the bound one. |
-| **Chunk** | An immutable prose version on disk + DB. State chunks are concept versions; journal chunks are narrative entries. State chunks supersede, never mutate. |
-| **Narrative** `n` | A bounded exploration session with an intent, a merge-base commit recorded at open, optional declared targets, and a status. |
-| **Commit** | A snapshot of the concept → active-chunk mapping (the tree). Every close produces exactly one commit. |
+| **Chunk**               | An immutable prose version on disk + DB. State chunks are concept versions; journal chunks are narrative entries. State chunks supersede, never mutate.                                                       |
+| **Narrative** `n`       | A bounded exploration session with an intent, a merge-base commit recorded at open, optional declared targets, and a status.                                                                                  |
+| **Commit**              | A snapshot of the concept → active-chunk mapping (the tree). Every close produces exactly one commit.                                                                                                         |
 
 ---
 
@@ -29,13 +29,13 @@ storage policy, migration mechanics, and the done-checklist are in §9.
 The narrative model is **git for knowledge**. The analogy is exact and should be
 used in naming and documentation:
 
-| Git | Lore |
-| --- | --- |
-| branch | narrative (merge base recorded at open) |
-| staged change | journal entry (routed by concept designation) |
-| merge commit | close (LLM 3-way merge + commit tree) |
-| post-merge hook | close-maintenance job (async, best-effort) |
-| file | concept |
+| Git             | Lore                                          |
+| --------------- | --------------------------------------------- |
+| branch          | narrative (merge base recorded at open)       |
+| staged change   | journal entry (routed by concept designation) |
+| merge commit    | close (LLM 3-way merge + commit tree)         |
+| post-merge hook | close-maintenance job (async, best-effort)    |
+| file            | concept                                       |
 
 ### 2.1 State machine
 
@@ -63,7 +63,7 @@ latest version per id.
   merge base recorded at open. Concurrent main-line changes are 3-way merged
   (LLM), recorded as `auto-merged` conflicts, never silently overwritten.
 - **N4 — Close serialization.** At most one close may be in flight per mind.
-  *Currently assumed* (single daemon; close-job leases are per-job, not
+  _Currently assumed_ (single daemon; close-job leases are per-job, not
   per-mind). Must be enforced — see §7.
 - **N5 — Immutability.** Journal chunks are immutable after close. State chunks
   are superseded, never edited.
@@ -73,11 +73,11 @@ latest version per id.
 
 ### 2.3 Phase divergence (renamed)
 
-The close-time check currently called *phase transition* measures cosine
+The close-time check currently called _phase transition_ measures cosine
 distance between the narrative's journal centroid and target concept
 embeddings. Embedding distance measures **topical divergence**, not
 contradiction — contradictory statements about the same topic are typically
-*near* in embedding space. The signal is therefore formally a
+_near_ in embedding space. The signal is therefore formally a
 **designation-mismatch warning** ("these entries may be routed to the wrong
 concept"), and must be named and presented as such. True contradiction
 detection, if wanted, is an LLM/NLI maintenance job over the top-divergence
@@ -101,7 +101,7 @@ and the combinator switches between weighted-mean and max per call site.
 
 ### 3.1 Groundedness residual `R(c) ∈ [0,1]`
 
-*Latent quantity:* the degree to which the concept's prose misdescribes the
+_Latent quantity:_ the degree to which the concept's prose misdescribes the
 current code. This is the only per-concept "debt".
 
 Evidence:
@@ -124,7 +124,7 @@ gives it weight 0).
 
 Non-evidence (must never enter `R`):
 
-- **churn** — version-to-version distance of the *prose* is a change rate, not
+- **churn** — version-to-version distance of the _prose_ is a change rate, not
   an error estimate. Display-only.
 - **lore_residual** — cluster cohesion is a graph property (§3.4). As
   per-concept pressure it punishes semantic distinctiveness and cannot be
@@ -133,7 +133,7 @@ Non-evidence (must never enter `R`):
 
 ### 3.2 Staleness `σ(c) ∈ [0,1]`
 
-*Latent quantity:* the probability that the underlying code changed since the
+_Latent quantity:_ the probability that the underlying code changed since the
 concept was last verified.
 
 - Bound concepts: `σ(c) = e_drift(c)` combined (max) with file-level change
@@ -170,11 +170,11 @@ inflated debt it cannot fix. Removed.
 
 Partition the claim space and take the mass-weighted mean residual:
 
-| Partition | Residual | Mass |
-| --- | --- | --- |
-| covered code, grounded concept `c` | `R(c)` | `w_c` = confidence-weighted bound-symbol mass of `c` |
-| uncovered code | `1` | its symbol mass |
-| ungrounded concepts | `1` | floor mass `ε` per concept (e.g. the mean grounded `w_c`) |
+| Partition                          | Residual | Mass                                                      |
+| ---------------------------------- | -------- | --------------------------------------------------------- |
+| covered code, grounded concept `c` | `R(c)`   | `w_c` = confidence-weighted bound-symbol mass of `c`      |
+| uncovered code                     | `1`      | its symbol mass                                           |
+| ungrounded concepts                | `1`      | floor mass `ε` per concept (e.g. the mean grounded `w_c`) |
 
 `D = Σ residual·mass / Σ mass`
 
@@ -237,20 +237,20 @@ derivation; `confidence = 100 − debt` is dropped (no independent meaning).
 
 ## 6. Signal mapping (current → spec)
 
-| Current | Becomes |
-| --- | --- |
-| `ground_residual` | `e_embed(c)` input to `R(c)` |
-| symbol-drift count steps (0.5/0.7/0.85/1.0) | `e_drift(c)` ratio |
-| `churn` | display-only change rate; never in `R` |
-| `staleness` (age-based) | `σ(c)` evidence-based; age only as unbound prior |
-| `lore_residual` in pressure | graph-health cohesion; removed from pressure |
-| `/(1 + fiedler)` divisor | graph-health metric; removed from debt |
-| `computeTotalDebt` (Σ pressure) | expected-error debt (§4.2) |
-| ask-debt 8-component blend | derived presentation over `R`, `C`, freshness |
-| `state_distance` (equal-share) | §4.1 with real masses; ungrounded included |
-| `debt = max(persisted, live)` | one debt, recomputed from axes at read time |
-| phase transition warning | phase **divergence** = designation-mismatch warning |
-| `theta`, `convergence`, `magnitude` | removed from schema (always null) |
+| Current                                     | Becomes                                             |
+| ------------------------------------------- | --------------------------------------------------- |
+| `ground_residual`                           | `e_embed(c)` input to `R(c)`                        |
+| symbol-drift count steps (0.5/0.7/0.85/1.0) | `e_drift(c)` ratio                                  |
+| `churn`                                     | display-only change rate; never in `R`              |
+| `staleness` (age-based)                     | `σ(c)` evidence-based; age only as unbound prior    |
+| `lore_residual` in pressure                 | graph-health cohesion; removed from pressure        |
+| `/(1 + fiedler)` divisor                    | graph-health metric; removed from debt              |
+| `computeTotalDebt` (Σ pressure)             | expected-error debt (§4.2)                          |
+| ask-debt 8-component blend                  | derived presentation over `R`, `C`, freshness       |
+| `state_distance` (equal-share)              | §4.1 with real masses; ungrounded included          |
+| `debt = max(persisted, live)`               | one debt, recomputed from axes at read time         |
+| phase transition warning                    | phase **divergence** = designation-mismatch warning |
+| `theta`, `convergence`, `magnitude`         | removed from schema (always null)                   |
 
 ---
 
@@ -294,7 +294,7 @@ drifted with the reason, the cue to open a narrative), re-measures e_embed via
 the shared `engine/ground-residual.ts` (also used by close maintenance), and
 refreshes the R(c) cache. Candidates are ranked by debt share `p(c)·R(c)`.
 The formula-based `healSignal` and the stop-loss halt are gone — a heal that
-raises debt has *found* debt, and halting on that would be the silent-evidence
+raises debt has _found_ debt, and halting on that would be the silent-evidence
 failure. Dry runs report the evidence steps they would take.
 
 Still open:
@@ -317,20 +317,20 @@ Still open:
 Formerly open questions, decided 2026-08-20. Change these only by editing this
 section — an implementing agent must not re-litigate them.
 
-| Decision | Value | Rationale |
-| --- | --- | --- |
-| Consult events for `p(c)` | `show` with a concept-name subject: weight 1. `ask`: weight `1/|pack|` for each concept in the evidence pack. `recall` and `trail` excluded (their subjects are a result section / narrative name, not a concept). | `show` already records `subject = conceptName`. Asks are the dominant consult path, so pack membership must count — but diluted, since the reader saw the concept among others. |
-| Ask event payload | Record evidence-pack concept names in ask event `meta` (today an ask stores only the query text). | Prerequisite for the row above; without it `p(c)` sees only explicit shows. |
-| Recency decay | Exponential, half-life 30 days, window 90 days. | Matches the north-star scorecard window family. |
-| Smoothing `α` | 1 (Laplace). | Simplest; with no events debt = mean `R`. |
-| Symbol mass `m(s)` | Uniform (1 per symbol). | LOC-weighting favors big files; revisit only with evidence. |
-| Ungrounded floor mass `ε` | Mean `w_c` of grounded concepts, recomputed per evaluation; if no grounded concepts exist, 1. | Content-length scaling rewards verbosity. |
-| `e_embed` lane | Code embedder preferred, text-embedder fallback. | Unchanged from current `ground_residual` behavior. |
-| `e_embed` calibration | Per embedding model only; no per-language tables. | No evidence yet that languages need separate calibration. |
-| `σ(c)` file evidence | `fileChanged(c)` = fraction of bound files with content change since the concept's active chunk `created_at`; contributes `min(0.5, fileChanged)`. `σ(c) = max(e_drift, min(0.5, fileChanged))`. | A file change is a weaker superset of symbol drift — it may not touch bound symbols — so it is ceilinged below the precise signal. |
-| Debt bands | healthy ≤ 0.15, caution ≤ 0.30, high ≤ 0.50, critical > 0.50. | Initial calibration; config-owned, annotated with embedding model id. |
-| Trend | Relative change over trailing 7 days: improving < −10%, degrading > +10%, else stable. | Size-invariant by construction. |
-| Display | Debt and `R` rendered as percentages (0.23 → `23%`); stored as [0,1]. | Keeps CLI output familiar. |
+| Decision                  | Value                                                                                                                                                                                            | Rationale                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Consult events for `p(c)` | `show` with a concept-name subject: weight 1. `ask`: weight `1/                                                                                                                                  | pack                                                                                                                               | `for each concept in the evidence pack.`recall`and`trail` excluded (their subjects are a result section / narrative name, not a concept). | `show` already records `subject = conceptName`. Asks are the dominant consult path, so pack membership must count — but diluted, since the reader saw the concept among others. |
+| Ask event payload         | Record evidence-pack concept names in ask event `meta` (today an ask stores only the query text).                                                                                                | Prerequisite for the row above; without it `p(c)` sees only explicit shows.                                                        |
+| Recency decay             | Exponential, half-life 30 days, window 90 days.                                                                                                                                                  | Matches the north-star scorecard window family.                                                                                    |
+| Smoothing `α`             | 1 (Laplace).                                                                                                                                                                                     | Simplest; with no events debt = mean `R`.                                                                                          |
+| Symbol mass `m(s)`        | Uniform (1 per symbol).                                                                                                                                                                          | LOC-weighting favors big files; revisit only with evidence.                                                                        |
+| Ungrounded floor mass `ε` | Mean `w_c` of grounded concepts, recomputed per evaluation; if no grounded concepts exist, 1.                                                                                                    | Content-length scaling rewards verbosity.                                                                                          |
+| `e_embed` lane            | Code embedder preferred, text-embedder fallback.                                                                                                                                                 | Unchanged from current `ground_residual` behavior.                                                                                 |
+| `e_embed` calibration     | Per embedding model only; no per-language tables.                                                                                                                                                | No evidence yet that languages need separate calibration.                                                                          |
+| `σ(c)` file evidence      | `fileChanged(c)` = fraction of bound files with content change since the concept's active chunk `created_at`; contributes `min(0.5, fileChanged)`. `σ(c) = max(e_drift, min(0.5, fileChanged))`. | A file change is a weaker superset of symbol drift — it may not touch bound symbols — so it is ceilinged below the precise signal. |
+| Debt bands                | healthy ≤ 0.15, caution ≤ 0.30, high ≤ 0.50, critical > 0.50.                                                                                                                                    | Initial calibration; config-owned, annotated with embedding model id.                                                              |
+| Trend                     | Relative change over trailing 7 days: improving < −10%, degrading > +10%, else stable.                                                                                                           | Size-invariant by construction.                                                                                                    |
+| Display                   | Debt and `R` rendered as percentages (0.23 → `23%`); stored as [0,1].                                                                                                                            | Keeps CLI output familiar.                                                                                                         |
 
 ## 9. Implementation appendix
 
@@ -339,23 +339,23 @@ line numbers are as of commit `5d49d2a` — re-locate by symbol name if drifted.
 
 ### 9.1 File and table map (per §6 row)
 
-| Spec item | Where it lives today |
-| --- | --- |
-| `conceptPressureBase`, `computeTotalDebt`, `computeComponentDebt`, `computeStateDistance`, `computeStaleness`, `computeDebtTrend` | `packages/core/src/engine/residuals.ts` |
-| `conceptPressure`, `computeDebtSnapshot`, drift count step-function | `packages/core/src/engine/debt.ts` |
-| Ask-debt blend (`WEIGHTS`), bands, retrieval/staleness multipliers | `packages/core/src/engine/ask-debt.ts` |
-| `lore_residual` + Fiedler computation | `packages/core/src/engine/graph.ts` → `recomputeGraph` (lines ~407–494) |
-| `ground_residual` computation, drift ratchet into `staleness`/`ground_residual` | `packages/core/src/engine/narrative-lifecycle.ts` → `runCloseMaintenanceJob` (~3593–3801; ratchet ~3759–3801) |
-| Ask-time staleness penalty (age-based) | `narrative-lifecycle.ts` → `queryConcepts` (~1254–1273) |
-| Phase-transition detection | `narrative-lifecycle.ts` → `closeNarrativeOp` (~2869–2921) |
-| Close-job leasing (per-job, N4 gap) | `packages/core/src/db/close-jobs.ts` → `claimCloseJob` (~115) |
-| Bindings, drift, coverage queries (`getDriftedBindings`, `getBindingCounts`, `getCoverageStats`, `getFileCoverage`) | `packages/core/src/db/concept-symbols.ts`; tables `concept_symbols` → `symbols` → `source_files` |
-| Interaction events; `recordInteraction` wrapper | `packages/core/src/db/interaction-events.ts`; `packages/core/src/engine/index.ts` (~459, call sites ~809–3261) |
-| Manifest (`debt`, `debt_trend`, `fiedler_value`, `graph_stale`) | `packages/core/src/db/manifest.ts` |
-| Migrations | `packages/core/src/db/migrations/` (latest `028_kpis.sql`; next is 029), applied by `db/migrator.ts` |
-| Dead narrative fields (`theta`, `convergence`, `magnitude`) | `db/narratives.ts`, `types/index.ts`, migration 027 |
-| Pressure/residual display | `packages/core/src/formatters.ts` (~568–683), `packages/cli/src/formatters.ts` |
-| Suggestions consuming pressure | `packages/core/src/engine/suggest.ts` |
+| Spec item                                                                                                                         | Where it lives today                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `conceptPressureBase`, `computeTotalDebt`, `computeComponentDebt`, `computeStateDistance`, `computeStaleness`, `computeDebtTrend` | `packages/core/src/engine/residuals.ts`                                                                        |
+| `conceptPressure`, `computeDebtSnapshot`, drift count step-function                                                               | `packages/core/src/engine/debt.ts`                                                                             |
+| Ask-debt blend (`WEIGHTS`), bands, retrieval/staleness multipliers                                                                | `packages/core/src/engine/ask-debt.ts`                                                                         |
+| `lore_residual` + Fiedler computation                                                                                             | `packages/core/src/engine/graph.ts` → `recomputeGraph` (lines ~407–494)                                        |
+| `ground_residual` computation, drift ratchet into `staleness`/`ground_residual`                                                   | `packages/core/src/engine/narrative-lifecycle.ts` → `runCloseMaintenanceJob` (~3593–3801; ratchet ~3759–3801)  |
+| Ask-time staleness penalty (age-based)                                                                                            | `narrative-lifecycle.ts` → `queryConcepts` (~1254–1273)                                                        |
+| Phase-transition detection                                                                                                        | `narrative-lifecycle.ts` → `closeNarrativeOp` (~2869–2921)                                                     |
+| Close-job leasing (per-job, N4 gap)                                                                                               | `packages/core/src/db/close-jobs.ts` → `claimCloseJob` (~115)                                                  |
+| Bindings, drift, coverage queries (`getDriftedBindings`, `getBindingCounts`, `getCoverageStats`, `getFileCoverage`)               | `packages/core/src/db/concept-symbols.ts`; tables `concept_symbols` → `symbols` → `source_files`               |
+| Interaction events; `recordInteraction` wrapper                                                                                   | `packages/core/src/db/interaction-events.ts`; `packages/core/src/engine/index.ts` (~459, call sites ~809–3261) |
+| Manifest (`debt`, `debt_trend`, `fiedler_value`, `graph_stale`)                                                                   | `packages/core/src/db/manifest.ts`                                                                             |
+| Migrations                                                                                                                        | `packages/core/src/db/migrations/` (latest `028_kpis.sql`; next is 029), applied by `db/migrator.ts`           |
+| Dead narrative fields (`theta`, `convergence`, `magnitude`)                                                                       | `db/narratives.ts`, `types/index.ts`, migration 027                                                            |
+| Pressure/residual display                                                                                                         | `packages/core/src/formatters.ts` (~568–683), `packages/cli/src/formatters.ts`                                 |
+| Suggestions consuming pressure                                                                                                    | `packages/core/src/engine/suggest.ts`                                                                          |
 
 ### 9.2 Storage policy
 

@@ -675,9 +675,7 @@ export function formatHistory(
   // Concept header
   const c = result.concept;
   const ground =
-    c.ground_residual != null
-      ? `${(c.ground_residual * 100).toFixed(0)}%`
-      : "unmeasured";
+    c.ground_residual != null ? `${(c.ground_residual * 100).toFixed(0)}%` : "unmeasured";
   const lore = c.lore_residual != null ? `${(c.lore_residual * 100).toFixed(0)}%` : "—";
   const staleness =
     c.staleness != null ? (c.staleness > 0.5 ? "high" : c.staleness > 0.3 ? "medium" : "low") : "—";

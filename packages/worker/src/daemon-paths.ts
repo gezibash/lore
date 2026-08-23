@@ -42,9 +42,7 @@ export function writeLoreDaemonState(
   writeFileSync(paths.statePath, JSON.stringify(state, null, 2));
 }
 
-export function readLoreDaemonState(
-  paths = getLoreDaemonPaths(),
-): LoreDaemonStateFile | null {
+export function readLoreDaemonState(paths = getLoreDaemonPaths()): LoreDaemonStateFile | null {
   try {
     return JSON.parse(readFileSync(paths.statePath, "utf-8")) as LoreDaemonStateFile;
   } catch {

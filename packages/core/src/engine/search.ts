@@ -74,7 +74,9 @@ export function mergeByDistance(
  *  the implementation they test. Used for tie-breaking, never exclusion:
  *  ground truths legitimately cite tests as behavior anchors. */
 export function isTestFilePath(path: string): boolean {
-  return /(^|\/)tests?\/|\.test\.|\.spec\.|_test\.|(^|\/)conftest\.py$|(^|\/)test_[^/]+$/.test(path);
+  return /(^|\/)tests?\/|\.test\.|\.spec\.|_test\.|(^|\/)conftest\.py$|(^|\/)test_[^/]+$/.test(
+    path,
+  );
 }
 
 export interface HybridSearchResult {
@@ -357,7 +359,9 @@ export async function hybridSearch(
       const dfm = fm as DocChunkFrontmatter;
       const truncated = parsed.content.slice(0, 4000);
       // Section chunks already carry their own "[Doc: path > headings]" header.
-      content = truncated.startsWith("[Doc:") ? truncated : `[Doc: ${dfm.fl_doc_path}]\n${truncated}`;
+      content = truncated.startsWith("[Doc:")
+        ? truncated
+        : `[Doc: ${dfm.fl_doc_path}]\n${truncated}`;
       concept = dfm.fl_doc_path;
     } else {
       if ("fl_residual" in fm && fm.fl_residual != null && fm.fl_residual > 0.5) {

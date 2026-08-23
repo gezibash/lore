@@ -160,26 +160,25 @@ export function getDaemonJob(
   db: Database,
   opts: { id: string; codePath?: string },
 ): LoreJobDetail | null {
-  const row =
-    opts.codePath
-      ? db
-          .query<JobRow, [string, string]>(
-            `SELECT id, code_path, type, subject, status, owner, attempt, lease_expires_at,
+  const row = opts.codePath
+    ? db
+        .query<JobRow, [string, string]>(
+          `SELECT id, code_path, type, subject, status, owner, attempt, lease_expires_at,
                     last_error, payload_json, result_json, created_at, updated_at, completed_at
              FROM daemon_jobs
              WHERE id = ? AND code_path = ?
              LIMIT 1`,
-          )
-          .get(opts.id, normalizeCodePath(opts.codePath))
-      : db
-          .query<JobRow, [string]>(
-            `SELECT id, code_path, type, subject, status, owner, attempt, lease_expires_at,
+        )
+        .get(opts.id, normalizeCodePath(opts.codePath))
+    : db
+        .query<JobRow, [string]>(
+          `SELECT id, code_path, type, subject, status, owner, attempt, lease_expires_at,
                     last_error, payload_json, result_json, created_at, updated_at, completed_at
              FROM daemon_jobs
              WHERE id = ?
              LIMIT 1`,
-          )
-          .get(opts.id);
+        )
+        .get(opts.id);
   return toJobDetail(row ?? null);
 }
 
@@ -494,10 +493,7 @@ export function listActiveJobCodePaths(db: Database): string[] {
     .map((row) => row.code_path);
 }
 
-export function getRawDaemonJob(
-  db: Database,
-  opts: { id: string },
-): JobRow | null {
+export function getRawDaemonJob(db: Database, opts: { id: string }): JobRow | null {
   return (
     db
       .query<JobRow, [string]>(

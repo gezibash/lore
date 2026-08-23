@@ -87,11 +87,7 @@ export function planHealConcept(
   now = new Date(),
 ): Pick<
   HealConceptOutcome,
-  | "concept"
-  | "from_residual"
-  | "from_staleness"
-  | "ungrounded_before"
-  | "bindings_still_drifted"
+  "concept" | "from_residual" | "from_staleness" | "ungrounded_before" | "bindings_still_drifted"
 > & { e_embed_measured: boolean } {
   const { g, sigma } = axesFor(db, concept, stalenessDays, now);
   const drifted = getDriftedBindings(db).filter((d) => d.concept_id === concept.id).length;
@@ -171,7 +167,9 @@ export async function healConcept(
         });
         bindingsVerified++;
       } else {
-        stillDriftedReasons.push(`${binding.symbol_qualified_name}: ${verdict.reason || "no reason given"}`);
+        stillDriftedReasons.push(
+          `${binding.symbol_qualified_name}: ${verdict.reason || "no reason given"}`,
+        );
       }
     });
   }

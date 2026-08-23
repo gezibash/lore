@@ -34,7 +34,9 @@ function createArgument(name: string, spec: CliArgSpec): Argument {
 
 function buildOptionFlags(name: string, spec: CliOptionSpec): string {
   const long =
-    spec.type === "boolean" ? `--${name}` : `--${name} <${spec.type === "number" ? "number" : "string"}>`;
+    spec.type === "boolean"
+      ? `--${name}`
+      : `--${name} <${spec.type === "number" ? "number" : "string"}>`;
   return spec.short ? `-${spec.short}, ${long}` : long;
 }
 
@@ -70,10 +72,7 @@ function applyOptions(command: Command, options: Record<string, CliOptionSpec> |
   }
 }
 
-function buildAction(
-  commandSpec: CliCommandSpec,
-  globalOptions: Record<string, CliOptionSpec>,
-) {
+function buildAction(commandSpec: CliCommandSpec, globalOptions: Record<string, CliOptionSpec>) {
   const argEntries = Object.entries(commandSpec.arguments ?? {});
   const optionEntries = [
     ...Object.entries(globalOptions),
