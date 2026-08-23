@@ -9,7 +9,7 @@ export interface KpiCreateOpts {
 }
 
 /** Parse `key=value` pairs; numeric-looking values become numbers. */
-export function parseKpiMeta(pairs: string[] | undefined): Record<string, unknown> | undefined {
+function parseKpiMeta(pairs: string[] | undefined): Record<string, unknown> | undefined {
   if (!pairs || pairs.length === 0) return undefined;
   const meta: Record<string, unknown> = {};
   for (const pair of pairs) {

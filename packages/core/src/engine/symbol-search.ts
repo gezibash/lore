@@ -19,7 +19,7 @@ interface CallGraph {
  * BFS up to the specified degrees, topK per node.
  * Level 1: includes snippet. Level 2+: name + file only (no snippet).
  */
-export function collectCallGraph(
+function collectCallGraph(
   db: Database,
   symbolQualifiedName: string,
   opts?: { upDegrees?: number; downDegrees?: number; topK?: number },

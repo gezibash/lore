@@ -52,7 +52,7 @@ export function reciprocalRankFusion(
  * calibrate differently — which is intentional: it gives exact keyword matches
  * priority over semantic ones. See the call site for the measurement behind this.
  */
-export function mergeByDistance(
+function mergeByDistance(
   ...lanes: Array<{ chunkId: string; distance: number }[]>
 ): RRFResult[] {
   const best = new Map<string, number>();

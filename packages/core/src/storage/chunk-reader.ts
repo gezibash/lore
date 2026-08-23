@@ -1,5 +1,4 @@
 import { readFile } from "fs/promises";
-import { basename } from "path";
 import { parseChunk } from "./frontmatter.ts";
 import { mainDir, journalDir, listChunkFiles, listNarrativeDirs } from "./paths.ts";
 import type {
@@ -17,7 +16,7 @@ export async function readChunk<T extends ChunkFrontmatter = ChunkFrontmatter>(
   return { frontmatter, content, filePath };
 }
 
-export async function readAllMainChunks(
+async function readAllMainChunks(
   lorePath: string,
 ): Promise<ParsedChunk<StateChunkFrontmatter>[]> {
   const files = await listChunkFiles(mainDir(lorePath));
@@ -28,7 +27,7 @@ export async function readAllMainChunks(
   return chunks;
 }
 
-export async function readAllJournalChunks(
+async function readAllJournalChunks(
   lorePath: string,
   narrativeName: string,
 ): Promise<ParsedChunk<JournalChunkFrontmatter>[]> {
@@ -58,8 +57,4 @@ export async function scanLore(lorePath: string): Promise<LoreScan> {
   }
 
   return { stateChunks, journalChunks };
-}
-
-export function chunkIdFromPath(filePath: string): string {
-  return basename(filePath, ".md");
 }

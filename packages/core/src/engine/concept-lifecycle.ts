@@ -73,7 +73,7 @@ export interface LifecycleDeps {
   getGenerator(): Promise<Generator>;
 }
 
-export function isActiveConcept(concept: ConceptRow): boolean {
+function isActiveConcept(concept: ConceptRow): boolean {
   return concept.lifecycle_status == null || concept.lifecycle_status === "active";
 }
 
@@ -100,7 +100,7 @@ export function resolveConceptByNameCi(
   return concept;
 }
 
-export function assertConceptNameAvailable(
+function assertConceptNameAvailable(
   db: Database,
   name: string,
   opts?: { excludeId?: string },
@@ -109,7 +109,7 @@ export function assertConceptNameAvailable(
   throw new LoreError("CONCEPT_NAME_CONFLICT", `Concept name '${name}' already exists`);
 }
 
-export function ensureHeadCommit(db: Database) {
+function ensureHeadCommit(db: Database) {
   let head = getHeadCommit(db);
   if (!head) {
     head = createGenesisCommit(db);
@@ -117,7 +117,7 @@ export function ensureHeadCommit(db: Database) {
   return head;
 }
 
-export function snapshotCurrentTree(db: Database, message: string) {
+function snapshotCurrentTree(db: Database, message: string) {
   const head = ensureHeadCommit(db);
   const activeConcepts = getActiveConcepts(db);
   const treeEntries = activeConcepts
@@ -128,7 +128,7 @@ export function snapshotCurrentTree(db: Database, message: string) {
   return commit;
 }
 
-export function updateManifestForLifecycle(
+function updateManifestForLifecycle(
   db: Database,
   debtBefore: number,
 ): { debtAfter: number } {
@@ -144,7 +144,7 @@ export function updateManifestForLifecycle(
   return { debtAfter };
 }
 
-export async function updateActiveChunkMetadata(
+async function updateActiveChunkMetadata(
   db: Database,
   concept: ConceptRow,
   updates: Record<string, unknown>,
@@ -155,7 +155,7 @@ export async function updateActiveChunkMetadata(
   await updateChunkFrontmatter(chunk.file_path, updates);
 }
 
-export async function readConceptContent(db: Database, concept: ConceptRow): Promise<string> {
+async function readConceptContent(db: Database, concept: ConceptRow): Promise<string> {
   if (!concept.active_chunk_id) return "";
   const chunk = getChunk(db, concept.active_chunk_id);
   if (!chunk) return "";

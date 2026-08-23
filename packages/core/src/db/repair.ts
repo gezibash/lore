@@ -3,7 +3,7 @@ import { buildCanonicalSchemaFromMigrations } from "./schema-canonical.ts";
 import { inspectSchema, type SchemaColumn, type SchemaSnapshot } from "./schema-inspect.ts";
 import { migrate } from "./migrator.ts";
 
-export type SchemaIssueKind =
+type SchemaIssueKind =
   | "missing_table"
   | "missing_view"
   | "missing_index"

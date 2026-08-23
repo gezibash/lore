@@ -53,20 +53,3 @@ export function coverageCommand(
       );
     });
 }
-
-export async function scanStatsCommand(client: WorkerClient): Promise<void> {
-  const stats = await client.scanStats();
-  const parts: string[] = [];
-  parts.push(`${BOLD}Source Code Index${RESET}`);
-  parts.push(`  ${BOLD}Files:${RESET} ${stats.file_count}`);
-  parts.push(`  ${BOLD}Symbols:${RESET} ${stats.symbol_count}`);
-  if (Object.keys(stats.languages).length > 0) {
-    const langs = Object.entries(stats.languages)
-      .sort(([, a], [, b]) => b - a)
-      .map(([lang, count]) => `${lang}: ${count}`)
-      .join(", ");
-    parts.push(`  ${BOLD}Languages:${RESET} ${langs}`);
-  }
-  parts.push(`  ${BOLD}Last scanned:${RESET} ${stats.last_scanned_at ?? `${DIM}never${RESET}`}`);
-  console.log(parts.join("\n"));
-}

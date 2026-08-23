@@ -23,19 +23,6 @@ export async function readSymbolContent(
 }
 
 /**
- * Check whether a directory is inside a git repository.
- */
-export async function isGitRepo(codePath: string): Promise<boolean> {
-  try {
-    const result = Bun.$`git -C ${codePath} rev-parse --is-inside-work-tree`.quiet();
-    const output = await result;
-    return output.stdout.toString().trim() === "true";
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get the current HEAD commit SHA for a git workspace.
  */
 export async function getHeadSha(codePath: string): Promise<string | null> {

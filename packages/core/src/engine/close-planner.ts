@@ -6,7 +6,7 @@ import type { Generator } from "./generator.ts";
 import { mapConcurrent } from "./async.ts";
 import { getCreateUpdateTargets, loadJournalConceptDesignations } from "./journal-routing.ts";
 
-export interface PlannedConceptUpdate {
+interface PlannedConceptUpdate {
   conceptId: string;
   conceptName: string;
   existingChunkId: string | null;
@@ -15,7 +15,7 @@ export interface PlannedConceptUpdate {
   strategy: "patch" | "rewrite";
 }
 
-export interface PlannedConceptCreate {
+interface PlannedConceptCreate {
   conceptName: string;
   content: string;
   sourceEntryIndices: number[];

@@ -32,7 +32,7 @@ export function loadRegistry(root: string): Registry {
   }
 }
 
-export function saveRegistry(root: string, reg: Registry): void {
+function saveRegistry(root: string, reg: Registry): void {
   mkdirSync(root, { recursive: true });
   writeFileSync(registryPath(root), JSON.stringify(reg, null, 2) + "\n");
 }

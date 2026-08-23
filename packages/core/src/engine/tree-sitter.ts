@@ -22,12 +22,12 @@ export type TreeSitterQuery = {
   delete(): void;
 };
 
-export type TreeSitterMatch = {
+type TreeSitterMatch = {
   pattern: number;
   captures: TreeSitterCapture[];
 };
 
-export type TreeSitterCapture = {
+type TreeSitterCapture = {
   name: string;
   node: TreeSitterNode;
 };

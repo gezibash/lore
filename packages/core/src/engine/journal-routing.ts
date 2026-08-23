@@ -30,7 +30,7 @@ export function getCreateUpdateTargets(
   );
 }
 
-export function inferDefaultJournalConceptDesignations(narrative: NarrativeRow): string[] | null {
+function inferDefaultJournalConceptDesignations(narrative: NarrativeRow): string[] | null {
   const targets = getCreateUpdateTargets(narrative);
   if (targets.length !== 1) return null;
   return [targets[0]!.concept];

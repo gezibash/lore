@@ -238,4 +238,4 @@ export function codexAppServerFor(binPath: string): CodexAppServer {
   return server;
 }
 
-export type { CodexAppServer, TurnOutcome };
+export type { CodexAppServer };

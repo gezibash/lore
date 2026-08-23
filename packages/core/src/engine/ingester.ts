@@ -32,7 +32,7 @@ interface DocSection {
  * loses every routing section past its intro. Non-markdown text falls back to
  * a single section.
  */
-export function splitDocIntoSections(relPath: string, content: string): DocSection[] {
+function splitDocIntoSections(relPath: string, content: string): DocSection[] {
   if (!/\.(md|mdx|docx|html?|xml)$/i.test(relPath)) {
     return [{ headingPath: relPath, content }];
   }

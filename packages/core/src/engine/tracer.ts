@@ -18,7 +18,7 @@ interface SpanRecord {
   children: SpanRecord[];
 }
 
-export class Tracer {
+class Tracer {
   private spans: SpanRecord[] = [];
   private stack: SpanRecord[] = [];
   private counter = 0;

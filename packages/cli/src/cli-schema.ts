@@ -1,4 +1,4 @@
-export type CliValueType = "string" | "number" | "boolean";
+type CliValueType = "string" | "number" | "boolean";
 
 export type CliArgSpec = {
   type: Exclude<CliValueType, "boolean">;
@@ -14,7 +14,7 @@ export type CliOptionSpec = {
   repeatable?: boolean;
 };
 
-export type CliActionContext = {
+type CliActionContext = {
   args: Record<string, any>;
   options: Record<string, any>;
 };

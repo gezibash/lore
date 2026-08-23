@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export type DbObjectType = "table" | "index" | "view";
+type DbObjectType = "table" | "index" | "view";
 
 export interface SchemaColumn {
   name: string;
@@ -10,7 +10,7 @@ export interface SchemaColumn {
   isPrimaryKey: boolean;
 }
 
-export interface SchemaObject {
+interface SchemaObject {
   type: DbObjectType;
   name: string;
   sql: string;

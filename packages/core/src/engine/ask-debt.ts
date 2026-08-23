@@ -13,7 +13,7 @@ const WRITE_WINDOW_HOURS = 72;
 
 export type AskDebtBand = "healthy" | "caution" | "high" | "critical";
 
-export interface AskDebtComponents {
+interface AskDebtComponents {
   symbol_drift: number;
   code_freshness: number;
   doc_freshness: number;

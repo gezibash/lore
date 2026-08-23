@@ -13,7 +13,7 @@ import { emit } from "../output.ts";
  *   merge:<source>:<into>[:<reason>]
  *   split:<concept>[:<parts>]
  */
-export function parseTargetSpec(spec: string): NarrativeTarget {
+function parseTargetSpec(spec: string): NarrativeTarget {
   const parts = spec.split(":");
   const op = parts[0];
 

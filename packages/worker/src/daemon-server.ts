@@ -93,7 +93,7 @@ type ServerHandledClientMethod =
 /** Default cap on how long a caller may block inside the daemon waiting for
  *  a job. Long LLM closes are normal; forever is not. Override per call with
  *  `timeoutMs`, or globally with LORE_JOB_WAIT_TIMEOUT_MS (0 disables). */
-export const DEFAULT_JOB_WAIT_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_JOB_WAIT_TIMEOUT_MS = 15 * 60_000;
 
 interface ProxyMethodSpec {
   maxArgs: number;
@@ -322,7 +322,7 @@ function getCodePathFromOptions(value: unknown): string | undefined {
     : undefined;
 }
 
-export class LoreDaemonServer {
+class LoreDaemonServer {
   private client!: DirectClient;
   private readonly paths: LoreDaemonPaths;
   private queueDb!: ReturnType<typeof openDaemonQueueDb>;

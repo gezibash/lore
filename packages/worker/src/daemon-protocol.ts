@@ -23,14 +23,6 @@ export interface LoreJobDetail {
   result?: unknown | null;
 }
 
-export interface LoreJobWaitOptions {
-  codePath?: string;
-  pollMs?: number;
-  /** Give up after this long; defaults to the daemon's 15-minute cap,
-   *  overridable via LORE_JOB_WAIT_TIMEOUT_MS. 0 waits indefinitely. */
-  timeoutMs?: number;
-}
-
 export interface LoreDaemonStatus {
   running: boolean;
   pid: number | null;
@@ -74,13 +66,13 @@ export interface DaemonRequest {
   cwd?: string;
 }
 
-export interface DaemonSuccessResponse {
+interface DaemonSuccessResponse {
   id: string;
   ok: true;
   result: unknown;
 }
 
-export interface DaemonErrorResponse {
+interface DaemonErrorResponse {
   id: string;
   ok: false;
   error: SerializedDaemonError;

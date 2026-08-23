@@ -17,11 +17,13 @@
     "fmt:check": "oxfmt --check .",
     "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/worker typecheck && bun run --cwd packages/rendering typecheck && bun run --cwd packages/cli typecheck",
     "test": "bun run --cwd packages/core test && bun run --cwd packages/sdk test && bun run --cwd packages/worker test && bun run --cwd packages/rendering test && bun run --cwd packages/cli test",
-    "release": "bunx changelogen --release"
+    "release": "bunx changelogen --release",
+    "knip": "knip --no-progress"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "changelogen": "^0.6.2",
+    "knip": "^6.32.2",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.51.0",
     "tree-sitter-cli": "0.26",

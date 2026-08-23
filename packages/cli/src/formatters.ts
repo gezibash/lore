@@ -12,9 +12,8 @@ import type {
   HealConceptsResult,
   QueryResult,
   RegistryEntry,
-  StatusResult,
 } from "@lore/worker";
-import { renderLs as renderLsRoute, renderStatus as renderStatusRoute } from "@lore/rendering";
+import { renderLs as renderLsRoute } from "@lore/rendering";
 import { renderAsk, renderAskBrief } from "@lore/rendering";
 import { timeAgo } from "@lore/worker";
 
@@ -150,10 +149,6 @@ export function formatHistory(
   }
 
   return lines.join("\n");
-}
-
-export function formatStatusCli(result: StatusResult): string {
-  return renderStatusRoute(result, { route: "cli", format: "plain" });
 }
 
 export function formatRegisterCli(codePath: string, lorePath: string): string {

@@ -144,7 +144,7 @@ const CONSULT_SMOOTHING_ALPHA = 1; // Laplace
  * are not concepts. Synthetic pack entries (call-site groups) are excluded at
  * write time by the recorder.
  */
-export function getConsultMassByConceptName(db: Database, now = new Date()): Map<string, number> {
+function getConsultMassByConceptName(db: Database, now = new Date()): Map<string, number> {
   const cutoff = new Date(now.getTime() - CONSULT_WINDOW_DAYS * 86_400_000).toISOString();
   const decay = (createdAt: string): number => {
     const ageDays = (now.getTime() - new Date(createdAt).getTime()) / 86_400_000;
@@ -258,12 +258,6 @@ export function computeExpectedDebt(
 }
 
 // ── §4.1 state distance — the epistemic gap ──────────────────────────────────
-
-export interface ConceptMassRow {
-  concept_id: string;
-  /** Confidence-weighted bound-symbol mass. */
-  mass: number;
-}
 
 function getConceptMasses(db: Database): Map<string, number> {
   const rows = db

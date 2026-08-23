@@ -6,7 +6,7 @@ import type {
 } from "@/types/index.ts";
 import type { GroundednessResult } from "./measurement.ts";
 
-export interface ComputedConceptHealthSignal {
+interface ComputedConceptHealthSignal {
   concept_id: string;
   concept: string;
   time_stale: number;

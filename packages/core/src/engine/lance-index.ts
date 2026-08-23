@@ -29,7 +29,7 @@ import { expandCamelCase } from "@/db/symbols.ts";
  * verbatim into their own column, indexed with a whitespace tokenizer that
  * leaves them whole, so an exact-identifier query has something rare to match.
  */
-export function extractVerbatimIdentifiers(text: string, limit = 400): string {
+function extractVerbatimIdentifiers(text: string, limit = 400): string {
   const found = new Set<string>();
   for (const match of text.matchAll(/[A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_*|__[A-Za-z0-9]+__/g)) {
     const token = match[0];
@@ -67,7 +67,7 @@ function modelSlug(model: string): string {
   return `vec_${model.replace(/[^a-zA-Z0-9]+/g, "_")}`;
 }
 
-export function lanceDirForDb(db: Database): string {
+function lanceDirForDb(db: Database): string {
   const file = db.filename;
   if (!file || file === ":memory:") {
     throw new LoreError(

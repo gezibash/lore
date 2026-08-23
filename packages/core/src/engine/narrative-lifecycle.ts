@@ -2138,7 +2138,7 @@ function detectExactnessQuery(query: string): boolean {
   return false;
 }
 
-export async function collectSummaryGroundingEvidence(
+async function collectSummaryGroundingEvidence(
   query: string,
   matches: Array<{
     concept: string;
@@ -2460,7 +2460,7 @@ function formatLookNext(
   return `Look next: ${targets.join(", ")}.`;
 }
 
-export const CONCISE_EXECUTIVE_SUMMARY_SYSTEM_PROMPT = `You answer questions with the shortest correct answer possible.
+const CONCISE_EXECUTIVE_SUMMARY_SYSTEM_PROMPT = `You answer questions with the shortest correct answer possible.
 Non-negotiable rules:
 - Treat the provided evidence pack as the only source of truth.
 - Answer in 1-2 sentences maximum. Prefer a single phrase or value when the question asks for a specific fact.
@@ -2757,7 +2757,7 @@ ${context}`;
 const DOC_EVIDENCE_HEADER = /^\[Doc: ([^\]>]+?)(?: > [^\]]*)?\]/;
 
 /** File(:line) provenance carried by a source or doc chunk's own content header. */
-export function parseEvidenceProvenance(content: string): { file: string; line: number } | null {
+function parseEvidenceProvenance(content: string): { file: string; line: number } | null {
   const source = SOURCE_EVIDENCE_HEADER.exec(content);
   if (source) return { file: source[1]!, line: Number(source[2]) };
   const doc = DOC_EVIDENCE_HEADER.exec(content);
