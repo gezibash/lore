@@ -130,17 +130,55 @@ async function cleanupChunkFiles(filePaths: string[]): Promise<void> {
   await Promise.all(filePaths.map((filePath) => deleteSourceChunkFile(filePath)));
 }
 
-/** Contiguous line ranges of the file not covered by any extracted symbol.
+/** A line that carries only a comment. One predicate covers every supported
+ *  language: `//`, `///`, `//!` (ts/js/go/rust), `#` (python/elixir), and the
+ *  `/* ... *\/` block forms including continuation lines starting with `*`. */
+function isCommentLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return false;
+  return (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*")
+  );
+}
+
+/** First line of the comment block documenting the symbol that starts at
+ *  `symbolStart`, or `symbolStart` when there is none.
+ *
+ *  Tree-sitter reports a declaration's range without its leading comment, so
+ *  the comment would otherwise land in a neighbouring module gap chunk. That
+ *  split is not cosmetic: a comment reading "only reconciled when explicitly
+ *  marked as schema-only" retrieved *without* the allowlist it describes reads
+ *  as evidence that no allowlist exists. A blank line ends the block — a
+ *  detached comment above a blank line documents the file, not the symbol. */
+function leadingCommentStart(
+  contentLines: string[],
+  symbolStart: number,
+  claimed: Uint8Array,
+): number {
+  let start = symbolStart;
+  for (let line = symbolStart - 1; line >= 1; line--) {
+    if (claimed[line] === 1) break;
+    const text = contentLines[line - 1];
+    if (text === undefined || !isCommentLine(text)) break;
+    start = line;
+  }
+  return start;
+}
+
+/** Contiguous line ranges of the file not covered by any emitted chunk.
  *  Module-level code lives here: constants, top-level config, bare statements.
  *  Without these, a value like `DEFAULT_LIMITS = Limits(max_connections=100)`
  *  sitting below the last class is invisible to retrieval entirely. */
 function uncoveredRanges(
-  symbols: SymbolForChunk[],
+  claimedRanges: Array<{ start: number; end: number }>,
   totalLines: number,
 ): Array<{ start: number; end: number }> {
   const covered = new Uint8Array(totalLines + 1);
-  for (const sym of symbols) {
-    for (let line = sym.line_start; line <= Math.min(sym.line_end, totalLines); line++) {
+  for (const range of claimedRanges) {
+    for (let line = range.start; line <= Math.min(range.end, totalLines); line++) {
       covered[line] = 1;
     }
   }
@@ -168,24 +206,44 @@ async function writeSourceChunkFilesForSymbols(
 ): Promise<WrittenSourceChunk[]> {
   const written: WrittenSourceChunk[] = [];
   const contentLines = content.split("\n");
+
+  // Claim symbol bodies first, then grow each one upward over its doc comment.
+  // Two passes so a comment already inside another symbol is never stolen.
+  const claimed = new Uint8Array(contentLines.length + 1);
+  for (const sym of symbols) {
+    for (let line = sym.line_start; line <= Math.min(sym.line_end, contentLines.length); line++) {
+      claimed[line] = 1;
+    }
+  }
+  const chunkRanges = symbols.map((sym) => ({
+    sym,
+    start: leadingCommentStart(contentLines, sym.line_start, claimed),
+    end: sym.line_end,
+  }));
+  for (const range of chunkRanges) {
+    for (let line = range.start; line < range.sym.line_start; line++) claimed[line] = 1;
+  }
+
   try {
-    for (const sym of symbols) {
-      const body = contentLines.slice(sym.line_start - 1, sym.line_end).join("\n");
+    for (const { sym, start, end } of chunkRanges) {
+      const body = contentLines.slice(start - 1, end).join("\n");
       const { id, filePath } = await writeSourceChunk({
         lorePath,
         sourceFile,
-        lineStart: sym.line_start,
-        lineEnd: sym.line_end,
+        lineStart: start,
+        lineEnd: end,
         symbol: sym.qualified_name,
         kind: sym.kind as SymbolKind,
         language,
+        // The symbol's own hash, not the chunk text's: a reworded comment is
+        // not implementation drift and must not invalidate bindings.
         bodyHash: sym.body_hash,
         body,
       });
       written.push({ id, filePath, body, symbol: sym.qualified_name });
     }
 
-    for (const range of uncoveredRanges(symbols, contentLines.length)) {
+    for (const range of uncoveredRanges(chunkRanges, contentLines.length)) {
       const body = contentLines
         .slice(range.start - 1, range.end)
         .join("\n")
@@ -271,6 +329,7 @@ async function prepareSourceScanFile(
   lorePath: string | undefined,
   file: DiscoveredFile,
   existingByPath: Map<string, SourceFileRow>,
+  force = false,
 ): Promise<PreparedSourceScan> {
   let content: string;
   try {
@@ -283,7 +342,7 @@ async function prepareSourceScanFile(
   const contentHash = createHash("sha256").update(content).digest("hex");
   const existing = existingByPath.get(file.relativePath) ?? null;
 
-  if (existing && existing.content_hash === contentHash) {
+  if (!force && existing && existing.content_hash === contentHash) {
     if (lorePath && existing.symbol_count > 0) {
       const existingSourcePaths = getSourceChunkPathsForFile(db, file.relativePath);
       if (existingSourcePaths.length === 0) {
@@ -462,10 +521,10 @@ export async function scanProject(
   const currentPaths = new Set(files.map((file) => file.relativePath));
   // force: ignore the content-hash gate so every file re-chunks. Needed after a
   // change to how chunks are produced or indexed, which unchanged files would
-  // otherwise never pick up.
-  const existingByPath = opts?.force
-    ? new Map<string, SourceFileRow>()
-    : new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
+  // otherwise never pick up. The existing rows must still be loaded — they are
+  // what drives deletion of the superseded chunks, symbols and call sites, so
+  // hiding them makes every file look new and the index duplicates every run.
+  const existingByPath = new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
 
   const pool = new TreeSitterPool();
   await pool.init();
@@ -481,7 +540,7 @@ export async function scanProject(
   const preparedFiles = await mapConcurrent(
     files,
     Math.min(SCAN_PREPARE_CONCURRENCY, Math.max(1, files.length)),
-    (file) => prepareSourceScanFile(db, pool, lorePath, file, existingByPath),
+    (file) => prepareSourceScanFile(db, pool, lorePath, file, existingByPath, opts?.force),
   );
 
   for (const prepared of preparedFiles) {

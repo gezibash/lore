@@ -184,3 +184,97 @@ test("rescanFiles reports files it dropped instead of silently skipping them", a
     removeDir(loreDir);
   }
 });
+
+test("a symbol's chunk absorbs the comment block documenting it", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+  const filePath = `${codeDir}/src/repair-shaped.ts`;
+
+  try {
+    // Shaped like packages/core/src/db/repair.ts:54-88, where the comment
+    // explaining the allowlist was chunked away from the allowlist itself and
+    // ask() then reported that no such list existed.
+    writeTextFile(
+      filePath,
+      [
+        "interface SchemaAudit {",
+        "  pendingNames: string[];",
+        "}",
+        "",
+        "// Pending migrations are only reconciled automatically when they are",
+        "// explicitly marked as schema-only. This avoids silently stamping",
+        "// future data backfills as applied based on DDL equivalence alone.",
+        "const RECONCILABLE_MIGRATIONS = new Set([",
+        '  "001_initial",',
+        '  "002_concept_lifecycle",',
+        "]);",
+        "",
+        "export function isReconcilable(name: string): boolean {",
+        "  return RECONCILABLE_MIGRATIONS.has(name);",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    await scanProject(db, codeDir, loreDir);
+
+    const chunkPaths = getSourceChunkPathsForFile(db, "src/repair-shaped.ts");
+    expect(chunkPaths.length).toBeGreaterThan(0);
+    const bodies = await Promise.all(chunkPaths.map((path) => Bun.file(path).text()));
+
+    const withList = bodies.filter((body) => body.includes("RECONCILABLE_MIGRATIONS = new Set"));
+    expect(withList.length).toBe(1);
+    // The comment must travel with the declaration it documents.
+    expect(withList[0]).toContain("explicitly marked as schema-only");
+
+    // ...and must not be duplicated into a module gap chunk.
+    const withComment = bodies.filter((body) => body.includes("explicitly marked as schema-only"));
+    expect(withComment.length).toBe(1);
+
+    // A blank line separates the interface from the comment, so the interface
+    // keeps its own chunk rather than swallowing the block below it.
+    const withInterface = bodies.filter((body) => body.includes("interface SchemaAudit"));
+    expect(withInterface.length).toBe(1);
+    expect(withInterface[0]).not.toContain("explicitly marked as schema-only");
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});
+
+test("scanProject --force replaces chunks and symbols instead of duplicating them", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+  const filePath = `${codeDir}/src/stable.ts`;
+
+  try {
+    writeTextFile(
+      filePath,
+      ["export function alpha() {", "  return 1;", "}", "", "const BETA = 2;", ""].join("\n"),
+    );
+
+    await scanProject(db, codeDir, loreDir);
+    const firstChunks = getSourceChunkPathsForFile(db, "src/stable.ts").length;
+    const countSymbols = () =>
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM symbols").get()?.n ?? 0;
+    const firstSymbols = countSymbols();
+    expect(firstChunks).toBeGreaterThan(0);
+    expect(firstSymbols).toBeGreaterThan(0);
+
+    // Same content, forced re-chunk: the file must be re-indexed, not indexed twice.
+    await scanProject(db, codeDir, loreDir, { force: true });
+    expect(getSourceChunkPathsForFile(db, "src/stable.ts").length).toBe(firstChunks);
+    expect(countSymbols()).toBe(firstSymbols);
+
+    await scanProject(db, codeDir, loreDir, { force: true });
+    expect(getSourceChunkPathsForFile(db, "src/stable.ts").length).toBe(firstChunks);
+    expect(countSymbols()).toBe(firstSymbols);
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});
