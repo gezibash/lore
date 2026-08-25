@@ -1,8 +1,19 @@
 import type { Database } from "bun:sqlite";
-import { readFileSync, readdirSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { dirname, join } from "path";
 
-const MIGRATIONS_DIR = join(import.meta.dirname, "migrations");
+/** Migrations are .sql data files, so a compiled binary cannot carry them in
+ *  its bundle. The build script copies the directory next to the executable;
+ *  a source checkout finds it beside this module. Discovery stays by
+ *  directory listing either way, so adding a migration is still just adding
+ *  a file. */
+function resolveMigrationsDir(): string {
+  const bundled = join(import.meta.dirname, "migrations");
+  if (existsSync(bundled)) return bundled;
+  return join(dirname(process.execPath), "migrations");
+}
+
+const MIGRATIONS_DIR = resolveMigrationsDir();
 
 export interface MigrationStatus {
   applied: { name: string; applied_at: string }[];
