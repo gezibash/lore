@@ -18,7 +18,8 @@
     "test": "bun run --cwd packages/core test && bun run --cwd packages/sdk test && bun run --cwd packages/worker test && bun run --cwd packages/rendering test && bun run --cwd packages/cli test",
     "release": "bunx changelogen --release",
     "knip": "knip --no-progress",
-    "build": "bun ./scripts/build.ts"
+    "build": "bun ./scripts/build.ts",
+    "install": "bun ./scripts/install.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
