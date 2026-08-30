@@ -1,20 +1,44 @@
 ---
 name: lore
-description: Use Lore's CLI-first workflow in lore-enabled repos: inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest, or wants the agent to keep Lore updated while doing coding work.
+description: Use Lore's CLI-first workflow in any repo: set the project up, inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest/ask, KPIs, or wants the agent to keep Lore updated while doing coding work.
 ---
 
 # Lore
 
 ## Overview
 
-Use Lore as part of the coding loop, not as a final summary step. Prefer the CLI, open a narrative before meaningful work, write dense entries as you learn, close when done, then ingest and bind after code changes.
+Lore turns a codebase into a queryable knowledge graph: named concepts, narrative sessions, symbol bindings, and a debt score. Use it as part of the coding loop, not as a final summary step. Open a narrative before meaningful work, write dense entries as you learn, close when done, then ingest and bind after code changes.
+
+Lore is CLI-only. There is no MCP surface.
+
+## Set Up A Project
+
+1. Install the CLI from the lore repo with `bun run install`.
+   - This builds `dist/` and links a stable binary at `~/.local/bin/lore`.
+   - The binary is a copy, so it keeps working while the lore repo is mid-edit.
+   - Use `bun run link:global` instead only when you develop lore itself.
+   - If the install warns about PATH, report the warning. Do not ignore it.
+2. Write `.loreignore` at the repo root before the first ingest.
+   - Lore reads `.gitignore` and `.loreignore`. `.loreignore` has the highest authority.
+   - A line that starts with `!` forces a path back in.
+   - Exclude tests, fixtures, benchmarks, and vendored trees. Ground-truth answers in test files contaminate retrieval.
+   - Exclude large generated directories. An unfiltered ingest of a big workspace indexes many gigabytes.
+3. Register the repo with `lore init` from the repo root. Pass a name for a second argument if the directory name is ambiguous.
+4. Index with `lore ingest`.
+5. Confirm the result with `lore status` and `lore ls`.
+
+### Choose The Root
+
+- `lore init <dir>` registers that exact directory. It never returns a parent mind.
+- Every command resolves the current directory to its nearest registered ancestor.
+- For a multi-repo workspace, register one mind at the workspace root. Sub-repos then share concepts.
+- If cross-repo answers get worse, the packs are crowded by near-duplicate code. Split the workspace into separate minds.
 
 ## Start With State
 
-- Check the repo state with `lore status --json`.
+- Check the repo state with `lore status --json`. Add `--details` for the full diagnostic report.
 - Inspect current concepts with `lore ls --json` and `lore show <concept>`.
-- Ask for architectural context with `lore ask "<query>" --json` or `lore ask "<query>" --sources`.
-- Initialize the repo with `lore init <path>` if Lore is not registered yet.
+- Ask for architectural context with `lore ask "<query>" --sources`.
 - Bootstrap a dark lore with `lore ingest` if concepts are empty or coverage is near zero.
 
 ## Run The Default Loop
@@ -24,6 +48,7 @@ Use Lore as part of the coding loop, not as a final summary step. Prefer the CLI
 3. Declare create/update targets on open when the work introduces or reshapes concepts.
    - Use `--target create:<concept>` when a new concept will be journaled.
    - Use `--target update:<concept>` when the narrative should feed an existing concept directly.
+   - Lifecycle targets exist too: `rename:old:new`, `merge:src:into`, `archive:name[:reason]`, `split:name[:parts]`, `restore:name`.
 4. Write often with `lore write <narrative> "<entry>"`.
    - Pass `--concept` unless the narrative has exactly one create/update target.
    - Add `--symbol` for touched symbols and `--ref` for file or line references.
@@ -32,6 +57,15 @@ Use Lore as part of the coding loop, not as a final summary step. Prefer the CLI
    - Use `--wait` when the caller needs a completed result before continuing.
 6. Ingest after code changes with `lore ingest` or `lore ingest <file>`.
 7. Bind important touched symbols with `lore sys concept bind <concept> <symbol>`.
+
+## Ask Well
+
+- `lore ask "<query>"` returns an architectural answer. This is the `arch` mode default.
+- Add `--mode code` to inject the bodies of bound symbols. Use it for implementation questions.
+- Add `--sources` to see which chunks the answer came from.
+- Add `--brief` for targeted excerpts, or `--concise` for a 1-2 sentence answer.
+- Add `--debug` when an answer looks wrong, to trace the retrieval pipeline.
+- Every ask returns a result ID. Chain follow-up work to it with `lore recall <id>`, `lore show <concept> --from-result <id>`, `lore open <name> <intent> --from-result <id>`, and `lore score <id> <score>`.
 
 ## Journal Well
 
@@ -43,10 +77,19 @@ Use Lore as part of the coding loop, not as a final summary step. Prefer the CLI
 
 ## Handle Async Close Explicitly
 
+- A local daemon runs the queue. Any command starts it on demand. Manage it with `lore daemon start|status|stop|logs`.
 - Treat `lore close <narrative>` as queue submission unless `--wait` is set.
 - Inspect queued work with `lore jobs` and `lore job <id>`.
 - Wait for completion with `lore wait <id>`.
-- Drain jobs in automation or background workflows with `lore sys worker --once` or `lore sys worker --watch`.
+- Drain jobs in automation with `lore sys worker --once` or `lore sys worker --watch`.
+- `lore close --merge-strategy` selects how the entry lands: `replace` (default), `extend`, or `patch`.
+
+## Track Numbers As KPIs
+
+- Record a measurement with `lore kpi log <name> <value>`. The first log needs `--direction up|down`.
+- Set a target with `lore kpi goal <name> <target>`.
+- Read the trend with `lore kpi status [name]`.
+- Readings attach to the sole open narrative. Pass `--narrative <name>` when several are open.
 
 ## Prefer JSON For Automation
 

@@ -9,18 +9,47 @@
 
 Use these first to confirm whether the lore is already trustworthy enough to start coding.
 
+## Onboard A Project
+
+Do this once per repo, before any narrative work.
+
+```bash
+# From the lore repo: install a stable binary at ~/.local/bin/lore
+bun run install
+
+# In the target repo: exclude what must never enter retrieval
+cat > .loreignore <<'IGNORE'
+tests/
+__tests__/
+fixtures/
+benchmarks/
+dist/
+IGNORE
+
+lore init .            # registers this exact directory
+lore ingest            # symbols, docs, source chunks
+lore status            # confirm coverage is not zero
+```
+
+Rules:
+
+- `.loreignore` must exist before the first ingest. Test files carry ground-truth
+  answers that contaminate retrieval, and an unfiltered workspace indexes gigabytes.
+- `.loreignore` beats `.gitignore`. A `!path` line forces a path back in.
+- `lore init <dir>` registers that exact directory. Commands in a subdirectory
+  resolve to the nearest registered ancestor.
+- For a multi-repo workspace, register one mind at the workspace root.
+- After a large refactor, run `lore ingest --force` to re-chunk every file.
+
 ## Bootstrap A New Repo
 
-1. Run `lore init <path>` if the repo is not registered.
-2. Run `lore ingest` to populate the lake and symbol index.
-3. Open a narrative per subsystem instead of trying to explain the whole repo in one thread.
-4. Journal what is structurally true, not just what files exist.
+1. Register and ingest as above.
+2. Open a narrative per subsystem instead of trying to explain the whole repo in one thread.
+3. Journal what is structurally true, not just what files exist.
 
 Example:
 
 ```bash
-lore init .
-lore ingest
 lore open bootstrap-auth "Map the auth subsystem and establish the first concept" --target create:auth-model
 lore write bootstrap-auth "authenticateUser gates both password and token refresh paths, so failures here cascade into session creation and refresh semantics." --concept auth-model --symbol authenticateUser --ref src/auth.ts:12-88
 lore close bootstrap-auth --wait
@@ -58,6 +87,22 @@ lore open add-webhooks "Add webhook delivery for event notifications" --target c
 lore write add-webhooks "Webhook delivery hangs off EventBus fan-out rather than the persistence layer, so retry semantics belong in the delivery worker instead of the event writer." --concept webhook-delivery --symbol deliverWebhook --ref src/webhooks.ts:1-120
 ```
 
+## Pick The Right Ask
+
+- Architectural question: `lore ask "how does X work?" --sources` (default `arch` mode).
+- Implementation question: `lore ask "why does X retry twice?" --mode code`, which
+  injects the bodies of bound symbols.
+- Short answer for a decision: add `--concise`. Targeted excerpts: add `--brief`.
+- Wrong or thin answer: add `--debug` to trace retrieval, then fix the cause —
+  missing bindings, a stale index, or a concept that was never journaled.
+- Chain work to an answer with the returned result ID:
+
+```bash
+lore ask "where does close queue work?" --sources
+lore open fix-close-latency "Cut close latency" --from-result <result-id>
+lore score <result-id> 4
+```
+
 ## Research Or Investigation Work
 
 - Open one narrative per investigation.
@@ -92,6 +137,8 @@ lore kpi status recall@10
 
 ## Async Close Patterns
 
+- A local daemon owns the queue and starts on demand. Check it with `lore daemon status`
+  and read `lore daemon logs` when jobs stall.
 - Use `lore close <narrative>` when the caller can continue while merge work runs.
 - Use `lore close <narrative> --wait` when the next step depends on the integrated concept state.
 - Inspect queue state with `lore jobs`.

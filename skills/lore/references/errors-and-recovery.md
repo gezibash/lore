@@ -76,6 +76,66 @@ Recover by:
 - Opening focused bootstrap narratives by subsystem.
 - Writing structural insights rather than prose summaries.
 
+## Edits To Lore Itself Appear To Do Nothing
+
+Symptoms:
+
+- A fix in the lore repo has no effect after a full re-ingest.
+- Behaviour matches an older version of the code.
+
+Cause:
+
+- A long-lived daemon serves the code it was spawned with.
+
+Recover by:
+
+- Letting the daemon restart itself. It compares its start time against the newest
+  `.ts` file under the workspace root and restarts before dispatch.
+- Restarting by hand with `lore daemon stop` when the daemon is busy, because a
+  leased job blocks the automatic restart.
+- Setting `LORE_DAEMON_STALE_CHECK=0` only to opt out of the check on purpose.
+
+## The `lore` Command Runs Old Code
+
+Symptoms:
+
+- `bun run install` reports success, but behaviour does not change.
+- `lore --version` reports an unexpected commit.
+
+Recover by:
+
+- Reading the install warning. It names the earlier PATH entry that shadows
+  `~/.local/bin/lore`.
+- Removing or renaming that entry, including an old `bun link --global` shim.
+- Confirming with `which lore` and `lore --version`.
+
+## Ingest Indexes Too Much
+
+Symptoms:
+
+- `lore ingest` takes very long or consumes gigabytes.
+- `ask` returns test fixtures or ground-truth answer files.
+
+Recover by:
+
+- Writing `.loreignore` at the repo root with tests, fixtures, benchmarks, and
+  build output.
+- Re-running `lore ingest --force` to re-chunk with the new exclusions.
+- Checking the registered root with `lore sys ls`. A workspace root indexes every
+  sub-repo.
+
+## `lore init` Created A Second Mind
+
+Meaning:
+
+- `lore init <subdir>` registers that exact directory. It never returns the parent mind.
+
+Recover by:
+
+- Listing registrations with `lore sys ls`.
+- Removing the unwanted one with `lore sys remove <name>`.
+- Running `lore init` from the intended root.
+
 ## Trust Current CLI State Over Old Docs
 
 - Prefer `lore --help`, `lore sys --help`, and `--json` output over stale examples.
