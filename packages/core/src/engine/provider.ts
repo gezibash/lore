@@ -22,12 +22,13 @@ export interface EmbeddingProviderConfig {
  * it through would rename the one app page on every run.
  *
  * X-OpenRouter-Title is the current header. X-Title still works and is sent too,
- * so attribution survives either end of the rename.
+ * so attribution survives either end of the rename. The title is the display
+ * name in the rankings, so it is capitalised; the command stays lowercase.
  */
 const OPENROUTER_ATTRIBUTION = {
   "HTTP-Referer": "https://github.com/gezibash/lore",
-  "X-OpenRouter-Title": "lore",
-  "X-Title": "lore",
+  "X-OpenRouter-Title": "Lore",
+  "X-Title": "Lore",
 };
 
 export async function createEmbeddingModelFromProviderConfig(

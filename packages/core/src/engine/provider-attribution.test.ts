@@ -44,8 +44,8 @@ test("generation calls carry the referer that creates the app entry", async () =
   }
   // Without HTTP-Referer, OpenRouter files the usage under "Unknown".
   expect(seen["http-referer"]).toBe("https://github.com/gezibash/lore");
-  expect(seen["x-openrouter-title"]).toBe("lore");
-  expect(seen["x-title"]).toBe("lore");
+  expect(seen["x-openrouter-title"]).toBe("Lore");
+  expect(seen["x-title"]).toBe("Lore");
 });
 
 test("embedding calls carry the same attribution", async () => {
@@ -57,7 +57,7 @@ test("embedding calls carry the same attribution", async () => {
     // As above.
   }
   expect(seen["http-referer"]).toBe("https://github.com/gezibash/lore");
-  expect(seen["x-openrouter-title"]).toBe("lore");
+  expect(seen["x-openrouter-title"]).toBe("Lore");
 });
 
 test("the title is constant, so one lore cannot rename the app page", async () => {
