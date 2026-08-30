@@ -128,10 +128,7 @@ function snapshotCurrentTree(db: Database, message: string) {
   return commit;
 }
 
-function updateManifestForLifecycle(
-  db: Database,
-  debtBefore: number,
-): { debtAfter: number } {
+function updateManifestForLifecycle(db: Database, debtBefore: number): { debtAfter: number } {
   const concepts = getActiveConcepts(db);
   const debtAfter = computeExpectedDebt(db, concepts).debt ?? 0;
   upsertManifest(db, {

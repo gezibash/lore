@@ -278,7 +278,7 @@ ask warnings/meta, concept health and suggest. Specifically: the `staleness`
 column (frozen at 0 by close, never advanced) is no longer read for any
 decision; σ(c) is computed by `measurement.ts#stalenessSigma` with
 verification time = the active chunk's `created_at`; churn is no longer
-written as `ground_residual` when e_embed cannot be measured (it stays null
+written as `ground_residual` when `e_embed` cannot be measured (it stays null
 and is counted as `unmeasuredEmbedCount`); the `residual` column is written
 only by close maintenance as the R(c) cache (`graph.ts` no longer writes it);
 and suggest's impact estimate is `p(c)·R(c)·fraction` with the Fiedler
@@ -290,7 +290,7 @@ for ungrounded concepts (re-extraction on a bound concept would wipe and
 re-bind at current hashes — re-verifying every drifted binding by decree — so
 it is never run there), verifies each drifted binding with the generator
 against the symbol's current body (accepted → re-verified; rejected → stays
-drifted with the reason, the cue to open a narrative), re-measures e_embed via
+drifted with the reason, the cue to open a narrative), re-measures `e_embed` via
 the shared `engine/ground-residual.ts` (also used by close maintenance), and
 refreshes the R(c) cache. Candidates are ranked by debt share `p(c)·R(c)`.
 The formula-based `healSignal` and the stop-loss halt are gone — a heal that

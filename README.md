@@ -100,42 +100,42 @@ lore suggest
 
 ### Core workflow
 
-| Command | Description |
-| --- | --- |
-| `lore init [path] [name]` | Register a codebase |
-| `lore ingest [file]` | Index source code and docs. `--force` re-chunks every file |
-| `lore open <narrative> <intent>` | Start an exploration session |
-| `lore write <narrative> <entry>` | Journal a finding against explicit concept designations |
-| `lore ask <query>` | Query the knowledge graph |
-| `lore close <narrative>` | Queue a close job. `--wait` blocks until it finishes |
+| Command                          | Description                                                |
+| -------------------------------- | ---------------------------------------------------------- |
+| `lore init [path] [name]`        | Register a codebase                                        |
+| `lore ingest [file]`             | Index source code and docs. `--force` re-chunks every file |
+| `lore open <narrative> <intent>` | Start an exploration session                               |
+| `lore write <narrative> <entry>` | Journal a finding against explicit concept designations    |
+| `lore ask <query>`               | Query the knowledge graph                                  |
+| `lore close <narrative>`         | Queue a close job. `--wait` blocks until it finishes       |
 
 ### Declaring targets on open
 
 `lore open --target <op>:<concept>` tells the close which concepts the narrative may write. Repeat the flag once per target.
 
-| Target | Effect |
-| --- | --- |
-| `create:<name>` | The narrative introduces a new concept |
-| `update:<name>` | The narrative feeds an existing concept |
-| `rename:<old>:<new>` | Rename on close |
-| `merge:<src>:<into>` | Fold one concept into another |
-| `archive:<name>[:<reason>]` | Retire a concept |
-| `split:<name>[:<parts>]` | Break a concept apart |
-| `restore:<name>` | Bring an archived concept back |
+| Target                      | Effect                                  |
+| --------------------------- | --------------------------------------- |
+| `create:<name>`             | The narrative introduces a new concept  |
+| `update:<name>`             | The narrative feeds an existing concept |
+| `rename:<old>:<new>`        | Rename on close                         |
+| `merge:<src>:<into>`        | Fold one concept into another           |
+| `archive:<name>[:<reason>]` | Retire a concept                        |
+| `split:<name>[:<parts>]`    | Break a concept apart                   |
+| `restore:<name>`            | Bring an archived concept back          |
 
 `lore write` needs `--concept` unless the narrative has exactly one create/update target. Add `--symbol` for touched symbols and `--ref` for file or line references.
 
 ### Asking
 
-| Flag | Effect |
-| --- | --- |
-| `--mode arch` | Architectural answer. This is the default |
+| Flag          | Effect                                                                   |
+| ------------- | ------------------------------------------------------------------------ |
+| `--mode arch` | Architectural answer. This is the default                                |
 | `--mode code` | Injects the bodies of bound symbols. Use it for implementation questions |
-| `--sources` | Show which chunks produced the answer |
-| `--brief` | Targeted excerpts instead of full dumps |
-| `--concise` | A 1-2 sentence answer |
-| `--search` | Include external web search results |
-| `--debug` | Trace the retrieval pipeline and explain the selection |
+| `--sources`   | Show which chunks produced the answer                                    |
+| `--brief`     | Targeted excerpts instead of full dumps                                  |
+| `--concise`   | A 1-2 sentence answer                                                    |
+| `--search`    | Include external web search results                                      |
+| `--debug`     | Trace the retrieval pipeline and explain the selection                   |
 
 Every ask returns a result ID. Chain follow-up work to it:
 
@@ -150,16 +150,16 @@ lore score <result-id> 4
 
 ### Inspection
 
-| Command | Description |
-| --- | --- |
-| `lore status` | Health snapshot — debt, priorities, dangling narratives. `--details` for the full report |
-| `lore ls` | List all concepts with residuals and staleness. `--group cluster` to group them |
-| `lore show <concept>` | Full concept: content, relations, symbol bindings. Supports `concept@ref` |
-| `lore trail <narrative>` | Reconstruct the full investigation trail |
-| `lore log [limit] [since]` | Walk commit history. `since` takes `2w`, a ULID, or `main~N` |
-| `lore diff <target>` | Preview a close, or compare `ref..ref` |
-| `lore suggest` | Prioritized maintenance plan. Filter with `--kind` |
-| `lore usage` | What this lore has spent on AI calls. `--all` for every lore |
+| Command                    | Description                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `lore status`              | Health snapshot — debt, priorities, dangling narratives. `--details` for the full report |
+| `lore ls`                  | List all concepts with residuals and staleness. `--group cluster` to group them          |
+| `lore show <concept>`      | Full concept: content, relations, symbol bindings. Supports `concept@ref`                |
+| `lore trail <narrative>`   | Reconstruct the full investigation trail                                                 |
+| `lore log [limit] [since]` | Walk commit history. `since` takes `2w`, a ULID, or `main~N`                             |
+| `lore diff <target>`       | Preview a close, or compare `ref..ref`                                                   |
+| `lore suggest`             | Prioritized maintenance plan. Filter with `--kind`                                       |
+| `lore usage`               | What this lore has spent on AI calls. `--all` for every lore                             |
 
 ### Spend
 
@@ -329,13 +329,13 @@ Strict layered monorepo — dependency direction is one-way:
        @lore/rendering
 ```
 
-| Package | Role |
-| --- | --- |
-| `@lore/core` | Engine, storage, SQLite, embeddings, search, integration |
-| `@lore/sdk` | Canonical API contract over core |
-| `@lore/worker` | Single-lore domain client and daemon |
-| `@lore/rendering` | Shared output formatters (plain, markdown, JSON) |
-| `@lore/cli` | Terminal adapter |
+| Package           | Role                                                     |
+| ----------------- | -------------------------------------------------------- |
+| `@lore/core`      | Engine, storage, SQLite, embeddings, search, integration |
+| `@lore/sdk`       | Canonical API contract over core                         |
+| `@lore/worker`    | Single-lore domain client and daemon                     |
+| `@lore/rendering` | Shared output formatters (plain, markdown, JSON)         |
+| `@lore/cli`       | Terminal adapter                                         |
 
 ---
 

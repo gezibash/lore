@@ -16,9 +16,7 @@ export async function readChunk<T extends ChunkFrontmatter = ChunkFrontmatter>(
   return { frontmatter, content, filePath };
 }
 
-async function readAllMainChunks(
-  lorePath: string,
-): Promise<ParsedChunk<StateChunkFrontmatter>[]> {
+async function readAllMainChunks(lorePath: string): Promise<ParsedChunk<StateChunkFrontmatter>[]> {
   const files = await listChunkFiles(mainDir(lorePath));
   const chunks: ParsedChunk<StateChunkFrontmatter>[] = [];
   for (const file of files) {
