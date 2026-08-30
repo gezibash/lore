@@ -1,4 +1,5 @@
 import type { EmbeddingModel, LanguageModel } from "ai";
+import { LoreError } from "@/types/index.ts";
 import type { EmbeddingProvider, LoreConfig } from "@/types/index.ts";
 
 function stripTrailingSlashes(url: string): string {
@@ -25,6 +26,20 @@ export interface EmbeddingProviderConfig {
  * so attribution survives either end of the rename. The title is the display
  * name in the rankings, so it is capitalised; the command stays lowercase.
  */
+/**
+ * openai-compatible has no default endpoint: the base URL is the whole point of
+ * the provider. Without this check the URL reaches the SDK as undefined and the
+ * first request goes to "undefined/chat/completions", which fails as a network
+ * error naming nothing the reader can act on.
+ */
+function requireBaseUrl(baseUrl: string | undefined, role: "embedding" | "generation"): string {
+  if (baseUrl) return baseUrl;
+  throw new LoreError(
+    "CONFIG_INVALID",
+    `Provider 'openai-compatible' needs a base URL. Set one with: lore sys config set ai.${role}.base_url <url>`,
+  );
+}
+
 const OPENROUTER_ATTRIBUTION = {
   "HTTP-Referer": "https://github.com/gezibash/lore",
   "X-OpenRouter-Title": "Lore",
@@ -48,7 +63,7 @@ export async function createEmbeddingModelFromProviderConfig(
     case "openai-compatible": {
       const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
       return createOpenAICompatible({
-        baseURL: base_url!,
+        baseURL: requireBaseUrl(base_url, "embedding"),
         apiKey: api_key,
         name: "custom",
       }).textEmbeddingModel(model);
@@ -99,7 +114,7 @@ export async function createGenerationModel(config: LoreConfig): Promise<Languag
     case "openai-compatible": {
       const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
       return createOpenAICompatible({
-        baseURL: base_url!,
+        baseURL: requireBaseUrl(base_url, "generation"),
         apiKey: api_key,
         name: "custom",
       }).chatModel(model);

@@ -1,6 +1,8 @@
 import { expect, test, afterEach } from "bun:test";
 import { createGenerationModel, createEmbeddingModel } from "./provider.ts";
 import { resolveConfig } from "@/config/index.ts";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
 import type { LoreConfig } from "@/types/index.ts";
 
 const realFetch = globalThis.fetch;
@@ -26,10 +28,22 @@ function captureHeaders(): Record<string, string> {
   return seen;
 }
 
-function openrouterConfig(role: "generation" | "embedding"): LoreConfig {
+/**
+ * resolveConfig reads ~/.lore/config.json as its second layer, so a test that
+ * omits lore_root inherits the developer's real provider and base URL and can
+ * pass for the wrong reason. An empty root keeps it to defaults.
+ */
+function hermetic(overrides: Record<string, unknown>): LoreConfig {
   return resolveConfig({
-    ai: { [role]: { provider: "openrouter", model: "z-ai/glm-5.3-flash", api_key: "sk-test" } },
+    lore_root: mkdtempSync(`${tmpdir()}/lore-cfg-`),
+    ...overrides,
   } as unknown as Partial<LoreConfig>);
+}
+
+function openrouterConfig(role: "generation" | "embedding"): LoreConfig {
+  return hermetic({
+    ai: { [role]: { provider: "openrouter", model: "z-ai/glm-5.3-flash", api_key: "sk-test" } },
+  });
 }
 
 test("generation calls carry the referer that creates the app entry", async () => {
@@ -82,4 +96,38 @@ test("the title is constant, so one lore cannot rename the app page", async () =
   }
 
   expect(second["x-openrouter-title"]).toBe(first["x-openrouter-title"]);
+});
+
+test("openai-compatible without a base URL says which key to set", async () => {
+  const config = hermetic({
+    ai: { generation: { provider: "openai-compatible", model: "m", api_key: "k" } },
+  });
+  // Without the check this resolves and the first request goes to
+  // "undefined/chat/completions".
+  await expect(createGenerationModel(config)).rejects.toThrow(
+    /lore sys config set ai\.generation\.base_url/,
+  );
+});
+
+test("the embedding role names its own config key, not generation's", async () => {
+  const config = hermetic({
+    ai: { embedding: { provider: "openai-compatible", model: "m", api_key: "k" } },
+  });
+  await expect(createEmbeddingModel(config)).rejects.toThrow(
+    /lore sys config set ai\.embedding\.base_url/,
+  );
+});
+
+test("a base URL that is set passes the check", async () => {
+  const config = hermetic({
+    ai: {
+      generation: {
+        provider: "openai-compatible",
+        model: "m",
+        api_key: "k",
+        base_url: "https://host/v1",
+      },
+    },
+  });
+  await expect(createGenerationModel(config)).resolves.toBeDefined();
 });
