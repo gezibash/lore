@@ -147,6 +147,25 @@ export function deleteAllEmbeddings(db: Database): void {
   db.run("DELETE FROM embeddings");
 }
 
+/**
+ * Count the live embeddings of each model.
+ *
+ * The join keeps orphans out. A mind written before chunk replacement cleared
+ * its dependents holds an embedding for every chunk that has since gone. Those
+ * rows reach no result set, so a count that includes them overstates the lake,
+ * and an orphan on an outdated model raises a refresh the mind does not need.
+ */
+export function countEmbeddingsByModel(db: Database): Array<{ model: string; cnt: number }> {
+  return db
+    .query<{ model: string; cnt: number }, []>(
+      `SELECT e.model, COUNT(*) AS cnt
+       FROM embeddings e
+       JOIN chunks c ON c.id = e.chunk_id
+       GROUP BY e.model`,
+    )
+    .all();
+}
+
 // ─── Symbol Embeddings (code lane) ───────────────────────
 
 export function insertSymbolEmbedding(

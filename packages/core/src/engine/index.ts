@@ -289,6 +289,7 @@ import {
   getLastDocIndexedAt,
   getJournalEntryCount,
 } from "@/db/chunks.ts";
+import { countEmbeddingsByModel } from "@/db/embeddings.ts";
 
 interface CloseJobPayload {
   mergeStrategy?: MergeStrategy;
@@ -1551,12 +1552,9 @@ export class LoreEngine {
     const debtPrevious = null;
     const debtChange = null;
 
-    // Check embedding model mismatch
-    const embeddingModels = db
-      .query<{ model: string; cnt: number }, []>(
-        `SELECT model, COUNT(*) as cnt FROM embeddings GROUP BY model`,
-      )
-      .all();
+    // Check embedding model mismatch. The count holds live embeddings only —
+    // see countEmbeddingsByModel for why orphans must stay out of it.
+    const embeddingModels = countEmbeddingsByModel(db);
     const currentModel = config.ai.embedding.model;
     const currentCodeModel = config.ai.embedding.code?.model ?? null;
     const validModels = new Set([currentModel, ...(currentCodeModel ? [currentCodeModel] : [])]);
@@ -1674,6 +1672,22 @@ export class LoreEngine {
         concept: "(embeddings)",
         action: "refresh embeddings",
         reason: `${staleEmbeddings} embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore embeddings refresh.`,
+        last_narrative: undefined,
+        changed_at: undefined,
+      });
+    }
+
+    // Orphans no longer enter the embedding counts above, so status must name
+    // them here. A mind written before the delete paths cleared their
+    // dependents keeps the rows until a prune removes them.
+    const orphanedRows =
+      sumOrphanedChunkRows(countOrphanedChunkRows(db)) +
+      sumOrphanedSymbolRows(countOrphanedSymbolRows(db));
+    if (orphanedRows > 0) {
+      priorities.push({
+        concept: "(database)",
+        action: "prune database",
+        reason: `${orphanedRows} row(s) belong to chunks or symbols that are gone. Run lore sys prune.`,
         last_narrative: undefined,
         changed_at: undefined,
       });

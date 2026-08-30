@@ -5,6 +5,7 @@ import {
   getEmbeddingForChunk,
   vectorSearch,
   getAllEmbeddings,
+  countEmbeddingsByModel,
 } from "./embeddings.ts";
 import { insertConcept, insertConceptVersion } from "./concepts.ts";
 import { insertChunk } from "./chunks.ts";
@@ -124,6 +125,47 @@ test("getAllEmbeddings excludes superseded and archived chunks", () => {
 
   const rows = getAllEmbeddings(db, "chunk");
   expect(rows.map((row) => row.chunk_id).sort()).toEqual(["superseded-chunk"]);
+
+  db.close();
+});
+
+test("countEmbeddingsByModel counts the live embeddings of each model", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  for (const id of ["live-a", "live-b", "live-c"]) {
+    insertChunk(db, { id, filePath: `./${id}.md`, flType: "chunk", createdAt: now });
+  }
+  insertEmbedding(db, "live-a", new Float32Array([0.1]), "model-new");
+  insertEmbedding(db, "live-b", new Float32Array([0.2]), "model-new");
+  insertEmbedding(db, "live-c", new Float32Array([0.3]), "model-old");
+
+  const counts = countEmbeddingsByModel(db);
+  expect(Object.fromEntries(counts.map((r) => [r.model, r.cnt]))).toEqual({
+    "model-new": 2,
+    "model-old": 1,
+  });
+
+  db.close();
+});
+
+test("countEmbeddingsByModel ignores embeddings whose chunk is gone", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  insertChunk(db, { id: "live", filePath: "./live.md", flType: "chunk", createdAt: now });
+  insertEmbedding(db, "live", new Float32Array([0.1]), "model-new");
+
+  // The state an older lore left behind: an embedding for a chunk that is gone.
+  // On an outdated model it would otherwise raise a refresh the mind does not need.
+  insertEmbedding(db, "chunk-gone-1", new Float32Array([0.2]), "model-old");
+  insertEmbedding(db, "chunk-gone-2", new Float32Array([0.3]), "model-new");
+
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM embeddings").get()?.c).toBe(3);
+
+  const counts = countEmbeddingsByModel(db);
+  expect(counts).toEqual([{ model: "model-new", cnt: 1 }]);
+  expect(counts.reduce((sum, r) => sum + r.cnt, 0)).toBe(1);
 
   db.close();
 });
