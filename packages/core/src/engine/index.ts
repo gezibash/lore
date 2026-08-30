@@ -80,6 +80,9 @@ import {
   getAllNarratives,
   rebuildFromDisk,
   repairSchema,
+  countOrphanedChunkRows,
+  deleteOrphanedChunkRows,
+  sumOrphanedChunkRows,
   walkHistory,
   resolveRef,
   diffCommitTrees,
@@ -234,7 +237,7 @@ import type {
   NarrativeTrailResult,
   IngestResult,
 } from "@/types/index.ts";
-import type { SchemaRepairOptions, SchemaRepairResult } from "@/db/index.ts";
+import type { SchemaRepairOptions, SchemaRepairResult, PruneOrphansResult } from "@/db/index.ts";
 import { getHeadSha } from "@/engine/git.ts";
 import { buildConceptHealthNeighbors, computeConceptHealthSignals } from "./concept-health.ts";
 import { ulid } from "ulid";
@@ -3113,6 +3116,47 @@ export class LoreEngine {
   repair(opts?: { codePath?: string } & SchemaRepairOptions): SchemaRepairResult {
     const { db } = this.resolveLoreMind(opts?.codePath);
     return repairSchema(db, { check: opts?.check });
+  }
+
+  /**
+   * Delete rows left behind by chunks that no longer exist, then reclaim the
+   * pages. One-shot repair for minds written before chunk replacement cleared
+   * its own dependents. Retrieval does not change: the read paths join
+   * `chunks`, so these rows were already invisible.
+   */
+  pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const dbPath = join(entry.lore_path, "lore.db");
+    const bytesBefore = statSync(dbPath).size;
+
+    if (opts?.check) {
+      const orphans = countOrphanedChunkRows(db);
+      return {
+        mode: "check",
+        orphans,
+        total: sumOrphanedChunkRows(orphans),
+        db_bytes_before: bytesBefore,
+        db_bytes_after: bytesBefore,
+      };
+    }
+
+    const orphans = deleteOrphanedChunkRows(db);
+    const total = sumOrphanedChunkRows(orphans);
+    if (total > 0) {
+      // VACUUM only: a plain DELETE returns the pages to the free list and
+      // leaves the file its old size. Checkpoint first so the WAL is not
+      // holding the pages VACUUM is about to rewrite.
+      db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+      db.run("VACUUM");
+    }
+
+    return {
+      mode: "apply",
+      orphans,
+      total,
+      db_bytes_before: bytesBefore,
+      db_bytes_after: statSync(dbPath).size,
+    };
   }
 
   async healthCheck(_opts?: { codePath?: string }) {

@@ -203,15 +203,28 @@ export function getSourceChunkPathsForFile(db: Database, sourceFilePath: string)
   return rows.map((r) => r.file_path);
 }
 
+/**
+ * Delete chunks for one file, with every row that is keyed to them.
+ *
+ * The chunk tables carry no foreign keys, so `DELETE FROM chunks` alone leaves
+ * embeddings, refs, and concept assignments behind. Re-chunking mints new chunk
+ * ids for the same file, so each replacement adds a new generation of orphans.
+ * Retrieval stays correct — the read paths join `chunks` — but the rows cost
+ * disk and are scanned on every vector index sync.
+ */
+function deleteChunksForFile(db: Database, flType: "source" | "doc", sourceFilePath: string): void {
+  const doomed = `SELECT id FROM chunks WHERE fl_type = ? AND source_file_path = ?`;
+  const params: [string, string] = [flType, sourceFilePath];
+  db.run(`DELETE FROM content_fts WHERE chunk_id IN (${doomed})`, params);
+  db.run(`DELETE FROM embeddings WHERE chunk_id IN (${doomed})`, params);
+  db.run(`DELETE FROM chunk_refs WHERE chunk_id IN (${doomed})`, params);
+  db.run(`DELETE FROM chunk_concept_map WHERE chunk_id IN (${doomed})`, params);
+  db.run(`DELETE FROM chunks WHERE fl_type = ? AND source_file_path = ?`, params);
+}
+
 /** Delete all source chunks for a given source file from the DB. */
 export function deleteSourceChunksForFile(db: Database, sourceFilePath: string): void {
-  db.run(
-    `DELETE FROM content_fts WHERE chunk_id IN (
-       SELECT id FROM chunks WHERE fl_type = 'source' AND source_file_path = ?
-     )`,
-    [sourceFilePath],
-  );
-  db.run(`DELETE FROM chunks WHERE fl_type = 'source' AND source_file_path = ?`, [sourceFilePath]);
+  deleteChunksForFile(db, "source", sourceFilePath);
 }
 
 /** Get doc chunk (by source_file_path = relative docPath). Returns the first chunk found or null. */
@@ -235,16 +248,72 @@ export function getDocChunkPaths(db: Database): string[] {
   return rows.map((r) => r.source_file_path);
 }
 
-/** Delete all doc chunks for a given doc path from the DB (and FTS). */
+/** Delete all doc chunks for a given doc path from the DB (and dependents). */
 export function deleteDocChunksForFile(db: Database, docPath: string): void {
-  // Remove from FTS first (referential — chunk_id links)
-  db.run(
-    `DELETE FROM content_fts WHERE chunk_id IN (
-       SELECT id FROM chunks WHERE fl_type = 'doc' AND source_file_path = ?
-     )`,
-    [docPath],
-  );
-  db.run(`DELETE FROM chunks WHERE fl_type = 'doc' AND source_file_path = ?`, [docPath]);
+  deleteChunksForFile(db, "doc", docPath);
+}
+
+/** Rows in a chunk-keyed table whose chunk is gone, one count per table. */
+export interface OrphanedChunkRows {
+  embeddings: number;
+  chunk_refs: number;
+  chunk_concept_map: number;
+  content_fts: number;
+}
+
+/** What a prune found or deleted, and what it cost the database file. */
+export interface PruneOrphansResult {
+  mode: "check" | "apply";
+  orphans: OrphanedChunkRows;
+  total: number;
+  db_bytes_before: number;
+  db_bytes_after: number;
+}
+
+// Every table keyed by chunks.id. NOT EXISTS, not NOT IN: SQLite lets a TEXT
+// PRIMARY KEY hold NULL, and one NULL id makes NOT IN match nothing.
+const CHUNK_KEYED_TABLES = [
+  "embeddings",
+  "chunk_refs",
+  "chunk_concept_map",
+  "content_fts",
+] as const;
+
+function orphanPredicate(table: string): string {
+  return `NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = ${table}.chunk_id)`;
+}
+
+/** Count the rows each chunk-keyed table holds for chunks that no longer exist. */
+export function countOrphanedChunkRows(db: Database): OrphanedChunkRows {
+  const counts = {} as OrphanedChunkRows;
+  for (const table of CHUNK_KEYED_TABLES) {
+    counts[table] =
+      db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM ${table} WHERE ${orphanPredicate(table)}`,
+        )
+        .get()?.n ?? 0;
+  }
+  return counts;
+}
+
+/**
+ * Delete every row whose chunk is gone. Minds written before chunk replacement
+ * cleared its dependents carry generations of these rows. Returns what it
+ * deleted, per table.
+ */
+export function deleteOrphanedChunkRows(db: Database): OrphanedChunkRows {
+  const deleted = countOrphanedChunkRows(db);
+  for (const table of CHUNK_KEYED_TABLES) {
+    if (deleted[table] === 0) continue;
+    db.run(`DELETE FROM ${table} WHERE ${orphanPredicate(table)}`);
+  }
+  return deleted;
+}
+
+/** Total orphaned rows across every chunk-keyed table. */
+export function sumOrphanedChunkRows(counts: OrphanedChunkRows): number {
+  return CHUNK_KEYED_TABLES.reduce((total, table) => total + counts[table], 0);
 }
 
 /** Count all source chunks (one per indexed symbol). */
