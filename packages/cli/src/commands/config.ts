@@ -13,6 +13,7 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 const CYAN = "\x1b[36m";
 const GREEN = "\x1b[32m";
+const RED = "\x1b[31m";
 
 // Numeric config keys that should be auto-coerced
 const NUMERIC_KEYS = new Set([
@@ -374,6 +375,42 @@ export async function providerModelsCommand(
       .join(" ");
     const target = parsedProvider ? `${parsedProvider} ` : "";
     console.log(`${DIM}Next: lore sys provider models ${target}${flags}${RESET}`);
+  }
+}
+
+function formatUsd(value: number | undefined): string {
+  return value === undefined ? "—" : `$${value.toFixed(2)}`;
+}
+
+export async function providerUsageCommand(client: WorkerClient, provider: string): Promise<void> {
+  const parsedProvider = parseProvider(provider);
+  const usage = await client.getProviderUsage(parsedProvider);
+
+  if (isJsonOutput()) {
+    emit(usage);
+    return;
+  }
+
+  const row = (label: string, value: string): void => {
+    console.log(`${DIM}${padRight(label, 18)}${RESET}${value}`);
+  };
+
+  console.log(`${BOLD}${parsedProvider}${RESET}`);
+  // Balance is the number that decides whether the next ask works, so it leads
+  // and it is the one that gets coloured when it runs low.
+  const balance = usage.balance_usd;
+  const lowOnCredit = balance !== undefined && balance < 5;
+  row("balance", `${lowOnCredit ? RED : GREEN}${formatUsd(balance)}${RESET}`);
+  row("used", formatUsd(usage.used_usd));
+  if (usage.limit_usd !== undefined) row("key limit", formatUsd(usage.limit_usd));
+  if (usage.key_used_usd !== undefined) row("used by this key", formatUsd(usage.key_used_usd));
+  if (usage.key_used_today_usd !== undefined) row("today", formatUsd(usage.key_used_today_usd));
+  if (usage.key_used_month_usd !== undefined)
+    row("this month", formatUsd(usage.key_used_month_usd));
+  if (usage.free_tier) row("tier", "free");
+
+  if (lowOnCredit) {
+    console.log(`${RED}Low balance. Calls fail once it reaches zero.${RESET}`);
   }
 }
 

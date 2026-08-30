@@ -200,11 +200,14 @@ import {
   CATALOG_NEEDS_KEY,
   catalogNeedsBaseUrl,
   hasCatalog,
+  hasUsage,
+  getProviderUsage,
   listAllProviderModels,
   listProviderModels,
   type ListProviderModelsOptions,
   type ProviderModelPage,
   type ProviderStatus,
+  type ProviderUsage,
 } from "./provider-models.ts";
 import type {
   Registry,
@@ -3542,6 +3545,11 @@ export class LoreEngine {
    * either needs no key or has one. Providers that would certainly fail are
    * left out rather than reported as failures.
    */
+  /** Read a provider's credit balance and spend. */
+  async getProviderUsage(provider: SharedProvider): Promise<ProviderUsage> {
+    return getProviderUsage(provider, this.credentialsFor(provider));
+  }
+
   async listAllProviderModels(
     opts: Omit<ListProviderModelsOptions, "api_key" | "base_url"> = {},
   ): Promise<ProviderModelPage> {

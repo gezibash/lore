@@ -369,3 +369,94 @@ export async function listAllProviderModels(
   sortModels(models, opts.sort ?? "id");
   return paginate(models, "all", opts, failures);
 }
+
+export interface ProviderUsage {
+  provider: SharedProvider;
+  /** Credit remaining, in USD. Undefined when the provider reports no balance. */
+  balance_usd?: number;
+  /** Lifetime spend, in USD. */
+  used_usd?: number;
+  /** Spend limit on this key, in USD. */
+  limit_usd?: number;
+  /** Spend on this key alone, where the account total covers several keys. */
+  key_used_usd?: number;
+  key_used_today_usd?: number;
+  key_used_month_usd?: number;
+  free_tier?: boolean;
+}
+
+/** Providers that report a balance. Nobody else publishes one. */
+const USAGE_PROVIDERS: SharedProvider[] = ["openrouter", "gateway"];
+
+export function hasUsage(provider: SharedProvider): boolean {
+  return USAGE_PROVIDERS.includes(provider);
+}
+
+function usd(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Read a provider's credit balance and spend.
+ *
+ * The two differ in shape and in what they even mean by a balance. OpenRouter
+ * reports credits bought and credits used, so the remainder is a subtraction,
+ * and it splits per-key spend from the account total. Vercel reports the
+ * remainder directly and has no per-key view.
+ */
+export async function getProviderUsage(
+  provider: SharedProvider,
+  opts: { api_key?: string; base_url?: string } = {},
+): Promise<ProviderUsage> {
+  if (!hasUsage(provider)) {
+    throw new LoreError(
+      "CONFIG_INVALID",
+      `Provider '${provider}' reports no balance. Supported: ${USAGE_PROVIDERS.join(", ")}.`,
+    );
+  }
+  if (!opts.api_key) {
+    throw new LoreError(
+      "CONFIG_INVALID",
+      `Reading ${provider} usage needs a key. Set one with: lore sys provider set ${provider} --api-key <key>`,
+    );
+  }
+
+  const root = stripTrailingSlashes(opts.base_url ?? CATALOG_DEFAULT_BASE_URL[provider]!);
+
+  if (provider === "gateway") {
+    const payload = await getJson(`${root}/credits`, opts.api_key);
+    return {
+      provider,
+      balance_usd: usd(field(payload, "balance")),
+      used_usd: usd(field(payload, "total_used")),
+    };
+  }
+
+  // OpenRouter: /credits is the account, /key is this key. One dead endpoint
+  // must not hide the other's numbers.
+  const [credits, key] = await Promise.allSettled([
+    getJson(`${root}/credits`, opts.api_key),
+    getJson(`${root}/key`, opts.api_key),
+  ]);
+
+  const creditsData = credits.status === "fulfilled" ? field(credits.value, "data") : undefined;
+  const keyData = key.status === "fulfilled" ? field(key.value, "data") : undefined;
+
+  const total = usd(field(creditsData, "total_credits"));
+  const used = usd(field(creditsData, "total_usage"));
+
+  return {
+    provider,
+    balance_usd: total !== undefined && used !== undefined ? total - used : undefined,
+    used_usd: used,
+    limit_usd: usd(field(keyData, "limit")),
+    key_used_usd: usd(field(keyData, "usage")),
+    key_used_today_usd: usd(field(keyData, "usage_daily")),
+    key_used_month_usd: usd(field(keyData, "usage_monthly")),
+    free_tier:
+      typeof field(keyData, "is_free_tier") === "boolean"
+        ? (field(keyData, "is_free_tier") as boolean)
+        : undefined,
+  };
+}

@@ -28,6 +28,7 @@ import {
   configCloneCommand,
   providerConfigListCommand,
   providerModelsCommand,
+  providerUsageCommand,
   providerUseCommand,
   providerConfigGetCommand,
   providerConfigSetCommand,
@@ -1206,6 +1207,16 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     limit: options.limit,
                     page: options.page,
                   });
+                },
+              }),
+              usage: defineCommand({
+                name: "usage",
+                description: "Show a provider's credit balance and spend",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                },
+                async action({ args }) {
+                  await providerUsageCommand(getWorker(), args.provider);
                 },
               }),
               use: defineCommand({

@@ -51,6 +51,17 @@ export interface ListProviderModelsOptions {
   kinds?: ModelKind[];
 }
 
+export interface ProviderUsage {
+  provider: SharedProvider;
+  balance_usd?: number;
+  used_usd?: number;
+  limit_usd?: number;
+  key_used_usd?: number;
+  key_used_today_usd?: number;
+  key_used_month_usd?: number;
+  free_tier?: boolean;
+}
+
 export interface ProviderStatus {
   provider: SharedProvider;
   has_key: boolean;

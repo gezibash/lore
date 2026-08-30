@@ -124,6 +124,18 @@ lore sys provider models --search glm-5.3 --sort price    # every configured pro
 - With no provider named, one unreachable provider is reported in a footer. The
   other providers still list.
 
+### Check what a key has left
+
+```bash
+lore sys provider usage openrouter
+```
+
+- Only `openrouter` and `gateway` report a balance. The rest publish no endpoint
+  for it.
+- Read the balance before a bulk run. Calls fail when it reaches zero.
+- OpenRouter reports account credit and this key's spend separately, with
+  today's and this month's totals.
+
 ### Switch the generation model
 
 This is safe at any time. No re-index is needed.

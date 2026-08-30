@@ -31,6 +31,7 @@ export type {
   ProviderModel,
   ProviderModelPage,
   ProviderStatus,
+  ProviderUsage,
 } from "./engine/provider-models.ts";
 export type { DiffHunk, DiffLine } from "./engine/line-diff.ts";
 export type * from "./types/index.ts";

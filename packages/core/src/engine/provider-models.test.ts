@@ -1,5 +1,5 @@
 import { expect, test, afterEach } from "bun:test";
-import { listAllProviderModels, listProviderModels } from "./provider-models.ts";
+import { getProviderUsage, listAllProviderModels, listProviderModels } from "./provider-models.ts";
 import { LoreError } from "@/types/index.ts";
 
 const realFetch = globalThis.fetch;
@@ -212,4 +212,65 @@ test("cross-provider price sort compares across providers, not within each", asy
     sort: "price",
   });
   expect(page.models.map((m) => m.id)).toEqual(["or/cheap", "gw/pricey"]);
+});
+
+test("OpenRouter balance is credits bought minus credits used", async () => {
+  globalThis.fetch = (async (url: string) => {
+    const body = String(url).endsWith("/credits")
+      ? { data: { total_credits: 75, total_usage: 52.68 } }
+      : {
+          data: {
+            usage: 19.94,
+            usage_daily: 0,
+            usage_monthly: 16.06,
+            limit: null,
+            is_free_tier: false,
+          },
+        };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const usage = await getProviderUsage("openrouter", { api_key: "sk-or-test" });
+  expect(usage.balance_usd).toBeCloseTo(22.32, 2);
+  expect(usage.used_usd).toBeCloseTo(52.68, 2);
+  expect(usage.key_used_usd).toBeCloseTo(19.94, 2);
+  expect(usage.key_used_month_usd).toBeCloseTo(16.06, 2);
+  expect(usage.limit_usd).toBeUndefined();
+  expect(usage.free_tier).toBe(false);
+});
+
+test("a dead /key endpoint still yields the account balance", async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (String(url).endsWith("/key")) throw new Error("nope");
+    return new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 4 } }), {
+      status: 200,
+    });
+  }) as unknown as typeof fetch;
+
+  const usage = await getProviderUsage("openrouter", { api_key: "sk-or-test" });
+  expect(usage.balance_usd).toBe(6);
+  expect(usage.key_used_usd).toBeUndefined();
+});
+
+test("Vercel reports the balance directly, as strings", async () => {
+  const capture: { url?: string } = {};
+  globalThis.fetch = (async (url: string) => {
+    capture.url = String(url);
+    return new Response(JSON.stringify({ balance: "95.50", total_used: "4.50" }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const usage = await getProviderUsage("gateway", { api_key: "vck-test" });
+  expect(capture.url).toBe("https://ai-gateway.vercel.sh/v1/credits");
+  expect(usage.balance_usd).toBe(95.5);
+  expect(usage.used_usd).toBe(4.5);
+});
+
+test("usage without a key says how to set one", async () => {
+  await expect(getProviderUsage("openrouter")).rejects.toThrow(/lore sys provider set openrouter/);
+});
+
+test("a provider with no balance names the ones that have one", async () => {
+  await expect(getProviderUsage("ollama", { api_key: "x" })).rejects.toThrow(
+    /reports no balance.*openrouter, gateway/s,
+  );
 });

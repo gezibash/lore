@@ -151,6 +151,7 @@ const PROXY_METHODS = {
   getProviderCredential: { maxArgs: 1 },
   listProviderModels: { maxArgs: 2 },
   listProviders: { maxArgs: 0 },
+  getProviderUsage: { maxArgs: 1 },
   listAllProviderModels: { maxArgs: 1 },
   useModel: { maxArgs: 3, inject: 2 },
   setProviderCredential: { maxArgs: 2 },
