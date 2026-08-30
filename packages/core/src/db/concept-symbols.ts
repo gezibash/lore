@@ -156,15 +156,23 @@ export function getBindingSummariesForConcept(
 }
 
 export function pruneOrphanedBindings(db: Database): number {
+  // NOT EXISTS, not NOT IN. symbols.id is a TEXT PRIMARY KEY with no NOT NULL,
+  // and SQLite lets such a column hold NULL. One NULL id makes NOT IN match
+  // nothing, so the sweep silently deletes no rows at all. `lore status` calls
+  // this, so a stale binding count is what the user sees.
+  // concepts.id does carry NOT NULL, so the second sweep was never exposed. It
+  // reads the same way to keep one form for one job.
   // Remove bindings where the symbol no longer exists
-  const result = db.run(
-    `DELETE FROM concept_symbols WHERE symbol_id NOT IN (SELECT id FROM symbols)`,
+  const bySymbol = db.run(
+    `DELETE FROM concept_symbols
+     WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.id = concept_symbols.symbol_id)`,
   );
   // Also remove bindings where the concept is no longer active
-  const result2 = db.run(
-    `DELETE FROM concept_symbols WHERE concept_id NOT IN (SELECT id FROM current_concepts)`,
+  const byConcept = db.run(
+    `DELETE FROM concept_symbols
+     WHERE NOT EXISTS (SELECT 1 FROM current_concepts c WHERE c.id = concept_symbols.concept_id)`,
   );
-  return (result.changes ?? 0) + (result2.changes ?? 0);
+  return (bySymbol.changes ?? 0) + (byConcept.changes ?? 0);
 }
 
 export function getBindingCounts(db: Database): { ref: number; mention: number; total: number } {
