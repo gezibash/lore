@@ -28,8 +28,16 @@ rmSync(DIST, { recursive: true, force: true });
 mkdirSync(LIB, { recursive: true });
 
 const binary = join(DIST, "lore");
-await Bun.$`bun build --compile --minify --outfile ${binary} ${join(ROOT, "packages/cli/src/index.ts")}`.quiet();
-console.log(`lore            ${mb(binary)}`);
+
+// Bake the commit in. Reading git at runtime reports whichever repository the
+// caller is standing in, so a stale binary looks current inside this one — and
+// this repo is exactly where anyone would check.
+const head = await Bun.$`git -C ${ROOT} rev-parse --short HEAD`.quiet().nothrow();
+const sha = head.exitCode === 0 ? head.stdout.toString().trim() : "unknown";
+const define = `LORE_BUILD_SHA=${JSON.stringify(sha)}`;
+
+await Bun.$`bun build --compile --minify --define ${define} --outfile ${binary} ${join(ROOT, "packages/cli/src/index.ts")}`.quiet();
+console.log(`lore            ${mb(binary)}  (${sha})`);
 
 // sqlite-vec keeps its extension in a per-platform package and knows how to
 // find it; asking it beats reconstructing the platform naming here.

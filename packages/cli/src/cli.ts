@@ -80,15 +80,28 @@ export interface LoreCliDeps {
   exit?: (code: number) => void | never;
 }
 
+/** Replaced at build time by scripts/build.ts. Absent when run from source. */
+declare const LORE_BUILD_SHA: string | undefined;
+
 export function getVersionString(): string {
   const semver = pkg.version ?? "0.0.0";
+
+  // A compiled binary states the commit it was built from. Asking git instead
+  // would answer for the caller's working directory, so a four-day-old binary
+  // reported today's HEAD whenever it ran inside this repository.
+  if (typeof LORE_BUILD_SHA !== "undefined" && LORE_BUILD_SHA) {
+    return `${semver} (${LORE_BUILD_SHA})`;
+  }
+
+  // Running from source: git is the truth, because the source is the build.
   try {
     const result = spawnSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: import.meta.dir,
       encoding: "utf-8",
       timeout: 1000,
     });
     const ref = result.stdout?.trim();
-    if (ref) return `${semver} (${ref})`;
+    if (ref) return `${semver} (${ref} from source)`;
   } catch {}
   return semver;
 }

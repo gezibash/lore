@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { tmpdir } from "os";
+import { getVersionString } from "./cli.ts";
 import type { WorkerClient } from "@lore/worker";
 import { runLoreCli } from "./cli.ts";
 
@@ -366,4 +368,25 @@ test("embeddings refresh failure keeps the current direct exit behavior", async 
 
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toContain("error: model unavailable");
+});
+
+test("the version does not report the caller's repository", () => {
+  // A binary bakes LORE_BUILD_SHA at build time. From source that constant is
+  // absent, and the git fallback must still answer for lore's own checkout —
+  // not for whichever repository the process happens to be sitting in.
+  const from = (cwd: string): string => {
+    const previous = process.cwd();
+    try {
+      process.chdir(cwd);
+      return getVersionString();
+    } finally {
+      process.chdir(previous);
+    }
+  };
+
+  const here = from(process.cwd());
+  const elsewhere = from(tmpdir());
+  expect(elsewhere).toBe(here);
+  // Source runs say so, so a stale binary cannot be mistaken for one.
+  expect(here).toMatch(/from source|^\d+\.\d+\.\d+$/);
 });
