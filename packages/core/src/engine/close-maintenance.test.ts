@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { resolveConfig } from "@/config/index.ts";
+
+import { defaultConfig } from "@/config/index.ts";
 import { insertConceptRaw } from "@/db/concepts.ts";
 import { insertChunk } from "@/db/chunks.ts";
 import { insertEmbedding } from "@/db/embeddings.ts";
@@ -21,7 +22,7 @@ test("maintenance keeps churn out of ground_residual and caches R(c) in residual
   const db = createTestDb();
   const lorePath = createTempDir("lore-maint-");
   try {
-    const config = resolveConfig();
+    const config = defaultConfig;
     const conceptId = "c-rewritten";
     insertNarrativeRaw(db, "n-1", "rewrite", {
       intent: "rewrite the concept",

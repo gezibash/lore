@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   resolveConfig,
   defaultConfig,
@@ -8,6 +11,15 @@ import {
   loreMindPath,
 } from "@/config/index.ts";
 import { LoreError } from "@/types/index.ts";
+
+/**
+ * resolveConfig reads ~/.lore/config.json as its second layer. These tests
+ * assert how the layers combine, so that file has to be out of the picture:
+ * an empty root makes layer 2 empty without touching the developer's own.
+ */
+function isolatedRoot(): string {
+  return mkdtempSync(join(tmpdir(), "lore-cfg-"));
+}
 
 test("deep config helpers set, get, and delete", () => {
   const config: Record<string, unknown> = { a: { b: { c: 1 } } };
@@ -28,7 +40,7 @@ test("resolveConfig applies layer precedence", () => {
   };
 
   const config = resolveConfig(
-    { chunking: { target_tokens: 12, overlap: 0.05 } },
+    { lore_root: isolatedRoot(), chunking: { target_tokens: 12, overlap: 0.05 } },
     loreMindConfig as Parameters<typeof resolveConfig>[1],
   );
 
@@ -45,7 +57,7 @@ test("loreMindPath builds path under LORE_ROOT", () => {
 });
 
 test("resolveConfig merges prompt guidance overrides without dropping defaults", () => {
-  const config = resolveConfig(undefined, {
+  const config = resolveConfig({ lore_root: isolatedRoot() }, {
     ai: {
       generation: {
         prompts: {
@@ -67,6 +79,7 @@ test("resolveConfig merges prompt guidance overrides without dropping defaults",
 test("resolveConfig merges reasoning overrides across layers", () => {
   const config = resolveConfig(
     {
+      lore_root: isolatedRoot(),
       ai: {
         generation: {
           reasoning_overrides: {
@@ -92,7 +105,7 @@ test("resolveConfig merges reasoning overrides across layers", () => {
 
 test("resolveConfig fails closed on unknown prompt key", () => {
   try {
-    resolveConfig(undefined, {
+    resolveConfig({ lore_root: isolatedRoot() }, {
       ai: {
         generation: {
           prompts: {
@@ -110,7 +123,7 @@ test("resolveConfig fails closed on unknown prompt key", () => {
 
 test("resolveConfig fails closed on non-string guidance", () => {
   try {
-    resolveConfig(undefined, {
+    resolveConfig({ lore_root: isolatedRoot() }, {
       ai: {
         generation: {
           prompts: {

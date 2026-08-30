@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { resolveConfig } from "@/config/index.ts";
+
+import { defaultConfig } from "@/config/index.ts";
 import { insertNarrativeRaw } from "@/db/narratives.ts";
 import { openNarrative } from "./narrative-lifecycle.ts";
 import { createTestDb } from "../../test/support/db.ts";
 
 test("openNarrative rejects unsupported dangling resolution actions", async () => {
   const db = createTestDb();
-  const config = resolveConfig();
+  const config = defaultConfig;
   const openedAt = new Date(
     Date.now() - (config.thresholds.dangling_days + 1) * 24 * 60 * 60 * 1000,
   ).toISOString();

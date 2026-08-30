@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHash } from "crypto";
 import { join } from "path";
-import { resolveConfig } from "@/config/index.ts";
+
+import { defaultConfig } from "@/config/index.ts";
 import { insertConceptRaw } from "@/db/concepts.ts";
 import { insertChunk } from "@/db/chunks.ts";
 import { insertEmbedding } from "@/db/embeddings.ts";
@@ -23,7 +24,7 @@ test("heal re-verifies only verifier-accepted drifted bindings and re-measures R
   const codePath = createTempDir("lore-heal-code-");
   const lorePath = createTempDir("lore-heal-lore-");
   try {
-    const config = resolveConfig();
+    const config = defaultConfig;
     const source = [
       "export function login() {", // sym-a: lines 1-2
       "  return token();",

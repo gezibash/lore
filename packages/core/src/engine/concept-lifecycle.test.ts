@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { resolveConfig } from "@/config/index.ts";
+
+import { defaultConfig } from "@/config/index.ts";
 import { insertConceptRaw } from "@/db/concepts.ts";
 import { getChunk, insertChunk } from "@/db/chunks.ts";
 import { getEmbeddingForChunk, insertEmbedding } from "@/db/embeddings.ts";
@@ -15,7 +16,7 @@ import {
   type LifecycleDeps,
 } from "./concept-lifecycle.ts";
 
-const config = resolveConfig();
+const config = defaultConfig;
 const model = config.ai.embedding.model;
 
 /**
