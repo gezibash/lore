@@ -172,6 +172,7 @@ type DirectWorkerClientDeps = Pick<
   | "migrate"
   | "migrateStatus"
   | "repair"
+  | "pruneOrphans"
   | "listLoreMinds"
   | "removeLoreMind"
   | "listProviderCredentials"
@@ -233,6 +234,7 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "autoBind",
   "migrate",
   "repair",
+  "pruneOrphans",
   "removeLoreMind",
   "setProviderCredential",
   "unsetProviderCredential",
@@ -730,6 +732,10 @@ export class WorkerClient {
 
   async repair(...args: Parameters<DirectWorkerClientDeps["repair"]>) {
     return this.call("repair", args);
+  }
+
+  async pruneOrphans(...args: Parameters<DirectWorkerClientDeps["pruneOrphans"]>) {
+    return this.call("pruneOrphans", args);
   }
 
   async listLoreMinds(...args: Parameters<DirectWorkerClientDeps["listLoreMinds"]>) {

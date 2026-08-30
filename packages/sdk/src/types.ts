@@ -1226,6 +1226,22 @@ export interface SchemaRepairResult {
   remaining: SchemaIssue[];
 }
 
+/** Rows in a chunk-keyed table whose chunk is gone, one count per table. */
+export interface OrphanedChunkRows {
+  embeddings: number;
+  chunk_refs: number;
+  chunk_concept_map: number;
+  content_fts: number;
+}
+
+export interface PruneOrphansResult {
+  mode: "check" | "apply";
+  orphans: OrphanedChunkRows;
+  total: number;
+  db_bytes_before: number;
+  db_bytes_after: number;
+}
+
 // ─── Suggest Types ────────────────────────────────────────
 export type SuggestionKind =
   | "merge"

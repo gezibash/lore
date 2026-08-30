@@ -143,6 +143,7 @@ const PROXY_METHODS = {
   migrate: { maxArgs: 1, inject: "last" },
   migrateStatus: { maxArgs: 1, inject: "last" },
   repair: { maxArgs: 1, inject: "last" },
+  pruneOrphans: { maxArgs: 1, inject: "last" },
   commitLog: { maxArgs: 1 },
   listLoreMinds: { maxArgs: 0 },
   removeLoreMind: { maxArgs: 2 },

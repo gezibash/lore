@@ -92,3 +92,44 @@ export async function systemRepairCommand(client: WorkerClient, check?: boolean)
     console.log(`${DIM}If data outputs still look stale, run: lore mind rebuild${RESET}`);
   }
 }
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+export async function systemPruneCommand(client: WorkerClient, check?: boolean): Promise<void> {
+  const result = await client.pruneOrphans({ check });
+
+  console.log(`${BOLD}Orphaned rows${RESET}`);
+  console.log(`  ${DIM}mode:${RESET} ${result.mode}`);
+  for (const [table, count] of Object.entries(result.orphans)) {
+    const color = count > 0 ? YELLOW : DIM;
+    console.log(`  ${DIM}${pad(table, 20)}${RESET}${color}${count}${RESET}`);
+  }
+  console.log(`  ${DIM}${pad("total", 20)}${RESET}${result.total}`);
+
+  if (result.total === 0) {
+    console.log(`\n${GREEN}No orphaned rows.${RESET}`);
+    return;
+  }
+
+  if (result.mode === "check") {
+    console.log(`\n${YELLOW}Run 'lore sys prune' to delete them.${RESET}`);
+    return;
+  }
+
+  const reclaimed = result.db_bytes_before - result.db_bytes_after;
+  console.log(
+    `\n${GREEN}${result.total} row${result.total === 1 ? "" : "s"} deleted${RESET} ` +
+      `${DIM}(${formatBytes(result.db_bytes_before)} → ${formatBytes(result.db_bytes_after)}, ` +
+      `${formatBytes(reclaimed)} reclaimed)${RESET}`,
+  );
+}
