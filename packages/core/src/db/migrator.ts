@@ -13,6 +13,10 @@ function resolveMigrationsDir(): string {
   return join(dirname(process.execPath), "migrations");
 }
 
+/** The installed migrations directory. Every function below takes it as a
+ *  parameter that defaults to this path. A caller passes a different directory
+ *  to read a different set of migrations. A test uses this to present a
+ *  migration that the installed set does not have. */
 const MIGRATIONS_DIR = resolveMigrationsDir();
 
 export interface MigrationStatus {
@@ -27,18 +31,18 @@ function ensureMigrationsTable(db: Database): void {
   )`);
 }
 
-export function listMigrationNames(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
+export function listMigrationNames(migrationsDir: string = MIGRATIONS_DIR): string[] {
+  return readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => f.replace(/\.sql$/, ""));
 }
 
-export function readMigrationSql(name: string): string {
-  return readFileSync(join(MIGRATIONS_DIR, `${name}.sql`), "utf-8");
+export function readMigrationSql(name: string, migrationsDir: string = MIGRATIONS_DIR): string {
+  return readFileSync(join(migrationsDir, `${name}.sql`), "utf-8");
 }
 
-export function getMigrationStatus(db: Database): MigrationStatus {
+export function getMigrationStatus(db: Database, migrationsDir?: string): MigrationStatus {
   ensureMigrationsTable(db);
 
   const applied = db
@@ -48,7 +52,7 @@ export function getMigrationStatus(db: Database): MigrationStatus {
     .all();
 
   const appliedSet = new Set(applied.map((r) => r.name));
-  const diskNames = listMigrationNames();
+  const diskNames = listMigrationNames(migrationsDir);
 
   // Integrity check: every applied migration must still exist on disk
   for (const row of applied) {
@@ -64,12 +68,12 @@ export function getMigrationStatus(db: Database): MigrationStatus {
   return { applied, pending };
 }
 
-export function migrate(db: Database): number {
-  const { pending } = getMigrationStatus(db);
+export function migrate(db: Database, migrationsDir?: string): number {
+  const { pending } = getMigrationStatus(db, migrationsDir);
 
   let count = 0;
   for (const name of pending) {
-    const sql = readMigrationSql(name);
+    const sql = readMigrationSql(name, migrationsDir);
 
     db.transaction(() => {
       db.exec(sql);

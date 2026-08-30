@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { createTestDb } from "../../test/support/db.ts";
+import { writeFileSync } from "fs";
+import { join } from "path";
+import type { Database } from "bun:sqlite";
+import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
+import { openDb } from "./connection.ts";
 import { auditSchema, repairSchema } from "./repair.ts";
 import { listMigrationNames } from "./migrator.ts";
 
@@ -82,4 +86,84 @@ test("repairSchema reconciles missing migration ledger rows when schema is curre
   expect(row?.count).toBe(listMigrationNames().length);
 
   db.close();
+});
+
+/** A migrations directory that repair cannot stamp on DDL equivalence alone.
+ *  `001_initial` is in the reconcilable set, so repair stamps it. The second
+ *  migration is not in that set, so repair must run it instead. */
+function writeFixtureMigrations(sql: string): string {
+  const dir = createTempDir("lore-migrations-");
+  writeFileSync(
+    join(dir, "001_initial.sql"),
+    "CREATE TABLE parts (id TEXT PRIMARY KEY, state TEXT NOT NULL);\n",
+  );
+  writeFileSync(join(dir, "900_backfill_state.sql"), sql);
+  return dir;
+}
+
+function openFixtureDb(): { db: Database; dir: string } {
+  const dir = createTempDir();
+  const db = openDb(join(dir, "lore.db"));
+  db.exec("CREATE TABLE parts (id TEXT PRIMARY KEY, state TEXT NOT NULL)");
+  db.exec("INSERT INTO parts (id, state) VALUES ('a', 'new')");
+  return { db, dir };
+}
+
+test("repairSchema runs a pending migration it refuses to stamp", () => {
+  const migrationsDir = writeFixtureMigrations(
+    "UPDATE parts SET state = 'ready' WHERE state = 'new';\n",
+  );
+  const { db, dir } = openFixtureDb();
+
+  const result = repairSchema(db, { migrationsDir });
+
+  expect(result.ok).toBe(true);
+  // 001_initial is stamped; the unlisted migration is run, not stamped blind.
+  expect(result.migrations_reconciled).toBe(1);
+  expect(result.migrations_applied).toBe(1);
+  expect(result.fixed.some((i) => i.kind === "pending_migration" && i.name === "001_initial")).toBe(
+    true,
+  );
+
+  const row = db.query<{ state: string }, []>("SELECT state FROM parts WHERE id = 'a'").get();
+  expect(row?.state).toBe("ready");
+
+  const names = db
+    .query<{ name: string }, []>("SELECT name FROM _migrations ORDER BY name")
+    .all()
+    .map((r) => r.name);
+  expect(names).toEqual(["001_initial", "900_backfill_state"]);
+
+  db.close();
+  removeDir(dir);
+  removeDir(migrationsDir);
+});
+
+test("repairSchema reports a migration error instead of claiming success", () => {
+  const migrationsDir = writeFixtureMigrations(
+    "UPDATE parts SET state = 'ready' WHERE state = 'new';\n",
+  );
+  const { db, dir } = openFixtureDb();
+  // A ledger row whose file is gone, which an older binary leaves behind. The
+  // migrator refuses to run against it, so repair must report that failure.
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+  );
+  db.exec("INSERT INTO _migrations (name, applied_at) VALUES ('999_gone', '2026-01-01T00:00:00Z')");
+
+  const result = repairSchema(db, { migrationsDir });
+
+  expect(result.ok).toBe(false);
+  expect(result.migrations_reconciled).toBe(1);
+  expect(result.migrations_applied).toBe(0);
+  expect(
+    result.remaining.some((i) => i.kind === "migration_error" && i.name === "migrate:reconcile"),
+  ).toBe(true);
+  expect(
+    result.remaining.some((i) => i.kind === "pending_migration" && i.name === "900_backfill_state"),
+  ).toBe(true);
+
+  db.close();
+  removeDir(dir);
+  removeDir(migrationsDir);
 });
