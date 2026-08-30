@@ -3158,13 +3158,9 @@ export class LoreEngine {
     const symbolRows = deleteOrphanedSymbolRows(db);
     const orphans = { ...chunkRows, ...symbolRows };
     const total = sumOrphanedChunkRows(chunkRows) + sumOrphanedSymbolRows(symbolRows);
-    if (total > 0) {
-      // VACUUM only: a plain DELETE returns the pages to the free list and
-      // leaves the file its old size. Checkpoint first so the WAL is not
-      // holding the pages VACUUM is about to rewrite.
-      db.run("PRAGMA wal_checkpoint(TRUNCATE)");
-      db.run("VACUUM");
-    }
+    // A plain DELETE returns the pages to the free list and leaves the file its
+    // old size. VACUUM rewrites the file without them.
+    if (total > 0) vacuumDb(db);
 
     return {
       mode: "apply",

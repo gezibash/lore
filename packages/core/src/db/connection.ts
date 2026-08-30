@@ -104,10 +104,21 @@ export function getDatabaseSpace(db: Database): DatabaseSpace {
 }
 
 /** Rewrite the database file without its free pages. The caller must hold no
- *  open transaction, because SQLite refuses a VACUUM inside one. */
+ *  open transaction, because SQLite refuses a VACUUM inside one.
+ *
+ *  The two checkpoints are what return the space to the filesystem. The
+ *  database is in WAL mode, so a VACUUM reads the old file and writes the whole
+ *  new one into the WAL. Without the checkpoint that follows it, the file on
+ *  disk keeps its old size and the WAL holds a second copy of the contents:
+ *  a 31.9 MB file with 30.9 MB free becomes 31.9 MB plus a 32.8 MB WAL. The
+ *  checkpoint folds the WAL back and truncates both, to 999 KB. The checkpoint
+ *  that comes first keeps the WAL from holding pages the VACUUM is about to
+ *  rewrite. */
 export function vacuumDb(db: Database): VacuumResult {
   const before = getDatabaseSpace(db).file_bytes;
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   db.exec("VACUUM");
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   const after = getDatabaseSpace(db).file_bytes;
   return {
     file_bytes_before: before,

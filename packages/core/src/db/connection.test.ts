@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { statSync } from "node:fs";
 import { createTestDb } from "../../test/support/db.ts";
 import { getDatabaseSpace, vacuumDb, reclaimFreeSpace } from "./connection.ts";
 import { runMigrations } from "./migrations.ts";
@@ -50,6 +51,33 @@ test("vacuumDb shrinks the file and reports what it reclaimed", () => {
   expect(result.reclaimed_bytes).toBe(result.file_bytes_before - result.file_bytes_after);
   expect(getDatabaseSpace(db).free_bytes).toBe(0);
   expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM chunks").get()?.c).toBe(400);
+
+  db.close();
+});
+
+/** Size of a file, or 0 when it does not exist. */
+function fileBytes(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+test("vacuumDb returns the space to the filesystem, not to the WAL", () => {
+  const db = createTestDb();
+  fill(db, 2400);
+  db.run("DELETE FROM embeddings");
+
+  const before = fileBytes(db.filename);
+  const result = vacuumDb(db);
+
+  // The database is in WAL mode. A VACUUM writes the new file into the WAL, so
+  // without the checkpoint that follows it the file on disk keeps its old size
+  // and the WAL holds a second copy. Both must be small here.
+  expect(fileBytes(db.filename)).toBe(result.file_bytes_after);
+  expect(fileBytes(db.filename)).toBeLessThan(before);
+  expect(fileBytes(`${db.filename}-wal`)).toBe(0);
 
   db.close();
 });
