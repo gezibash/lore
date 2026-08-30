@@ -37,7 +37,10 @@ export function cosineDistance(a: Float32Array, b: Float32Array): number {
 export function computeStaleness(lastUpdated: string, config: LoreConfig): number {
   const age = Date.now() - new Date(lastUpdated).getTime();
   const ageDays = age / (24 * 60 * 60 * 1000);
-  return Math.min(1, ageDays / config.thresholds.staleness_days);
+  // Clamp both ends. A timestamp written moments ago, or one that a clock skew
+  // puts in the future, must read as fresh rather than as a negative score that
+  // then flows into the debt sum.
+  return Math.max(0, Math.min(1, ageDays / config.thresholds.staleness_days));
 }
 
 /**
