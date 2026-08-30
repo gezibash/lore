@@ -90,6 +90,7 @@ import type {
   SchemaRepairOptions,
   SchemaRepairResult,
   SharedProvider,
+  ProviderModelPage,
   ShowResult,
   StatusResult,
   SuggestionKind,
@@ -363,6 +364,10 @@ interface LoreClientEngine {
   resetLoreMind(opts?: { codePath?: string }): { name: string; lorePath: string };
   listProviderCredentials(): Array<{ provider: SharedProvider; config: ProviderCredential }>;
   getProviderCredential(provider: SharedProvider): ProviderCredential | undefined;
+  listProviderModels(
+    provider: SharedProvider,
+    opts?: { search?: string; limit?: number; page?: number },
+  ): Promise<ProviderModelPage>;
   setProviderCredential(provider: SharedProvider, config: ProviderCredential): ProviderCredential;
   unsetProviderCredential(
     provider: SharedProvider,
@@ -808,6 +813,13 @@ export class LoreClient {
 
   getProviderCredential(provider: SharedProvider): ProviderCredential | undefined {
     return this.engine.getProviderCredential(provider);
+  }
+
+  listProviderModels(
+    provider: SharedProvider,
+    opts?: { search?: string; limit?: number; page?: number },
+  ): Promise<ProviderModelPage> {
+    return this.engine.listProviderModels(provider, opts);
   }
 
   setProviderCredential(provider: SharedProvider, config: ProviderCredential): ProviderCredential {

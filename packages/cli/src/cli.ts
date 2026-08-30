@@ -27,6 +27,7 @@ import {
   configPromptPreviewCommand,
   configCloneCommand,
   providerConfigListCommand,
+  providerModelsCommand,
   providerConfigGetCommand,
   providerConfigSetCommand,
   providerConfigUnsetCommand,
@@ -1172,6 +1173,25 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 description: "List shared provider credentials",
                 async action() {
                   await providerConfigListCommand(getWorker());
+                },
+              }),
+              models: defineCommand({
+                name: "models",
+                description: "List the models a provider offers",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                },
+                options: {
+                  search: { type: "string", description: "Filter by substring in the model id" },
+                  limit: { type: "number", description: "Models per page (default: 30)" },
+                  page: { type: "number", description: "Page number (default: 1)" },
+                },
+                async action({ args, options }) {
+                  await providerModelsCommand(getWorker(), args.provider, {
+                    search: options.search,
+                    limit: options.limit,
+                    page: options.page,
+                  });
                 },
               }),
               get: defineCommand({

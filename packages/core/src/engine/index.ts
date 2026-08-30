@@ -194,6 +194,7 @@ import {
 } from "./debt.ts";
 import { computeAskDebtSnapshot } from "./ask-debt.ts";
 import { webSearch } from "./web-search.ts";
+import { listProviderModels, type ProviderModelPage } from "./provider-models.ts";
 import type {
   Registry,
   FileRef,
@@ -3456,6 +3457,39 @@ export class LoreEngine {
 
   getProviderCredential(provider: SharedProvider): ProviderCredential | undefined {
     return getProviderConfig(this.registry, provider);
+  }
+
+  /**
+   * List a provider's models, resolving the key and base URL the same way a
+   * generation call would: an explicit option first, then the shared
+   * credential, then whichever configured role already points at this provider.
+   */
+  async listProviderModels(
+    provider: SharedProvider,
+    opts: { search?: string; limit?: number; page?: number } = {},
+  ): Promise<ProviderModelPage> {
+    // Global config, not per-lore: you list models to choose one, which is
+    // often before any lore is registered.
+    const config = this.configFor();
+    const credential = getProviderConfig(this.registry, provider);
+    const roles = [config.ai.generation, config.ai.embedding].filter(
+      (role) => role.provider === provider,
+    );
+    const fromRole = <K extends "api_key" | "base_url">(key: K): string | undefined => {
+      for (const role of roles) {
+        const value = role[key];
+        if (value) return value;
+      }
+      return undefined;
+    };
+
+    return listProviderModels(provider, {
+      api_key: credential?.api_key ?? fromRole("api_key"),
+      base_url: credential?.base_url ?? fromRole("base_url"),
+      search: opts.search,
+      limit: opts.limit,
+      page: opts.page,
+    });
   }
 
   setProviderCredential(

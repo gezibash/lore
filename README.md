@@ -177,6 +177,7 @@ The first `log` for a KPI needs `--direction up|down`. Readings attach to the so
 
 ```bash
 lore sys ls                                  # every registered lore
+lore sys provider models openrouter --search glm   # catalog, with context and price
 lore sys config show                         # resolved config, with override annotations
 lore sys config set ai.generation.model qwen3:8b
 lore sys coverage --uncovered                # exported symbols with no concept
@@ -231,6 +232,16 @@ On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Pe
 **Embedding providers:** `ollama` · `openai` · `openai-compatible` · `openrouter` · `voyage` · `gateway`
 
 **Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway`
+
+List what a provider offers before you pick:
+
+```bash
+lore sys provider models openrouter --search glm
+lore sys provider models openrouter --search glm --page 2
+lore sys provider models ollama
+```
+
+`openrouter`, `openai`, `groq`, and `ollama` publish a catalog; `openai-compatible` needs a `--base-url` on the credential first. The other providers have no catalog endpoint and say so. OpenRouter also reports context window and price per million tokens, which is the part that decides the choice.
 
 Default (no config needed): local Ollama with `qwen3-embedding:8b` (4096-dim) + `qwen3:8b`.
 

@@ -174,6 +174,7 @@ type DirectWorkerClientDeps = Pick<
   | "removeLoreMind"
   | "listProviderCredentials"
   | "getProviderCredential"
+  | "listProviderModels"
   | "setProviderCredential"
   | "unsetProviderCredential"
 >;
@@ -741,6 +742,12 @@ export class WorkerClient {
     ...args: Parameters<DirectWorkerClientDeps["getProviderCredential"]>
   ) {
     return this.call("getProviderCredential", args);
+  }
+
+  async listProviderModels(
+    ...args: Parameters<DirectWorkerClientDeps["listProviderModels"]>
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["listProviderModels"]>> {
+    return this.call("listProviderModels", args);
   }
 
   async setProviderCredential(

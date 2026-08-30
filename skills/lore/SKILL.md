@@ -114,6 +114,10 @@ lore sys config set ai.generation.model z-ai/glm-5.3-flash
 lore sys provider set openrouter --api-key sk-or-...
 ```
 
+- Find the exact slug, the context window, and the price with
+  `lore sys provider models openrouter --search <text>`. Page through with `--page`.
+  `openai`, `groq`, and `ollama` also publish a catalog. `openai-compatible` needs a
+  base URL on the credential first.
 - For `openrouter`, the model string is the OpenRouter slug, copied exactly.
 - `base_url` is optional. It defaults to `https://openrouter.ai/api/v1`.
 - Generation providers: `ollama`, `openai`, `groq`, `openai-compatible`, `openrouter`,

@@ -1,6 +1,7 @@
 import type { WorkerClient } from "@lore/worker";
 import type { SharedProvider } from "@lore/worker";
 import { getDeepValue, GENERATION_PROMPT_KEYS, normalizePromptKey } from "@lore/worker";
+import { emit, isJsonOutput } from "../output.ts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -18,6 +19,7 @@ const SHARED_PROVIDERS: SharedProvider[] = [
   "openai-compatible",
   "openrouter",
   "moonshotai",
+  "voyage",
 ];
 
 // Numeric config keys that should be auto-coerced
@@ -242,6 +244,80 @@ export async function providerConfigGetCommand(
   console.log(`${BOLD}${parsedProvider}${RESET}`);
   console.log(`api_key: ${apiKey}`);
   console.log(`base_url: ${baseUrl}`);
+}
+
+/** Right-align a number column so prices and context windows compare by eye. */
+function pad(text: string, width: number): string {
+  return text.length >= width ? text : " ".repeat(width - text.length) + text;
+}
+
+function formatPrice(usdPerMtok: number | undefined): string {
+  if (usdPerMtok === undefined) return "—";
+  if (usdPerMtok === 0) return "free";
+  return usdPerMtok < 1 ? `$${usdPerMtok.toFixed(3)}` : `$${usdPerMtok.toFixed(2)}`;
+}
+
+function formatContext(tokens: number | undefined): string {
+  if (tokens === undefined) return "—";
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+}
+
+export async function providerModelsCommand(
+  client: WorkerClient,
+  provider: string,
+  options: { search?: string; limit?: number; page?: number },
+): Promise<void> {
+  const parsedProvider = parseProvider(provider);
+  const result = await client.listProviderModels(parsedProvider, {
+    search: options.search,
+    limit: options.limit,
+    page: options.page,
+  });
+
+  if (isJsonOutput()) {
+    emit(result);
+    return;
+  }
+
+  if (result.total === 0) {
+    const filter = options.search ? ` matching '${options.search}'` : "";
+    console.log(`${DIM}No models${filter} from ${parsedProvider}.${RESET}`);
+    return;
+  }
+
+  const priced = result.models.some((model) => model.prompt_usd_per_mtok !== undefined);
+  const header = priced
+    ? `${pad("CTX", 6)}  ${pad("IN/M", 8)}  ${pad("OUT/M", 8)}  MODEL`
+    : "MODEL";
+  console.log(`${DIM}${header}${RESET}`);
+
+  for (const model of result.models) {
+    if (priced) {
+      const ctx = pad(formatContext(model.context_length), 6);
+      const inPrice = pad(formatPrice(model.prompt_usd_per_mtok), 8);
+      const outPrice = pad(formatPrice(model.completion_usd_per_mtok), 8);
+      console.log(`${DIM}${ctx}  ${inPrice}  ${outPrice}${RESET}  ${CYAN}${model.id}${RESET}`);
+      continue;
+    }
+    console.log(`${CYAN}${model.id}${RESET}`);
+  }
+
+  const shown = result.models.length;
+  const first = (result.page - 1) * (options.limit ?? shown) + 1;
+  console.log(
+    `\n${DIM}${first}-${first + shown - 1} of ${result.total} · page ${result.page}/${result.pages}${RESET}`,
+  );
+  if (result.page < result.pages) {
+    // Carry the filter into the hint: without it, the next page is a different list.
+    const flags = [
+      options.search ? `--search ${options.search}` : "",
+      options.limit ? `--limit ${options.limit}` : "",
+      `--page ${result.page + 1}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    console.log(`${DIM}Next: lore sys provider models ${parsedProvider} ${flags}${RESET}`);
+  }
 }
 
 export async function providerConfigSetCommand(

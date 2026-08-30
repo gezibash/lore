@@ -39,6 +39,27 @@ export type GenerationProvider =
 
 export type SharedProvider = EmbeddingProvider | GenerationProvider | "cohere";
 
+export interface ProviderModel {
+  id: string;
+  name?: string;
+  /** Maximum context in tokens. */
+  context_length?: number;
+  /** USD per million input tokens. */
+  prompt_usd_per_mtok?: number;
+  /** USD per million output tokens. */
+  completion_usd_per_mtok?: number;
+  modality?: string;
+}
+
+export interface ProviderModelPage {
+  provider: SharedProvider;
+  models: ProviderModel[];
+  /** Models matching the filter, before pagination. */
+  total: number;
+  page: number;
+  pages: number;
+}
+
 export interface ProviderCredential {
   api_key?: string;
   base_url?: string;

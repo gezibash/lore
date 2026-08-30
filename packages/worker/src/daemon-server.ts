@@ -149,6 +149,7 @@ const PROXY_METHODS = {
   resetLoreMind: { maxArgs: 1, inject: "last" },
   listProviderCredentials: { maxArgs: 0 },
   getProviderCredential: { maxArgs: 1 },
+  listProviderModels: { maxArgs: 2 },
   setProviderCredential: { maxArgs: 2 },
   unsetProviderCredential: { maxArgs: 2 },
   getLoreMindConfig: { maxArgs: 1 },
