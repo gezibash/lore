@@ -25,6 +25,7 @@ export {
 export type { TreeDiffFormatOptions, DryRunCloseFormatInput } from "./formatters.ts";
 export { computeLineDiff, isDiffTooLarge } from "./engine/line-diff.ts";
 export { ALL_PROVIDERS } from "./engine/provider-models.ts";
+export type { LoreUsageReport, UsageLine, UsageTotals } from "./db/usage.ts";
 export type {
   ModelKind,
   ModelSort,

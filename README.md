@@ -159,6 +159,21 @@ lore score <result-id> 4
 | `lore log [limit] [since]` | Walk commit history. `since` takes `2w`, a ULID, or `main~N` |
 | `lore diff <target>` | Preview a close, or compare `ref..ref` |
 | `lore suggest` | Prioritized maintenance plan. Filter with `--kind` |
+| `lore usage` | What this lore has spent on AI calls. `--all` for every lore |
+
+### Spend
+
+Every AI call records its token counts against the lore that made it, so spend is attributable per project.
+
+```bash
+lore usage                    # this lore, grouped by model
+lore usage --by operation     # where the tokens went: ask, close, ingest
+lore usage --all --since 2w   # every lore, last two weeks
+```
+
+Money is priced at report time from the provider's live catalog, not stored, because a price belongs to the model today rather than to a call made last month. A model with no published price shows its tokens and no cost, and the total is marked `≥` to say it is a floor.
+
+Recording starts when the table is created. Calls made before that are not backfilled.
 
 ### KPIs
 

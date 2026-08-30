@@ -85,6 +85,8 @@ const RECONCILABLE_MIGRATIONS = new Set([
   "027_drop_dead_narrative_metrics",
   // Pure DDL: new kpis / kpi_goals / kpi_readings tables and a view.
   "028_kpis",
+  // Pure DDL: new usage_events table and its indexes.
+  "029_usage_events",
 ]);
 
 function quoteSqliteIdentifier(name: string): string {

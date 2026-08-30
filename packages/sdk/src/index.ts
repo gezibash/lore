@@ -95,6 +95,7 @@ import type {
   ProviderModelPage,
   ProviderStatus,
   ProviderUsage,
+  LoreUsageReport,
   ShowResult,
   StatusResult,
   SuggestionKind,
@@ -370,6 +371,11 @@ interface LoreClientEngine {
   getProviderCredential(provider: SharedProvider): ProviderCredential | undefined;
   listProviders(): ProviderStatus[];
   getProviderUsage(provider: SharedProvider): Promise<ProviderUsage>;
+  usageReport(opts?: {
+    codePath?: string;
+    since?: string;
+    all?: boolean;
+  }): Promise<LoreUsageReport[]>;
   listProviderModels(
     provider: SharedProvider,
     opts?: ListProviderModelsOptions,
@@ -844,6 +850,14 @@ export class LoreClient {
 
   getProviderUsage(provider: SharedProvider): Promise<ProviderUsage> {
     return this.engine.getProviderUsage(provider);
+  }
+
+  usageReport(opts?: {
+    codePath?: string;
+    since?: string;
+    all?: boolean;
+  }): Promise<LoreUsageReport[]> {
+    return this.engine.usageReport(opts);
   }
 
   listProviderModels(

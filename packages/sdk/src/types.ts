@@ -51,6 +51,27 @@ export interface ListProviderModelsOptions {
   kinds?: ModelKind[];
 }
 
+export interface UsageTotals {
+  kind: "generation" | "embedding";
+  operation: string;
+  provider: string;
+  model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface UsageLine extends UsageTotals {
+  cost_usd?: number;
+}
+
+export interface LoreUsageReport {
+  lore: string;
+  code_path: string;
+  first_seen: string | null;
+  lines: UsageLine[];
+}
+
 export interface ProviderUsage {
   provider: SharedProvider;
   balance_usd?: number;

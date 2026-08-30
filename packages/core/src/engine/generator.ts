@@ -4,6 +4,7 @@ import { LoreError } from "@/types/index.ts";
 import type { LoreConfig, MergeStrategy } from "@/types/index.ts";
 import { type GenerationPromptKey } from "@/config/prompts.ts";
 import { createGenerationModel } from "./provider.ts";
+import type { UsageReporter } from "@/db/usage.ts";
 
 type GenerationProvider = LoreConfig["ai"]["generation"]["provider"];
 type ProviderOptionsValue = NonNullable<
@@ -161,25 +162,34 @@ export class Generator {
   private reasoningOverrides?: Partial<ReasoningOverridesConfig>;
   private prompts: GenerationPromptsConfig;
 
+  private readonly modelName: string;
+  private readonly onUsage?: UsageReporter;
+
   private constructor(
     model: LanguageModel,
     provider: GenerationProvider,
+    modelName: string,
+    onUsage: UsageReporter | undefined,
     reasoning: ReasoningLevel,
     reasoningOverrides: Partial<ReasoningOverridesConfig> | undefined,
     prompts: GenerationPromptsConfig,
   ) {
     this.model = model;
     this.provider = provider;
+    this.modelName = modelName;
+    this.onUsage = onUsage;
     this.reasoning = reasoning;
     this.reasoningOverrides = reasoningOverrides;
     this.prompts = prompts;
   }
 
-  static async create(config: LoreConfig): Promise<Generator> {
+  static async create(config: LoreConfig, onUsage?: UsageReporter): Promise<Generator> {
     const model = await createGenerationModel(config);
     return new Generator(
       model,
       config.ai.generation.provider,
+      config.ai.generation.model,
+      onUsage,
       config.ai.generation.reasoning ?? "none",
       config.ai.generation.reasoning_overrides,
       config.ai.generation.prompts,
@@ -330,6 +340,15 @@ export class Generator {
       const text = result.text.replace(/<think>[\s\S]*?<\/think>\s*/g, "");
       const inputTokens = result.usage?.inputTokens ?? 0;
       const outputTokens = result.usage?.outputTokens ?? 0;
+      // Every generation method funnels through here, so one call reports all.
+      this.onUsage?.({
+        kind: "generation",
+        operation: opts?.scope ?? "generate",
+        provider: this.provider,
+        model: this.modelName,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+      });
       return {
         text,
         usage: {

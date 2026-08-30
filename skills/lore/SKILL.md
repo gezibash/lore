@@ -84,6 +84,21 @@ Lore is CLI-only. There is no MCP surface.
 - Drain jobs in automation with `lore sys worker --once` or `lore sys worker --watch`.
 - `lore close --merge-strategy` selects how the entry lands: `replace` (default), `extend`, or `patch`.
 
+## Report What A Project Spent
+
+Every AI call records its tokens against the lore that made it.
+
+```bash
+lore usage                    # this lore, grouped by model
+lore usage --by operation     # ask, close, ingest, and the rest
+lore usage --all --since 2w   # every lore, last two weeks
+```
+
+- Money is priced at report time from the provider's catalog. It is not stored.
+- A model with no published price shows tokens and no cost. The total is then
+  marked `≥`, which means a floor, not a figure.
+- Recording is not backfilled. Calls made before the table existed are absent.
+
 ## Track Numbers As KPIs
 
 - Record a measurement with `lore kpi log <name> <value>`. The first log needs `--direction up|down`.

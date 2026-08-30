@@ -18,6 +18,7 @@ import { historyCommand } from "./commands/history.ts";
 import { diffCommand } from "./commands/diff.ts";
 import { commitlogCommand } from "./commands/commitlog.ts";
 import { rebuildCommand } from "./commands/rebuild.ts";
+import { usageCommand } from "./commands/usage.ts";
 import { mindsListCommand, mindsRemoveCommand, mindResetCommand } from "./commands/minds.ts";
 import {
   configGetCommand,
@@ -613,6 +614,22 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
         async action({ args, options }) {
           await waitCommand(getWorker(), args.id, {
             pollMs: options["poll-ms"] as number | undefined,
+          });
+        },
+      }),
+      usage: defineCommand({
+        name: "usage",
+        description: "Show what this lore has spent on AI calls",
+        options: {
+          since: { type: "string", description: "Window: 2w, 3d, 12h, or an ISO date" },
+          by: { type: "string", description: "Group by: model (default), operation, or kind" },
+          all: { type: "boolean", description: "Every registered lore, not just this one" },
+        },
+        async action({ options }) {
+          await usageCommand(getWorker(), {
+            since: options.since,
+            by: options.by,
+            all: options.all,
           });
         },
       }),

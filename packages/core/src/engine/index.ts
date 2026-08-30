@@ -196,6 +196,13 @@ import {
 import { computeAskDebtSnapshot } from "./ask-debt.ts";
 import { webSearch } from "./web-search.ts";
 import {
+  recordUsage,
+  usageFirstSeen,
+  usageTotals,
+  type LoreUsageReport,
+  type UsageReporter,
+} from "@/db/usage.ts";
+import {
   ALL_PROVIDERS,
   CATALOG_NEEDS_KEY,
   catalogNeedsBaseUrl,
@@ -206,6 +213,7 @@ import {
   listProviderModels,
   type ListProviderModelsOptions,
   type ProviderModelPage,
+  type ProviderModel,
   type ProviderStatus,
   type ProviderUsage,
 } from "./provider-models.ts";
@@ -515,9 +523,9 @@ export class LoreEngine {
         config ??= this.configFor(entry);
         if (!embedder || !generator) {
           [embedder, generator, codeEmbedder] = await Promise.all([
-            this.embedderFor(config),
-            this.generatorFor(config),
-            this.codeEmbedderFor(config),
+            this.embedderFor(config, entry),
+            this.generatorFor(config, entry),
+            this.codeEmbedderFor(config, entry),
           ]);
         }
         const { rescanFailed } = await runCloseMaintenanceJob(
@@ -683,21 +691,40 @@ export class LoreEngine {
   private cachedCodeEmbedder?: Embedder | null;
   private codeCacheKey?: string;
 
-  private async embedderFor(config: LoreConfig): Promise<Embedder> {
+  /**
+   * A usage sink bound to one mind's database.
+   *
+   * Clients are cached, and read paths run concurrently across minds, so the
+   * sink has to travel with the client rather than be read from engine state:
+   * a shared mutable "current lore" would file one project's spend under
+   * another's. That is also why lore_path is back in the cache keys.
+   */
+  private usageSinkFor(entry?: RegistryEntry): UsageReporter | undefined {
+    if (!entry) return undefined;
+    const db = this.dbs.get(entry.lore_path);
+    if (!db) return undefined;
+    return (event) => recordUsage(db, event);
+  }
+
+  private async embedderFor(config: LoreConfig, entry?: RegistryEntry): Promise<Embedder> {
     const key = JSON.stringify({
       provider: config.ai.embedding.provider,
       model: config.ai.embedding.model,
       base_url: config.ai.embedding.base_url ?? "",
       api_key: config.ai.embedding.api_key ?? "",
+      lorePath: entry?.lore_path ?? "",
     });
     if (!this.cachedEmbedder || this.embedCacheKey !== key) {
-      this.cachedEmbedder = await Embedder.create(config);
+      this.cachedEmbedder = await Embedder.create(config, this.usageSinkFor(entry));
       this.embedCacheKey = key;
     }
     return this.cachedEmbedder;
   }
 
-  private async codeEmbedderFor(config: LoreConfig): Promise<Embedder | null> {
+  private async codeEmbedderFor(
+    config: LoreConfig,
+    entry?: RegistryEntry,
+  ): Promise<Embedder | null> {
     const code = config.ai.embedding.code;
     if (!code) return null;
     const key = JSON.stringify({
@@ -705,15 +732,16 @@ export class LoreEngine {
       model: code.model,
       base_url: code.base_url ?? config.ai.embedding.base_url ?? "",
       api_key: code.api_key ?? config.ai.embedding.api_key ?? "",
+      lorePath: entry?.lore_path ?? "",
     });
     if (this.cachedCodeEmbedder === undefined || this.codeCacheKey !== key) {
-      this.cachedCodeEmbedder = await Embedder.createForCode(config);
+      this.cachedCodeEmbedder = await Embedder.createForCode(config, this.usageSinkFor(entry));
       this.codeCacheKey = key;
     }
     return this.cachedCodeEmbedder;
   }
 
-  private async generatorFor(config: LoreConfig): Promise<Generator> {
+  private async generatorFor(config: LoreConfig, entry?: RegistryEntry): Promise<Generator> {
     const key = JSON.stringify({
       provider: config.ai.generation.provider,
       model: config.ai.generation.model,
@@ -721,9 +749,10 @@ export class LoreEngine {
       api_key: config.ai.generation.api_key ?? "",
       reasoning: config.ai.generation.reasoning ?? "none",
       prompts: config.ai.generation.prompts,
+      lorePath: entry?.lore_path ?? "",
     });
     if (!this.cachedGenerator || this.genCacheKey !== key) {
-      this.cachedGenerator = await Generator.create(config);
+      this.cachedGenerator = await Generator.create(config, this.usageSinkFor(entry));
       this.genCacheKey = key;
     }
     return this.cachedGenerator;
@@ -802,7 +831,7 @@ export class LoreEngine {
       narrativeName,
       intent,
       config,
-      await this.embedderFor(config),
+      await this.embedderFor(config, entry),
       opts?.resolveDangling,
       opts?.targets,
     );
@@ -887,15 +916,15 @@ export class LoreEngine {
                   },
                 },
               };
-          return this.generatorFor(summaryGenConfig);
+          return this.generatorFor(summaryGenConfig, entry);
         })()
       : Promise.resolve(undefined);
 
     opts?.onProgress?.("preparing embedder");
     const [summaryGenerator, embedder, codeEmbedder] = await Promise.all([
       summaryGeneratorPromise,
-      this.embedderFor(config),
-      this.codeEmbedderFor(config),
+      this.embedderFor(config, entry),
+      this.codeEmbedderFor(config, entry),
     ]);
 
     // If source chunks exist, a code model is required — no silent fallback
@@ -1121,7 +1150,7 @@ export class LoreEngine {
             },
           },
         };
-    const generator = await this.generatorFor(summaryGenConfig);
+    const generator = await this.generatorFor(summaryGenConfig, entry);
 
     return generateExecutiveSummary(
       generator,
@@ -1147,8 +1176,8 @@ export class LoreEngine {
       db,
       lorePath: entry.lore_path,
       embeddingModel: config.ai.embedding.model,
-      getEmbedder: () => this.embedderFor(config),
-      getGenerator: () => this.generatorFor(config),
+      getEmbedder: () => this.embedderFor(config, entry),
+      getGenerator: () => this.generatorFor(config, entry),
     };
   }
 
@@ -1177,9 +1206,9 @@ export class LoreEngine {
     const payload = JSON.parse(job.payload_json) as CloseJobPayload;
     const config = this.configFor(entry);
     const [embedder, generator, codeEmbedder] = await Promise.all([
-      this.embedderFor(config),
-      this.generatorFor(config),
-      this.codeEmbedderFor(config),
+      this.embedderFor(config, entry),
+      this.generatorFor(config, entry),
+      this.codeEmbedderFor(config, entry),
     ]);
 
     try {
@@ -2495,9 +2524,9 @@ export class LoreEngine {
         db,
         config,
         codePath: entry.code_path ?? null,
-        embedder: await this.embedderFor(config),
-        codeEmbedder: await this.codeEmbedderFor(config),
-        generator: await this.generatorFor(config),
+        embedder: await this.embedderFor(config, entry),
+        codeEmbedder: await this.codeEmbedderFor(config, entry),
+        generator: await this.generatorFor(config, entry),
       };
 
       queueConceptHealLeases(db, {
@@ -2927,7 +2956,7 @@ export class LoreEngine {
   }> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
-    const embedder = await this.embedderFor(config);
+    const embedder = await this.embedderFor(config, entry);
 
     const { deleteAllEmbeddings: deleteAllEmb } = await import("@/db/embeddings.ts");
     const {
@@ -2939,7 +2968,7 @@ export class LoreEngine {
     const { insertEmbedding: insertEmb } = await import("@/db/embeddings.ts");
 
     const textModel = config.ai.embedding.model;
-    const codeEmbedder = await this.codeEmbedderFor(config);
+    const codeEmbedder = await this.codeEmbedderFor(config, entry);
     const resolvedCodeModel = codeEmbedder ? (config.ai.embedding.code?.model ?? null) : null;
 
     // 1. Delete all embeddings from DB
@@ -3060,7 +3089,7 @@ export class LoreEngine {
     if (reEmbedded >= 2) {
       opts?.onProgress?.("graph", 0, 1);
       const { discoverConcepts: discover } = await import("./concept-discovery.ts");
-      const generator = await this.generatorFor(config);
+      const generator = await this.generatorFor(config, entry);
       await discover(db, generator);
       opts?.onProgress?.("graph", 1, 1);
     }
@@ -3324,7 +3353,11 @@ export class LoreEngine {
     if (!narrative || (narrative.status !== "open" && narrative.status !== "close_failed")) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
-    const plan = await buildExplicitClosePlan(db, narrative, await this.generatorFor(config));
+    const plan = await buildExplicitClosePlan(
+      db,
+      narrative,
+      await this.generatorFor(config, entry),
+    );
     return {
       narrative,
       plan: {
@@ -3526,6 +3559,79 @@ export class LoreEngine {
    * either needs no key or has one. Providers that would certainly fail are
    * left out rather than reported as failures.
    */
+  /**
+   * What this lore has spent on AI calls.
+   *
+   * Tokens come from the local record; money is priced at report time from the
+   * live catalog, because a price belongs to the model today, not to the call
+   * that happened last month. A model the catalog does not know, or an
+   * unreachable catalog, leaves the tokens and drops the cost.
+   */
+  async usageReport(
+    opts: { codePath?: string; since?: string; all?: boolean } = {},
+  ): Promise<LoreUsageReport[]> {
+    const targets = opts.all
+      ? listLoreMinds(this.registry)
+      : [
+          {
+            name: this.resolveLoreMind(opts.codePath).name,
+            ...this.resolveLoreMind(opts.codePath).entry,
+          },
+        ];
+
+    const priced = new Map<string, ProviderModel>();
+    const reports: LoreUsageReport[] = [];
+
+    for (const target of targets) {
+      const { db } = this.resolveLoreMind(target.code_path);
+      const totals = usageTotals(db, opts.since);
+      if (totals.length === 0 && opts.all) continue;
+
+      for (const row of totals) {
+        const cacheKey = `${row.provider}:${row.model}`;
+        if (!priced.has(cacheKey)) {
+          try {
+            const page = await this.listProviderModels(row.provider as SharedProvider, {
+              search: row.model,
+              limit: Number.MAX_SAFE_INTEGER,
+              kinds: ["generation", "embedding", "other"],
+            });
+            const match = page.models.find((m) => m.id === row.model);
+            if (match) priced.set(cacheKey, match);
+          } catch {
+            // Offline or no catalog: report tokens without money.
+          }
+        }
+      }
+
+      reports.push({
+        lore: target.name,
+        code_path: target.code_path,
+        first_seen: usageFirstSeen(db),
+        lines: totals.map((row) => {
+          const price = priced.get(`${row.provider}:${row.model}`);
+          const inCost =
+            price?.prompt_usd_per_mtok !== undefined
+              ? (row.input_tokens / 1_000_000) * price.prompt_usd_per_mtok
+              : undefined;
+          const outCost =
+            price?.completion_usd_per_mtok !== undefined
+              ? (row.output_tokens / 1_000_000) * price.completion_usd_per_mtok
+              : undefined;
+          return {
+            ...row,
+            cost_usd:
+              inCost === undefined && outCost === undefined
+                ? undefined
+                : (inCost ?? 0) + (outCost ?? 0),
+          };
+        }),
+      });
+    }
+
+    return reports;
+  }
+
   /** Read a provider's credit balance and spend. */
   async getProviderUsage(provider: SharedProvider): Promise<ProviderUsage> {
     return getProviderUsage(provider, this.credentialsFor(provider));
@@ -3740,7 +3846,7 @@ export class LoreEngine {
     const config = this.configFor(entry);
     let generator: Generator | undefined;
     try {
-      generator = await this.generatorFor(config);
+      generator = await this.generatorFor(config, entry);
     } catch {
       // No generator configured — drift questions will be skipped
     }
@@ -3866,11 +3972,11 @@ export class LoreEngine {
     };
 
     if (proseRows.length > 0) {
-      const embedder = await this.embedderFor(config);
+      const embedder = await this.embedderFor(config, entry);
       await embedRows(proseRows, embedder, config.ai.embedding.model);
     }
     if (sourceRows.length > 0 && config.ai.embedding.code?.model) {
-      const codeEmbedder = await this.codeEmbedderFor(config);
+      const codeEmbedder = await this.codeEmbedderFor(config, entry);
       if (codeEmbedder) {
         await embedRows(sourceRows, codeEmbedder, config.ai.embedding.code.model);
       }

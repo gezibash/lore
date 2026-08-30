@@ -178,6 +178,7 @@ type DirectWorkerClientDeps = Pick<
   | "getProviderCredential"
   | "listProviders"
   | "getProviderUsage"
+  | "usageReport"
   | "listProviderModels"
   | "listAllProviderModels"
   | "useModel"
@@ -767,6 +768,12 @@ export class WorkerClient {
     ...args: Parameters<DirectWorkerClientDeps["getProviderUsage"]>
   ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["getProviderUsage"]>> {
     return this.call("getProviderUsage", args);
+  }
+
+  async usageReport(
+    ...args: Parameters<DirectWorkerClientDeps["usageReport"]>
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["usageReport"]>> {
+    return this.call("usageReport", args);
   }
 
   async listAllProviderModels(

@@ -3,6 +3,7 @@ import { LoreError } from "@/types/index.ts";
 import type { LoreConfig } from "@/types/index.ts";
 import { createEmbeddingModel, createEmbeddingModelFromProviderConfig } from "./provider.ts";
 import type { EmbeddingProviderConfig } from "./provider.ts";
+import type { UsageReporter } from "@/db/usage.ts";
 
 /** Providers reject inputs past their context limit (e.g. 131,072 chars for
  *  qwen3-embedding via OpenRouter). Truncate here — the boundary — so every
@@ -15,17 +16,47 @@ function clip(text: string): string {
 
 export class Embedder {
   private model: EmbeddingModel;
+  private readonly provider: string;
+  private readonly modelName: string;
+  private readonly onUsage?: UsageReporter;
 
-  private constructor(model: EmbeddingModel) {
+  private constructor(
+    model: EmbeddingModel,
+    provider: string,
+    modelName: string,
+    onUsage?: UsageReporter,
+  ) {
     this.model = model;
+    this.provider = provider;
+    this.modelName = modelName;
+    this.onUsage = onUsage;
   }
 
-  static async create(config: LoreConfig): Promise<Embedder> {
+  /**
+   * Embedding responses carry a token count for the input only; there is no
+   * output side to charge for.
+   */
+  private report(operation: string, tokens: number | undefined): void {
+    if (tokens === undefined) return;
+    this.onUsage?.({
+      kind: "embedding",
+      operation,
+      provider: this.provider,
+      model: this.modelName,
+      input_tokens: tokens,
+      output_tokens: 0,
+    });
+  }
+
+  static async create(config: LoreConfig, onUsage?: UsageReporter): Promise<Embedder> {
     const model = await createEmbeddingModel(config);
-    return new Embedder(model);
+    return new Embedder(model, config.ai.embedding.provider, config.ai.embedding.model, onUsage);
   }
 
-  static async createForCode(config: LoreConfig): Promise<Embedder | null> {
+  static async createForCode(
+    config: LoreConfig,
+    onUsage?: UsageReporter,
+  ): Promise<Embedder | null> {
     const code = config.ai.embedding.code;
     if (!code) return null;
     const resolved: EmbeddingProviderConfig = {
@@ -35,7 +66,7 @@ export class Embedder {
       api_key: code.api_key ?? config.ai.embedding.api_key,
     };
     const model = await createEmbeddingModelFromProviderConfig(resolved);
-    return new Embedder(model);
+    return new Embedder(model, resolved.provider, resolved.model, onUsage);
   }
 
   async embed(text: string, opts?: { timeoutMs?: number }): Promise<Float32Array> {
@@ -43,11 +74,12 @@ export class Embedder {
     const timeoutAbort = timeoutMs && timeoutMs > 0 ? new AbortController() : null;
     const timeoutId = timeoutAbort ? setTimeout(() => timeoutAbort.abort(), timeoutMs) : null;
     try {
-      const { embedding } = await embed({
+      const { embedding, usage } = await embed({
         model: this.model,
         value: clip(text),
         ...(timeoutAbort ? { abortSignal: timeoutAbort.signal } : {}),
       });
+      this.report("embed", usage?.tokens);
       return Float32Array.from(embedding);
     } catch (error) {
       const timedOut = Boolean(
@@ -70,7 +102,11 @@ export class Embedder {
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     try {
-      const { embeddings } = await embedMany({ model: this.model, values: texts.map(clip) });
+      const { embeddings, usage } = await embedMany({
+        model: this.model,
+        values: texts.map(clip),
+      });
+      this.report("embed_batch", usage?.tokens);
       return embeddings.map((e) => Float32Array.from(e));
     } catch (error) {
       throw new LoreError(
