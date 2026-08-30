@@ -92,3 +92,30 @@ export async function systemRepairCommand(client: WorkerClient, check?: boolean)
     console.log(`${DIM}If data outputs still look stale, run: lore mind rebuild${RESET}`);
   }
 }
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+export async function systemVacuumCommand(client: WorkerClient): Promise<void> {
+  const result = await client.vacuum();
+
+  console.log(`${BOLD}Vacuum summary${RESET}`);
+  console.log(`  ${DIM}before:${RESET} ${formatBytes(result.file_bytes_before)}`);
+  console.log(`  ${DIM}after:${RESET} ${formatBytes(result.file_bytes_after)}`);
+  console.log(`  ${DIM}reclaimed:${RESET} ${formatBytes(result.reclaimed_bytes)}`);
+
+  if (result.reclaimed_bytes === 0) {
+    console.log(`\n${DIM}The file held no free pages worth reclaiming.${RESET}`);
+    return;
+  }
+  console.log(`\n${GREEN}Reclaimed ${formatBytes(result.reclaimed_bytes)}.${RESET}`);
+}

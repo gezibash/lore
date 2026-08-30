@@ -1226,6 +1226,12 @@ export interface SchemaRepairResult {
   remaining: SchemaIssue[];
 }
 
+export interface VacuumResult {
+  file_bytes_before: number;
+  file_bytes_after: number;
+  reclaimed_bytes: number;
+}
+
 // ─── Suggest Types ────────────────────────────────────────
 export type SuggestionKind =
   | "merge"

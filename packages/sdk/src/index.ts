@@ -90,6 +90,7 @@ import type {
   SchemaIssue,
   SchemaRepairOptions,
   SchemaRepairResult,
+  VacuumResult,
   SharedProvider,
   ListProviderModelsOptions,
   ProviderModelPage,
@@ -363,6 +364,7 @@ interface LoreClientEngine {
   migrate(opts?: { codePath?: string }): { applied: number };
   migrateStatus(opts?: { codePath?: string }): MigrationStatus;
   repair(opts?: { codePath?: string } & SchemaRepairOptions): SchemaRepairResult;
+  vacuum(opts?: { codePath?: string }): VacuumResult;
   commitLog(opts?: { codePath?: string; limit?: number; since?: string }): CommitLogEntry[];
   listLoreMinds(): Array<{ name: string } & RegistryEntry>;
   removeLoreMind(name: string, deleteData: boolean): void;
@@ -818,6 +820,10 @@ export class LoreClient {
 
   repair(opts?: { codePath?: string } & SchemaRepairOptions): SchemaRepairResult {
     return this.engine.repair(opts);
+  }
+
+  vacuum(opts?: { codePath?: string }): VacuumResult {
+    return this.engine.vacuum(opts);
   }
 
   commitLog(opts?: { codePath?: string; limit?: number; since?: string }): CommitLogEntry[] {

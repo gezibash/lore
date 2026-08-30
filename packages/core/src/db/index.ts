@@ -1,4 +1,11 @@
-export { openDb, ensureCustomSqlite } from "./connection.ts";
+export {
+  openDb,
+  ensureCustomSqlite,
+  getDatabaseSpace,
+  vacuumDb,
+  reclaimFreeSpace,
+} from "./connection.ts";
+export type { DatabaseSpace, VacuumResult } from "./connection.ts";
 export { runMigrations } from "./migrations.ts";
 export {
   insertChunk,
