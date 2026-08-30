@@ -126,6 +126,14 @@ export function deleteSymbolsForSourceFile(db: Database, sourceFileId: string): 
     `DELETE FROM concept_symbols WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
     [sourceFileId],
   );
+  // symbol_embeddings has no FK either, and every scan gives a symbol a fresh
+  // id, so a changed file leaves one dead vector per symbol of the previous
+  // version. The unique index on (symbol_id, model) cannot reclaim them,
+  // because INSERT OR REPLACE only matches an id that never comes back.
+  db.run(
+    `DELETE FROM symbol_embeddings WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
+    [sourceFileId],
+  );
   db.run(`DELETE FROM symbols WHERE source_file_id = ?`, [sourceFileId]);
 }
 
