@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { OrphanedSymbolRows } from "./symbols.ts";
 import { ulid } from "ulid";
 import type {
   ChunkRow,
@@ -264,7 +265,7 @@ export interface OrphanedChunkRows {
 /** What a prune found or deleted, and what it cost the database file. */
 export interface PruneOrphansResult {
   mode: "check" | "apply";
-  orphans: OrphanedChunkRows;
+  orphans: OrphanedChunkRows & OrphanedSymbolRows;
   total: number;
   db_bytes_before: number;
   db_bytes_after: number;

@@ -168,6 +168,9 @@ export {
   insertSymbol,
   insertSymbolBatch,
   deleteSymbolsForSourceFile,
+  countOrphanedSymbolRows,
+  deleteOrphanedSymbolRows,
+  sumOrphanedSymbolRows,
   getSymbolsForSourceFile,
   getSymbolsForFilePath,
   searchSymbols,
@@ -175,6 +178,7 @@ export {
   getSymbolCount,
   getSymbolKindCounts,
 } from "./symbols.ts";
+export type { OrphanedSymbolRows } from "./symbols.ts";
 export {
   upsertConceptSymbol,
   getBindingsForConcept,
