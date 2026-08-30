@@ -4,6 +4,8 @@ A local-first codebase knowledge system for AI agents and developers.
 
 Lore turns a codebase into a queryable knowledge graph — named concepts, narrative exploration sessions, symbol-to-file bindings, and a running debt score. It is CLI-first, so agents can ask "how does auth work?" and get a precise, grounded answer with file references instead of grepping blind.
 
+![How Lore turns a codebase into reliable knowledge](docs/assets/lore-flow.png)
+
 ---
 
 ## How it works
