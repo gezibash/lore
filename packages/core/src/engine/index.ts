@@ -58,7 +58,7 @@ import {
   seedGlobalConfigIfAbsent,
   type DeepPartial,
 } from "@/config/index.ts";
-import { openDb, runMigrations } from "@/db/index.ts";
+import { openDb, reclaimFreeSpace, runMigrations, vacuumDb } from "@/db/index.ts";
 import { migrate as runMigrate, getMigrationStatus, type MigrationStatus } from "@/db/migrator.ts";
 import {
   getManifest,
@@ -240,7 +240,12 @@ import type {
   NarrativeTrailResult,
   IngestResult,
 } from "@/types/index.ts";
-import type { SchemaRepairOptions, SchemaRepairResult, PruneOrphansResult } from "@/db/index.ts";
+import type {
+  SchemaRepairOptions,
+  SchemaRepairResult,
+  PruneOrphansResult,
+  VacuumResult,
+} from "@/db/index.ts";
 import { getHeadSha } from "@/engine/git.ts";
 import { buildConceptHealthNeighbors, computeConceptHealthSignals } from "./concept-health.ts";
 import { ulid } from "ulid";
@@ -380,6 +385,10 @@ export class LoreEngine {
       mkdirSync(lorePath, { recursive: true });
       db = openDb(join(lorePath, "lore.db"));
       runMigrations(db);
+      // Deletes leave free pages in the file. Reclaim them here, where no
+      // transaction is open and no work depends on the database yet. The check
+      // is three pragmas; the rewrite only runs when the file is mostly free.
+      reclaimFreeSpace(db);
       this.dbs.set(lorePath, db);
     }
     return db;
@@ -3164,6 +3173,11 @@ export class LoreEngine {
       db_bytes_before: bytesBefore,
       db_bytes_after: statSync(dbPath).size,
     };
+  }
+
+  vacuum(opts?: { codePath?: string }): VacuumResult {
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    return vacuumDb(db);
   }
 
   async healthCheck(_opts?: { codePath?: string }) {

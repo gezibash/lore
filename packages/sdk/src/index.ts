@@ -91,6 +91,7 @@ import type {
   SchemaRepairOptions,
   SchemaRepairResult,
   PruneOrphansResult,
+  VacuumResult,
   SharedProvider,
   ListProviderModelsOptions,
   ProviderModelPage,
@@ -365,6 +366,7 @@ interface LoreClientEngine {
   migrateStatus(opts?: { codePath?: string }): MigrationStatus;
   repair(opts?: { codePath?: string } & SchemaRepairOptions): SchemaRepairResult;
   pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult;
+  vacuum(opts?: { codePath?: string }): VacuumResult;
   commitLog(opts?: { codePath?: string; limit?: number; since?: string }): CommitLogEntry[];
   listLoreMinds(): Array<{ name: string } & RegistryEntry>;
   removeLoreMind(name: string, deleteData: boolean): void;
@@ -824,6 +826,10 @@ export class LoreClient {
 
   pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult {
     return this.engine.pruneOrphans(opts);
+  }
+
+  vacuum(opts?: { codePath?: string }): VacuumResult {
+    return this.engine.vacuum(opts);
   }
 
   commitLog(opts?: { codePath?: string; limit?: number; since?: string }): CommitLogEntry[] {
