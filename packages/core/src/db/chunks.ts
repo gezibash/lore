@@ -211,6 +211,16 @@ export function deleteSourceChunksForFile(db: Database, sourceFilePath: string):
      )`,
     [sourceFilePath],
   );
+  // embeddings has no FK to chunks, and this database does not enable
+  // foreign_keys, so nothing cascades. The vector must go with the chunk or it
+  // stays forever. A changed file deletes and re-inserts its chunks under new
+  // ids, so the leak grows with edit volume, not only with deletions.
+  db.run(
+    `DELETE FROM embeddings WHERE chunk_id IN (
+       SELECT id FROM chunks WHERE fl_type = 'source' AND source_file_path = ?
+     )`,
+    [sourceFilePath],
+  );
   db.run(`DELETE FROM chunks WHERE fl_type = 'source' AND source_file_path = ?`, [sourceFilePath]);
 }
 
@@ -240,6 +250,13 @@ export function deleteDocChunksForFile(db: Database, docPath: string): void {
   // Remove from FTS first (referential — chunk_id links)
   db.run(
     `DELETE FROM content_fts WHERE chunk_id IN (
+       SELECT id FROM chunks WHERE fl_type = 'doc' AND source_file_path = ?
+     )`,
+    [docPath],
+  );
+  // Same reason as deleteSourceChunksForFile: no cascade removes the vector.
+  db.run(
+    `DELETE FROM embeddings WHERE chunk_id IN (
        SELECT id FROM chunks WHERE fl_type = 'doc' AND source_file_path = ?
      )`,
     [docPath],

@@ -54,6 +54,8 @@ interface AuditReport {
 // Pending migrations are only reconciled automatically when they are explicitly
 // marked as schema-only. This avoids silently stamping future data backfills,
 // triggers, or repair migrations as applied based on DDL equivalence alone.
+// A migration that is not listed here stays pending and repair runs it, because
+// its effect is on rows, which DDL equivalence cannot show.
 const RECONCILABLE_MIGRATIONS = new Set([
   "001_initial",
   "002_concept_lifecycle",
@@ -373,14 +375,13 @@ function reconcileMigrationLedger(
   pendingNames: string[],
 ): { reconciled: number; fixed: SchemaIssue[] } {
   if (pendingNames.length === 0) return { reconciled: 0, fixed: [] };
-  if (pendingNames.some((name) => !RECONCILABLE_MIGRATIONS.has(name))) {
-    return { reconciled: 0, fixed: [] };
-  }
+  const stampable = pendingNames.filter((name) => RECONCILABLE_MIGRATIONS.has(name));
+  if (stampable.length === 0) return { reconciled: 0, fixed: [] };
 
   ensureMigrationsTable(db);
   let reconciled = 0;
   const fixed: SchemaIssue[] = [];
-  for (const name of pendingNames) {
+  for (const name of stampable) {
     db.exec(
       `INSERT INTO _migrations (name, applied_at) VALUES ('${name}', '${new Date().toISOString()}')`,
     );
@@ -454,10 +455,25 @@ export function repairSchema(db: Database, opts?: SchemaRepairOptions): SchemaRe
     migrationsReconciled += reconciled.reconciled;
     fixed.push(...reconciled.fixed);
 
+    // Data migrations are never stamped, so run whatever stays pending. The
+    // schema already matches, so only the row-level work remains.
+    try {
+      migrationsApplied += migrate(db);
+    } catch (error) {
+      const issue: SchemaIssue = {
+        kind: "migration_error",
+        name: "migrate:reconcile",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+      unresolvedErrors.push(issue);
+      issuesFound.push(issue);
+    }
+
     const finalAudit = auditAgainstCanonical(db, canonical);
+    const remaining = dedupeIssues([...finalAudit.issues, ...unresolvedErrors]);
     return {
       mode,
-      ok: finalAudit.issues.length === 0,
+      ok: remaining.length === 0,
       canonical_target: {
         migration_names: canonical.migrationNames,
         migration_digest: canonical.migrationDigest,
@@ -466,7 +482,7 @@ export function repairSchema(db: Database, opts?: SchemaRepairOptions): SchemaRe
       migrations_reconciled: migrationsReconciled,
       issues_found: dedupeIssues(issuesFound),
       fixed: dedupeIssues(fixed),
-      remaining: finalAudit.issues,
+      remaining,
     };
   }
 

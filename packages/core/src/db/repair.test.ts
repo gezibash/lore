@@ -83,3 +83,23 @@ test("repairSchema reconciles missing migration ledger rows when schema is curre
 
   db.close();
 });
+
+test("repairSchema runs a pending data migration instead of stamping it", () => {
+  const db = createTestDb();
+  db.run(
+    `INSERT INTO embeddings (id, chunk_id, embedding, model, embedded_at)
+     VALUES ('e-orphan', 'chunk-gone', x'00', 'test-model', '2024-01-01T00:00:00.000Z')`,
+  );
+  db.exec("DELETE FROM _migrations");
+
+  const result = repairSchema(db);
+  expect(result.ok).toBe(true);
+
+  const rows = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM embeddings").get();
+  expect(rows?.count).toBe(0);
+
+  const ledger = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM _migrations").get();
+  expect(ledger?.count).toBe(listMigrationNames().length);
+
+  db.close();
+});
