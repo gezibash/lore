@@ -24,29 +24,70 @@ Requires [Bun](https://bun.sh).
 git clone https://github.com/gezibash/lore
 cd lore
 bun install
-bun link --global --cwd packages/cli
+bun run install
 ```
 
-This installs the `lore` CLI globally.
+`bun run install` builds a standalone binary and links it at `~/.local/bin/lore`. The build is copied, not symlinked, so the command keeps working while this repo is mid-edit or mid-rebase. Put `~/.local/bin` on `PATH`. If another `lore` comes earlier on `PATH`, the install says so — remove it, or the new binary never runs.
+
+Install somewhere else with `--prefix <dir>` or `LORE_PREFIX`. Remove it with `bun run install --uninstall`.
+
+To develop lore itself, run `bun run link:global` instead. That points the command at the working tree, so edits apply on the next invocation.
+
+---
+
+## Set up a project
+
+```bash
+cd /path/to/your/project
+
+# 1. Exclude what must never enter retrieval
+cat > .loreignore <<'IGNORE'
+tests/
+fixtures/
+benchmarks/
+dist/
+IGNORE
+
+# 2. Register this directory
+lore init
+
+# 3. Index it
+lore ingest
+
+# 4. Confirm coverage is not zero
+lore status
+```
+
+### `.loreignore`
+
+Write it before the first ingest. Lore reads `.gitignore` and `.loreignore`, and `.loreignore` has the highest authority. A line that starts with `!` forces a path back in.
+
+Two failures make it necessary. Test files carry ground-truth answers that contaminate retrieval, and an unfiltered workspace indexes gigabytes.
+
+### Choosing the root
+
+`lore init <dir>` registers that exact directory and never returns a parent. Every other command resolves the current directory to its nearest registered ancestor, so subdirectories share the mind at the root.
+
+For a multi-repo workspace, register one mind at the workspace root. Sub-repos then share concepts. If cross-repo answers get worse, near-duplicate code is crowding the retrieved set — split the workspace into separate minds instead.
+
+List every registration with `lore sys ls`. Remove one with `lore sys remove <name>`.
 
 ---
 
 ## Quick start
 
 ```bash
-# Register a codebase
-lore init /path/to/your/project
-
-# Index the source (symbols, docs, source chunks)
-lore ingest
-
 # Ask a question
-lore ask "how does the auth flow work?"
+lore ask "how does the auth flow work?" --sources
 
 # Open a narrative, journal findings, close
-lore open fix-auth-race "Investigate race condition in token refresh"
-lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --concept auth-model
+lore open fix-auth-race "Investigate race condition in token refresh" --target update:auth-model
+lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --symbol refreshToken --ref src/auth.ts:44-97
 lore close fix-auth-race --wait
+
+# Re-index the touched file and bind the symbol
+lore ingest src/auth.ts
+lore sys concept bind auth-model refreshToken
 
 # Check status and debt
 lore status
@@ -59,54 +100,119 @@ lore suggest
 
 ### Core workflow
 
-| Command                                                                  | Description                                                |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| `lore init [path] [name]`                                                | Register a codebase                                        |
-| `lore ingest [file]`                                                     | Index source code and docs                                 |
-| `lore open <narrative> <intent>`                                         | Start an exploration session                               |
-| `lore write <narrative> <entry> --concept <name> [--concept <name> ...]` | Journal a finding against explicit concept designations    |
-| `lore ask <query>`                                                       | Query the knowledge graph                                  |
-| `lore close <narrative> [--wait]`                                        | Queue a close job; add `--wait` to block until it finishes |
+| Command | Description |
+| --- | --- |
+| `lore init [path] [name]` | Register a codebase |
+| `lore ingest [file]` | Index source code and docs. `--force` re-chunks every file |
+| `lore open <narrative> <intent>` | Start an exploration session |
+| `lore write <narrative> <entry>` | Journal a finding against explicit concept designations |
+| `lore ask <query>` | Query the knowledge graph |
+| `lore close <narrative>` | Queue a close job. `--wait` blocks until it finishes |
+
+### Declaring targets on open
+
+`lore open --target <op>:<concept>` tells the close which concepts the narrative may write. Repeat the flag once per target.
+
+| Target | Effect |
+| --- | --- |
+| `create:<name>` | The narrative introduces a new concept |
+| `update:<name>` | The narrative feeds an existing concept |
+| `rename:<old>:<new>` | Rename on close |
+| `merge:<src>:<into>` | Fold one concept into another |
+| `archive:<name>[:<reason>]` | Retire a concept |
+| `split:<name>[:<parts>]` | Break a concept apart |
+| `restore:<name>` | Bring an archived concept back |
+
+`lore write` needs `--concept` unless the narrative has exactly one create/update target. Add `--symbol` for touched symbols and `--ref` for file or line references.
+
+### Asking
+
+| Flag | Effect |
+| --- | --- |
+| `--mode arch` | Architectural answer. This is the default |
+| `--mode code` | Injects the bodies of bound symbols. Use it for implementation questions |
+| `--sources` | Show which chunks produced the answer |
+| `--brief` | Targeted excerpts instead of full dumps |
+| `--concise` | A 1-2 sentence answer |
+| `--search` | Include external web search results |
+| `--debug` | Trace the retrieval pipeline and explain the selection |
+
+Every ask returns a result ID. Chain follow-up work to it:
+
+```bash
+lore ask "where does close queue work?" --sources
+lore recall <result-id> --section sources
+lore open fix-close-latency "Cut close latency" --from-result <result-id>
+lore score <result-id> 4
+```
+
+`--from-result` also works on `show`, `trail`, and `close`.
 
 ### Inspection
 
-| Command                | Description                                             |
-| ---------------------- | ------------------------------------------------------- |
-| `lore status`          | Health snapshot — debt, priorities, dangling narratives |
-| `lore ls`              | List all concepts with residuals and staleness          |
-| `lore show <concept>`  | Full concept: content, relations, symbol bindings       |
-| `lore log`             | Commit history with narrative context                   |
-| `lore diff <from..to>` | Conceptual diff between two commits                     |
-| `lore suggest`         | Prioritized maintenance suggestions                     |
-| `lore jobs`            | Inspect queued and completed close jobs                 |
-| `lore wait <job-id>`   | Block until a close job completes                       |
+| Command | Description |
+| --- | --- |
+| `lore status` | Health snapshot — debt, priorities, dangling narratives. `--details` for the full report |
+| `lore ls` | List all concepts with residuals and staleness. `--group cluster` to group them |
+| `lore show <concept>` | Full concept: content, relations, symbol bindings. Supports `concept@ref` |
+| `lore trail <narrative>` | Reconstruct the full investigation trail |
+| `lore log [limit] [since]` | Walk commit history. `since` takes `2w`, a ULID, or `main~N` |
+| `lore diff <target>` | Preview a close, or compare `ref..ref` |
+| `lore suggest` | Prioritized maintenance plan. Filter with `--kind` |
+
+### KPIs
+
+Track a metric as a timeseries so each reading carries provenance — narrative, git head, lore commit — instead of living in a scratch CSV.
+
+```bash
+lore kpi log recall@10 0.518 --direction up --meta bench=httpx
+lore kpi goal recall@10 0.8
+lore kpi log recall@10 0.61
+lore kpi status recall@10
+```
+
+The first `log` for a KPI needs `--direction up|down`. Readings attach to the sole open narrative; pass `--narrative <name>` when several are open.
 
 ### System (`lore sys`)
 
-Config, embeddings, migrations, worker control, concept lifecycle, and provider management:
-
 ```bash
-lore sys config show
+lore sys ls                                  # every registered lore
+lore sys config show                         # resolved config, with override annotations
 lore sys config set ai.generation.model qwen3:8b
-lore sys embeddings refresh
-lore sys worker --watch
-lore sys coverage
+lore sys coverage --uncovered                # exported symbols with no concept
+lore sys concept bind auth-model refreshToken
+lore sys relations set auth-model session-store depends_on
+lore sys health heal                         # refresh high-stale concepts
+lore sys embeddings refresh                  # re-embed with the current model
+lore sys worker --watch                      # ask the daemon to drain jobs
 ```
+
+Also available: `narrative designate`, `migrate`, `migrate-status`, `repair`, `audit`, `rebuild`, `reset`, `remove`, and `provider` for shared credentials.
 
 ---
 
-## Background Jobs
+## The daemon
+
+A local daemon owns the job queue. Any command starts it on demand, so there is nothing to launch by hand.
+
+```bash
+lore daemon status
+lore daemon logs
+lore daemon stop
+```
 
 Merge closes are asynchronous by default:
 
 ```bash
-lore close fix-auth-race
-lore jobs
-lore wait <job-id>
-lore sys worker --watch
+lore close fix-auth-race     # returns a job ID
+lore jobs                    # queued, leased, done, failed
+lore job <id>
+lore wait <id>
 ```
 
-Use `--wait` when you want the old blocking behavior.
+Use `lore close --wait` when the next step depends on the integrated concept state. `--merge-strategy` selects how an entry lands: `replace` (default), `extend`, or `patch`.
+
+The daemon serves the code it was spawned with. It compares its start time against the newest `.ts` file under the workspace root and restarts itself before dispatch. A busy daemon is left alone, because a leased job holds state a restart would strand. Set `LORE_DAEMON_STALE_CHECK=0` to opt out.
 
 ---
 
@@ -118,33 +224,15 @@ Lore uses layered config with this precedence (highest wins):
 hardcoded defaults → ~/.lore/config.json → <project>/.lore/config.json → programmatic
 ```
 
-On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Per-project config lives alongside your code and can be version-controlled.
+On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Per-project config lives alongside your code and can be version-controlled. Inspect the resolved result with `lore sys config show`.
 
 ### Providers
 
 **Embedding providers:** `ollama` · `openai` · `openai-compatible` · `openrouter` · `voyage` · `gateway`
 
-**Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway` · `codex`
+**Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway`
 
-Default (no config needed): local Ollama with `qwen3-embedding:8b` + `qwen3:8b`.
-
-### Codex provider
-
-`codex` runs generation through the locally installed [Codex CLI](https://developers.openai.com/codex/cli), billed to your Codex subscription instead of a metered API key. It needs `codex` on `PATH` and an authenticated session; no `api_key` is used.
-
-```json
-{
-  "ai": {
-    "generation": {
-      "provider": "codex",
-      "model": "gpt-5.6-sol",
-      "codex_reasoning_effort": "low"
-    }
-  }
-}
-```
-
-`codex exec` is an agent rather than a completion endpoint, so each call carries Codex's own system prompt and tool definitions — roughly 13k input tokens lore never uses, and about 2× the latency of a direct API provider. That is a fine trade for interactive `ask`, but use a metered provider for benchmarks and other bulk or parallel workloads.
+Default (no config needed): local Ollama with `qwen3-embedding:8b` (4096-dim) + `qwen3:8b`.
 
 Example `~/.lore/config.json`:
 
@@ -166,7 +254,17 @@ Example `~/.lore/config.json`:
 }
 ```
 
-A separate code embedding model can be configured under `ai.embedding.code` for better symbol search (e.g. `voyage-code-3`).
+A separate code embedding model can be configured under `ai.embedding.code` for better symbol search (e.g. `voyage-code-3`). It inherits provider, base URL, and key from `ai.embedding` unless you override them.
+
+---
+
+## Agent skill
+
+`skills/lore/` is a Claude Code skill that teaches an agent this workflow. Link it in:
+
+```bash
+ln -s "$PWD/skills/lore" ~/.claude/skills/lore
+```
 
 ---
 
@@ -181,13 +279,13 @@ Strict layered monorepo — dependency direction is one-way:
        @lore/rendering
 ```
 
-| Package           | Role                                                     |
-| ----------------- | -------------------------------------------------------- |
-| `@lore/core`      | Engine, storage, SQLite, embeddings, search, integration |
-| `@lore/sdk`       | Canonical API contract over core                         |
-| `@lore/worker`    | Single-lore domain client                                |
-| `@lore/rendering` | Shared output formatters (plain, markdown, JSON)         |
-| `@lore/cli`       | Terminal adapter                                         |
+| Package | Role |
+| --- | --- |
+| `@lore/core` | Engine, storage, SQLite, embeddings, search, integration |
+| `@lore/sdk` | Canonical API contract over core |
+| `@lore/worker` | Single-lore domain client and daemon |
+| `@lore/rendering` | Shared output formatters (plain, markdown, JSON) |
+| `@lore/cli` | Terminal adapter |
 
 ---
 
@@ -200,6 +298,8 @@ bun run typecheck    # Type-check all packages
 bun run test         # Run all tests
 bun run lint         # Lint
 bun run fmt          # Format
+bun run knip         # Find dead exports
+bun run build        # Build dist/ without installing it
 ```
 
 ---
