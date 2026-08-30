@@ -28,6 +28,7 @@ import {
   configCloneCommand,
   providerConfigListCommand,
   providerModelsCommand,
+  providerUseCommand,
   providerConfigGetCommand,
   providerConfigSetCommand,
   providerConfigUnsetCommand,
@@ -1177,20 +1178,65 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
               }),
               models: defineCommand({
                 name: "models",
-                description: "List the models a provider offers",
+                description:
+                  "List the models a provider offers. Omit the provider to search all configured ones.",
                 arguments: {
-                  provider: { type: "string", required: true, description: "Provider name" },
+                  provider: { type: "string", description: "Provider name" },
                 },
                 options: {
                   search: { type: "string", description: "Filter by substring in the model id" },
+                  sort: { type: "string", description: "Sort by: id (default), price, or context" },
+                  type: {
+                    type: "string",
+                    description: "Keep one kind: generation, embedding, or other",
+                  },
+                  "all-kinds": {
+                    type: "boolean",
+                    description: "Include kinds lore cannot use (video, image, speech)",
+                  },
                   limit: { type: "number", description: "Models per page (default: 30)" },
                   page: { type: "number", description: "Page number (default: 1)" },
                 },
                 async action({ args, options }) {
                   await providerModelsCommand(getWorker(), args.provider, {
                     search: options.search,
+                    sort: options.sort,
+                    type: options.type,
+                    allKinds: options["all-kinds"],
                     limit: options.limit,
                     page: options.page,
+                  });
+                },
+              }),
+              use: defineCommand({
+                name: "use",
+                description: "Point this lore at a provider and model",
+                arguments: {
+                  provider: { type: "string", required: true, description: "Provider name" },
+                  model: { type: "string", required: true, description: "Model id" },
+                },
+                options: {
+                  embedding: {
+                    type: "boolean",
+                    description: "Set the embedding role instead of generation",
+                  },
+                  dim: {
+                    type: "number",
+                    description:
+                      "Vector size of the new embedding model (required with --embedding)",
+                  },
+                  // Not "no-verify": Commander reads a --no-x flag as the negation
+                  // of x, so its value defaults to true and the meaning inverts.
+                  "skip-verify": {
+                    type: "boolean",
+                    description: "Skip checking the model against the provider's catalog",
+                  },
+                },
+                async action({ args, options }) {
+                  await providerUseCommand(getWorker(), args.provider, args.model, {
+                    embedding: options.embedding,
+                    dim: options.dim,
+                    noVerify: options["skip-verify"],
                   });
                 },
               }),

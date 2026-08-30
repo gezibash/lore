@@ -1,5 +1,5 @@
 import { expect, test, afterEach } from "bun:test";
-import { listProviderModels } from "./provider-models.ts";
+import { listAllProviderModels, listProviderModels } from "./provider-models.ts";
 import { LoreError } from "@/types/index.ts";
 
 const realFetch = globalThis.fetch;
@@ -98,4 +98,118 @@ test("an error status surfaces the body, not a bare status code", async () => {
   expect(error).toBeInstanceOf(LoreError);
   expect(error.code).toBe("AI_UNAVAILABLE");
   expect(error.message).toContain("invalid api key");
+});
+
+function vercelPayload(
+  rows: Array<{ id: string; type?: string; input?: string; output?: string; ctx?: number }>,
+) {
+  return {
+    data: rows.map((row) => ({
+      id: row.id,
+      type: row.type ?? "language",
+      context_window: row.ctx ?? 128000,
+      pricing: { input: row.input ?? "0.000001", output: row.output ?? "0.000002" },
+    })),
+  };
+}
+
+test("reads Vercel's input/output pricing keys, not just prompt/completion", async () => {
+  stubFetch(vercelPayload([{ id: "zai/glm-5.3-flash", input: "0.00000015" }]));
+  const page = await listProviderModels("gateway");
+  expect(page.models[0]).toMatchObject({
+    id: "zai/glm-5.3-flash",
+    prompt_usd_per_mtok: 0.15,
+    completion_usd_per_mtok: 2,
+    context_length: 128000,
+    kind: "generation",
+  });
+});
+
+test("gateway defaults to the Vercel AI Gateway base URL", async () => {
+  const capture: { url?: string } = {};
+  stubFetch(vercelPayload([{ id: "a/b" }]), capture);
+  await listProviderModels("gateway");
+  expect(capture.url).toBe("https://ai-gateway.vercel.sh/v1/models");
+});
+
+test("kinds lore cannot use are hidden unless asked for", async () => {
+  const payload = vercelPayload([
+    { id: "a/lang", type: "language" },
+    { id: "b/embed", type: "embedding" },
+    { id: "c/video", type: "video" },
+  ]);
+  stubFetch(payload);
+  const usable = await listProviderModels("gateway");
+  expect(usable.models.map((m) => m.id)).toEqual(["a/lang", "b/embed"]);
+
+  stubFetch(payload);
+  const everything = await listProviderModels("gateway", {
+    kinds: ["generation", "embedding", "other"],
+  });
+  expect(everything.total).toBe(3);
+
+  stubFetch(payload);
+  const embeddingOnly = await listProviderModels("gateway", { kinds: ["embedding"] });
+  expect(embeddingOnly.models.map((m) => m.id)).toEqual(["b/embed"]);
+});
+
+test("price sort is cheapest first and puts unpriced models last", async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          { id: "b/mid", pricing: { input: "0.000002" } },
+          { id: "c/free" },
+          { id: "a/cheap", pricing: { input: "0.000001" } },
+        ],
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const page = await listProviderModels("gateway", { sort: "price" });
+  expect(page.models.map((m) => m.id)).toEqual(["a/cheap", "b/mid", "c/free"]);
+});
+
+test("context sort is roomiest first", async () => {
+  stubFetch(
+    vercelPayload([
+      { id: "a/small", ctx: 8000 },
+      { id: "b/big", ctx: 1000000 },
+    ]),
+  );
+  const page = await listProviderModels("gateway", { sort: "context" });
+  expect(page.models.map((m) => m.id)).toEqual(["b/big", "a/small"]);
+});
+
+test("one dead provider does not lose the others' models", async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (String(url).includes("openrouter")) throw new Error("network down");
+    return new Response(JSON.stringify(vercelPayload([{ id: "zai/glm-5.3" }])), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const page = await listAllProviderModels([{ provider: "openrouter" }, { provider: "gateway" }]);
+  expect(page.provider).toBe("all");
+  expect(page.models.map((m) => m.id)).toEqual(["zai/glm-5.3"]);
+  expect(page.models[0]?.provider).toBe("gateway");
+  expect(page.failures).toEqual([
+    { provider: "openrouter", reason: expect.stringContaining("network down") },
+  ]);
+});
+
+test("cross-provider price sort compares across providers, not within each", async () => {
+  globalThis.fetch = (async (url: string) => {
+    const cheap = String(url).includes("openrouter");
+    return new Response(
+      JSON.stringify(
+        vercelPayload([
+          { id: cheap ? "or/cheap" : "gw/pricey", input: cheap ? "0.0000001" : "0.000009" },
+        ]),
+      ),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  const page = await listAllProviderModels([{ provider: "gateway" }, { provider: "openrouter" }], {
+    sort: "price",
+  });
+  expect(page.models.map((m) => m.id)).toEqual(["or/cheap", "gw/pricey"]);
 });

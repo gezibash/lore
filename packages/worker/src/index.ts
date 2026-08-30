@@ -23,6 +23,7 @@ import {
   formatSuggest,
   formatTreeDiff,
   getDeepValue,
+  ALL_PROVIDERS,
   normalizePromptKey,
   renderExecutiveSummary,
   renderNarrativeWithCitations,
@@ -69,6 +70,7 @@ export type {
 };
 export {
   LoreError,
+  ALL_PROVIDERS,
   getDeepValue,
   normalizePromptKey,
   GENERATION_PROMPT_KEYS,
@@ -174,7 +176,10 @@ type DirectWorkerClientDeps = Pick<
   | "removeLoreMind"
   | "listProviderCredentials"
   | "getProviderCredential"
+  | "listProviders"
   | "listProviderModels"
+  | "listAllProviderModels"
+  | "useModel"
   | "setProviderCredential"
   | "unsetProviderCredential"
 >;
@@ -215,6 +220,7 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "resetLoreMind",
   "setLoreMindConfig",
   "unsetLoreMindConfig",
+  "useModel",
   "cloneLoreMindConfig",
   "bindSymbol",
   "unbindSymbol",
@@ -748,6 +754,24 @@ export class WorkerClient {
     ...args: Parameters<DirectWorkerClientDeps["listProviderModels"]>
   ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["listProviderModels"]>> {
     return this.call("listProviderModels", args);
+  }
+
+  async listProviders(
+    ...args: Parameters<DirectWorkerClientDeps["listProviders"]>
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["listProviders"]>> {
+    return this.call("listProviders", args);
+  }
+
+  async listAllProviderModels(
+    ...args: Parameters<DirectWorkerClientDeps["listAllProviderModels"]>
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["listAllProviderModels"]>> {
+    return this.call("listAllProviderModels", args);
+  }
+
+  async useModel(
+    ...args: Parameters<DirectWorkerClientDeps["useModel"]>
+  ): AwaitedReturn<ReturnType<DirectWorkerClientDeps["useModel"]>> {
+    return this.call("useModel", args);
   }
 
   async setProviderCredential(

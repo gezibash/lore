@@ -1,6 +1,11 @@
 import type { WorkerClient } from "@lore/worker";
-import type { SharedProvider } from "@lore/worker";
-import { getDeepValue, GENERATION_PROMPT_KEYS, normalizePromptKey } from "@lore/worker";
+import type { ModelKind, ModelSort, SharedProvider } from "@lore/worker";
+import {
+  ALL_PROVIDERS,
+  getDeepValue,
+  GENERATION_PROMPT_KEYS,
+  normalizePromptKey,
+} from "@lore/worker";
 import { emit, isJsonOutput } from "../output.ts";
 
 const RESET = "\x1b[0m";
@@ -8,19 +13,6 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 const CYAN = "\x1b[36m";
 const GREEN = "\x1b[32m";
-
-const SHARED_PROVIDERS: SharedProvider[] = [
-  "alibaba",
-  "cohere",
-  "gateway",
-  "groq",
-  "ollama",
-  "openai",
-  "openai-compatible",
-  "openrouter",
-  "moonshotai",
-  "voyage",
-];
 
 // Numeric config keys that should be auto-coerced
 const NUMERIC_KEYS = new Set([
@@ -85,12 +77,10 @@ function coerceValue(key: string, value: string): unknown {
 
 function parseProvider(provider: string): SharedProvider {
   const normalized = provider.trim().toLowerCase();
-  if (SHARED_PROVIDERS.includes(normalized as SharedProvider)) {
+  if (ALL_PROVIDERS.includes(normalized as SharedProvider)) {
     return normalized as SharedProvider;
   }
-  throw new Error(
-    `Unknown provider '${provider}'. Expected one of: ${SHARED_PROVIDERS.join(", ")}`,
-  );
+  throw new Error(`Unknown provider '${provider}'. Expected one of: ${ALL_PROVIDERS.join(", ")}`);
 }
 
 function maskSecret(value: string): string {
@@ -214,18 +204,28 @@ export async function configCloneCommand(client: WorkerClient, lore: string): Pr
 }
 
 export async function providerConfigListCommand(client: WorkerClient): Promise<void> {
-  const providers = await client.listProviderCredentials();
-  if (providers.length === 0) {
-    console.log(`${DIM}No shared provider credentials configured.${RESET}`);
+  const providers = await client.listProviders();
+
+  if (isJsonOutput()) {
+    emit(providers);
     return;
   }
 
+  console.log(
+    `${DIM}${padRight("PROVIDER", 20)}${padRight("KEY", 8)}${padRight("CATALOG", 16)}USED BY${RESET}`,
+  );
   for (const row of providers) {
-    const apiKey = row.config.api_key ? maskSecret(row.config.api_key) : "(unset)";
-    const baseUrl = row.config.base_url ?? "(unset)";
-    console.log(`${BOLD}${row.provider}${RESET}`);
-    console.log(`  api_key: ${apiKey}`);
-    console.log(`  base_url: ${baseUrl}`);
+    const key = row.has_key ? `${GREEN}set${RESET}${padRight("", 5)}` : padRight("—", 8);
+    const catalog = !row.has_catalog
+      ? "no"
+      : row.catalog_needs_base_url
+        ? "needs base-url"
+        : row.catalog_needs_key && !row.has_key
+          ? "needs key"
+          : "yes";
+    console.log(
+      `${CYAN}${padRight(row.provider, 20)}${RESET}${key}${DIM}${padRight(catalog, 16)}${RESET}${row.used_by.join(", ")}`,
+    );
   }
 }
 
@@ -247,8 +247,39 @@ export async function providerConfigGetCommand(
 }
 
 /** Right-align a number column so prices and context windows compare by eye. */
-function pad(text: string, width: number): string {
+function padLeft(text: string, width: number): string {
   return text.length >= width ? text : " ".repeat(width - text.length) + text;
+}
+
+function padRight(text: string, width: number): string {
+  return text.padEnd(width);
+}
+
+const ALL_KINDS: ModelKind[] = ["generation", "embedding", "other"];
+
+function parseSort(sort: string | undefined): ModelSort | undefined {
+  if (sort === undefined) return undefined;
+  const normalized = sort.trim().toLowerCase();
+  if (normalized === "id" || normalized === "price" || normalized === "context") {
+    return normalized;
+  }
+  throw new Error(`Unknown sort '${sort}'. Expected one of: id, price, context`);
+}
+
+function parseKinds(type: string | undefined): ModelKind[] | undefined {
+  if (type === undefined) return undefined;
+  const normalized = type.trim().toLowerCase();
+  if (normalized === "generation" || normalized === "embedding" || normalized === "other") {
+    return [normalized];
+  }
+  throw new Error(`Unknown type '${type}'. Expected one of: generation, embedding, other`);
+}
+
+/** A dead provider loses its own models, never the rest of the page. */
+function printFailures(failures?: Array<{ provider: string; reason: string }>): void {
+  for (const failure of failures ?? []) {
+    console.log(`${DIM}! ${failure.provider} could not be listed: ${failure.reason}${RESET}`);
+  }
 }
 
 function formatPrice(usdPerMtok: number | undefined): string {
@@ -258,48 +289,61 @@ function formatPrice(usdPerMtok: number | undefined): string {
 }
 
 function formatContext(tokens: number | undefined): string {
-  if (tokens === undefined) return "—";
+  // Some catalogs report 0 for "not applicable", which reads as a real limit.
+  if (tokens === undefined || tokens === 0) return "—";
   return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
 }
 
 export async function providerModelsCommand(
   client: WorkerClient,
-  provider: string,
-  options: { search?: string; limit?: number; page?: number },
+  provider: string | undefined,
+  options: {
+    search?: string;
+    limit?: number;
+    page?: number;
+    sort?: string;
+    type?: string;
+    allKinds?: boolean;
+  },
 ): Promise<void> {
-  const parsedProvider = parseProvider(provider);
-  const result = await client.listProviderModels(parsedProvider, {
-    search: options.search,
-    limit: options.limit,
-    page: options.page,
-  });
+  const sort = parseSort(options.sort);
+  const kinds = options.allKinds ? ALL_KINDS : parseKinds(options.type);
+  const shared = { search: options.search, limit: options.limit, page: options.page, sort, kinds };
+
+  // No provider named means search every provider that can be listed right now.
+  const parsedProvider = provider ? parseProvider(provider) : undefined;
+  const result = parsedProvider
+    ? await client.listProviderModels(parsedProvider, shared)
+    : await client.listAllProviderModels(shared);
 
   if (isJsonOutput()) {
     emit(result);
     return;
   }
 
+  const scope = parsedProvider ?? "any configured provider";
   if (result.total === 0) {
     const filter = options.search ? ` matching '${options.search}'` : "";
-    console.log(`${DIM}No models${filter} from ${parsedProvider}.${RESET}`);
+    console.log(`${DIM}No models${filter} from ${scope}.${RESET}`);
+    printFailures(result.failures);
     return;
   }
 
+  const crossProvider = parsedProvider === undefined;
   const priced = result.models.some((model) => model.prompt_usd_per_mtok !== undefined);
-  const header = priced
-    ? `${pad("CTX", 6)}  ${pad("IN/M", 8)}  ${pad("OUT/M", 8)}  MODEL`
-    : "MODEL";
-  console.log(`${DIM}${header}${RESET}`);
+  const columns = [
+    crossProvider ? padRight("PROVIDER", 20) : "",
+    priced ? `${padLeft("CTX", 6)}  ${padLeft("IN/M", 8)}  ${padLeft("OUT/M", 8)}  ` : "",
+    "MODEL",
+  ].join("");
+  console.log(`${DIM}${columns}${RESET}`);
 
   for (const model of result.models) {
-    if (priced) {
-      const ctx = pad(formatContext(model.context_length), 6);
-      const inPrice = pad(formatPrice(model.prompt_usd_per_mtok), 8);
-      const outPrice = pad(formatPrice(model.completion_usd_per_mtok), 8);
-      console.log(`${DIM}${ctx}  ${inPrice}  ${outPrice}${RESET}  ${CYAN}${model.id}${RESET}`);
-      continue;
-    }
-    console.log(`${CYAN}${model.id}${RESET}`);
+    const source = crossProvider ? `${padRight(model.provider ?? "", 20)}` : "";
+    const price = priced
+      ? `${padLeft(formatContext(model.context_length), 6)}  ${padLeft(formatPrice(model.prompt_usd_per_mtok), 8)}  ${padLeft(formatPrice(model.completion_usd_per_mtok), 8)}  `
+      : "";
+    console.log(`${DIM}${source}${price}${RESET}${CYAN}${model.id}${RESET}`);
   }
 
   const shown = result.models.length;
@@ -307,16 +351,57 @@ export async function providerModelsCommand(
   console.log(
     `\n${DIM}${first}-${first + shown - 1} of ${result.total} · page ${result.page}/${result.pages}${RESET}`,
   );
+  printFailures(result.failures);
+
   if (result.page < result.pages) {
-    // Carry the filter into the hint: without it, the next page is a different list.
+    // Carry the filters into the hint: without them the next page is a different list.
     const flags = [
       options.search ? `--search ${options.search}` : "",
+      options.sort ? `--sort ${options.sort}` : "",
+      options.type ? `--type ${options.type}` : "",
+      options.allKinds ? "--all-kinds" : "",
       options.limit ? `--limit ${options.limit}` : "",
       `--page ${result.page + 1}`,
     ]
       .filter(Boolean)
       .join(" ");
-    console.log(`${DIM}Next: lore sys provider models ${parsedProvider} ${flags}${RESET}`);
+    const target = parsedProvider ? `${parsedProvider} ` : "";
+    console.log(`${DIM}Next: lore sys provider models ${target}${flags}${RESET}`);
+  }
+}
+
+export async function providerUseCommand(
+  client: WorkerClient,
+  provider: string,
+  model: string,
+  options: { embedding?: boolean; dim?: number; noVerify?: boolean },
+): Promise<void> {
+  const parsedProvider = parseProvider(provider);
+  const role = options.embedding ? "embedding" : "generation";
+
+  if (role === "embedding" && options.dim === undefined) {
+    // No catalog reports embedding dimensions, so the caller must state it.
+    throw new Error("Switching the embedding model needs --dim <n>, the new model's vector size.");
+  }
+
+  const result = await client.useModel(parsedProvider, model, {
+    role,
+    dim: options.dim,
+    verify: !options.noVerify,
+  });
+
+  if (isJsonOutput()) {
+    emit(result);
+    return;
+  }
+
+  console.log(
+    `${GREEN}✓${RESET} This lore now uses ${BOLD}${CYAN}${result.model}${RESET} on ${BOLD}${result.provider}${RESET} for ${role}.`,
+  );
+  if (role === "embedding") {
+    console.log(
+      `${DIM}Run 'lore sys embeddings refresh' now. Until you do, every stored row keeps its old model tag and counts as stale.${RESET}`,
+    );
   }
 }
 

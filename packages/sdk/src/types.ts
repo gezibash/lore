@@ -39,9 +39,33 @@ export type GenerationProvider =
 
 export type SharedProvider = EmbeddingProvider | GenerationProvider | "cohere";
 
+export type ModelKind = "generation" | "embedding" | "other";
+
+export type ModelSort = "id" | "price" | "context";
+
+export interface ListProviderModelsOptions {
+  search?: string;
+  limit?: number;
+  page?: number;
+  sort?: ModelSort;
+  kinds?: ModelKind[];
+}
+
+export interface ProviderStatus {
+  provider: SharedProvider;
+  has_key: boolean;
+  base_url?: string;
+  has_catalog: boolean;
+  catalog_needs_key: boolean;
+  catalog_needs_base_url: boolean;
+  used_by: string[];
+}
+
 export interface ProviderModel {
   id: string;
   name?: string;
+  kind?: ModelKind;
+  provider?: SharedProvider;
   /** Maximum context in tokens. */
   context_length?: number;
   /** USD per million input tokens. */
@@ -52,12 +76,13 @@ export interface ProviderModel {
 }
 
 export interface ProviderModelPage {
-  provider: SharedProvider;
+  provider: SharedProvider | "all";
   models: ProviderModel[];
   /** Models matching the filter, before pagination. */
   total: number;
   page: number;
   pages: number;
+  failures?: Array<{ provider: SharedProvider; reason: string }>;
 }
 
 export interface ProviderCredential {

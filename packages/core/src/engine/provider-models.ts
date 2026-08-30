@@ -3,14 +3,21 @@
  *
  * Picking a model means knowing the exact id string, the context window, and
  * the price. Only the provider knows those, and each one publishes them at its
- * own endpoint in its own shape. This normalizes the five that expose a catalog
+ * own endpoint in its own shape. This normalizes the six that expose a catalog
  * over HTTP; the rest have no such endpoint and say so.
  */
 import { LoreError, type SharedProvider } from "@/types/index.ts";
 
+/** What lore can configure a model as. Anything else it cannot use at all. */
+export type ModelKind = "generation" | "embedding" | "other";
+
 export interface ProviderModel {
   id: string;
   name?: string;
+  /** Which role this model can fill, when the provider says. */
+  kind?: ModelKind;
+  /** Set only when the catalog spans several providers. */
+  provider?: SharedProvider;
   /** Maximum context in tokens. */
   context_length?: number;
   /** USD per million input tokens. */
@@ -20,13 +27,31 @@ export interface ProviderModel {
   modality?: string;
 }
 
-export interface ProviderModelPage {
+export interface ProviderStatus {
   provider: SharedProvider;
+  has_key: boolean;
+  base_url?: string;
+  has_catalog: boolean;
+  /** The catalog endpoint rejects an anonymous request. */
+  catalog_needs_key: boolean;
+  /** The catalog has no default URL, so one must be stored first. */
+  catalog_needs_base_url: boolean;
+  /** Roles the current lore uses this provider for. Empty outside a lore. */
+  used_by: string[];
+}
+
+export type ModelSort = "id" | "price" | "context";
+
+export interface ProviderModelPage {
+  /** The single provider queried, or "all" when the catalogs were merged. */
+  provider: SharedProvider | "all";
   models: ProviderModel[];
   /** Models matching the filter, before pagination. */
   total: number;
   page: number;
   pages: number;
+  /** Providers that could not be reached. The rest of the page is still valid. */
+  failures?: Array<{ provider: SharedProvider; reason: string }>;
 }
 
 export interface ListProviderModelsOptions {
@@ -36,26 +61,71 @@ export interface ListProviderModelsOptions {
   search?: string;
   limit?: number;
   page?: number;
+  /** Defaults to id. */
+  sort?: ModelSort;
+  /** Kinds to keep. Defaults to what lore can configure. */
+  kinds?: ModelKind[];
 }
 
 const DEFAULT_LIMIT = 30;
 
+/**
+ * Vercel's catalog carries video, image, speech and reranking models lore can
+ * never be configured with. Hiding them is the difference between 360 rows and
+ * the 265 that mean something.
+ */
+const USABLE_KINDS: ModelKind[] = ["generation", "embedding"];
+
 /** Providers that publish a model catalog, with the base URL used when none is set. */
 const CATALOG_DEFAULT_BASE_URL: Partial<Record<SharedProvider, string>> = {
   openrouter: "https://openrouter.ai/api/v1",
+  // The gateway provider is Vercel AI Gateway.
+  gateway: "https://ai-gateway.vercel.sh/v1",
   openai: "https://api.openai.com/v1",
   groq: "https://api.groq.com/openai/v1",
   ollama: "http://localhost:11434",
 };
 
 /** openai-compatible has no default: the base URL is the whole point of it. */
+/**
+ * Every provider a credential can be stored for.
+ *
+ * The one list. A second hand-maintained copy in the CLI is what left `voyage`
+ * unsettable for as long as it existed.
+ */
+export const ALL_PROVIDERS: SharedProvider[] = [
+  "alibaba",
+  "cohere",
+  "gateway",
+  "groq",
+  "moonshotai",
+  "ollama",
+  "openai",
+  "openai-compatible",
+  "openrouter",
+  "voyage",
+];
+
 const CATALOG_PROVIDERS: SharedProvider[] = [
   "openrouter",
+  "gateway",
   "openai",
   "groq",
   "ollama",
   "openai-compatible",
 ];
+
+/** Catalogs these providers serve without a key, so listing works unconfigured. */
+export const CATALOG_NEEDS_KEY: SharedProvider[] = ["openai", "groq"];
+
+/** Providers with a catalog but no default URL: the caller must supply one. */
+export function catalogNeedsBaseUrl(provider: SharedProvider): boolean {
+  return CATALOG_PROVIDERS.includes(provider) && !CATALOG_DEFAULT_BASE_URL[provider];
+}
+
+export function hasCatalog(provider: SharedProvider): boolean {
+  return CATALOG_PROVIDERS.includes(provider);
+}
 
 function stripTrailingSlashes(url: string): string {
   return url.replace(/\/+$/, "");
@@ -110,16 +180,37 @@ async function getJson(url: string, apiKey?: string): Promise<unknown> {
   return response.json();
 }
 
+/**
+ * Vercel labels every model with a type. Nobody else does, and the only other
+ * catalogs that carry pricing serve language models exclusively, so an absent
+ * label means generation rather than unknown.
+ */
+function kindOf(row: unknown): ModelKind {
+  switch (str(field(row, "type"))) {
+    case "embedding":
+      return "embedding";
+    case undefined:
+    case "language":
+      return "generation";
+    default:
+      return "other";
+  }
+}
+
 function parseOpenAiShape(payload: unknown): ProviderModel[] {
   return rows(payload, "data").map((row): ProviderModel => {
     const pricing = field(row, "pricing");
     return {
       id: String(field(row, "id") ?? ""),
       name: str(field(row, "name")),
-      // OpenRouter says context_length; Groq says context_window.
+      kind: kindOf(row),
+      // OpenRouter says context_length; Groq and Vercel say context_window.
       context_length: num(field(row, "context_length")) ?? num(field(row, "context_window")),
-      prompt_usd_per_mtok: perMillion(field(pricing, "prompt")),
-      completion_usd_per_mtok: perMillion(field(pricing, "completion")),
+      // OpenRouter prices under prompt/completion; Vercel under input/output.
+      prompt_usd_per_mtok:
+        perMillion(field(pricing, "prompt")) ?? perMillion(field(pricing, "input")),
+      completion_usd_per_mtok:
+        perMillion(field(pricing, "completion")) ?? perMillion(field(pricing, "output")),
       modality: str(field(field(row, "architecture"), "modality")),
     };
   });
@@ -132,6 +223,59 @@ function parseOllamaShape(payload: unknown): ProviderModel[] {
       name: str(field(field(row, "details"), "parameter_size")),
     }),
   );
+}
+
+function filterKinds(models: ProviderModel[], kinds?: ModelKind[]): ProviderModel[] {
+  const wanted = kinds ?? USABLE_KINDS;
+  return models.filter((model) => model.kind === undefined || wanted.includes(model.kind));
+}
+
+/**
+ * Sort in place.
+ *
+ * A missing value always sorts last, never first. Ollama reports no price, and
+ * a price-sorted list that opens with every unpriced local model answers the
+ * opposite of the question that was asked.
+ */
+function sortModels(models: ProviderModel[], sort: ModelSort): void {
+  if (sort === "id") {
+    models.sort((a, b) => a.id.localeCompare(b.id));
+    return;
+  }
+  const key = (model: ProviderModel): number | undefined =>
+    sort === "price" ? model.prompt_usd_per_mtok : model.context_length;
+  // Price ascends (cheapest first); context descends (roomiest first).
+  const direction = sort === "price" ? 1 : -1;
+  models.sort((a, b) => {
+    const left = key(a);
+    const right = key(b);
+    if (left === undefined && right === undefined) return a.id.localeCompare(b.id);
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    if (left === right) return a.id.localeCompare(b.id);
+    return (left - right) * direction;
+  });
+}
+
+function paginate(
+  models: ProviderModel[],
+  provider: SharedProvider | "all",
+  opts: { limit?: number; page?: number },
+  failures?: Array<{ provider: SharedProvider; reason: string }>,
+): ProviderModelPage {
+  const limit = Math.max(1, opts.limit ?? DEFAULT_LIMIT);
+  const total = models.length;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const page = Math.min(Math.max(1, opts.page ?? 1), pages);
+  const start = (page - 1) * limit;
+  return {
+    provider,
+    models: models.slice(start, start + limit),
+    total,
+    page,
+    pages,
+    ...(failures && failures.length > 0 ? { failures } : {}),
+  };
 }
 
 /**
@@ -167,6 +311,7 @@ export async function listProviderModels(
   let models = isOllama ? parseOllamaShape(payload) : parseOpenAiShape(payload);
 
   models = models.filter((model) => model.id.length > 0);
+  models = filterKinds(models, opts.kinds);
 
   const search = opts.search?.toLowerCase();
   if (search) {
@@ -177,13 +322,50 @@ export async function listProviderModels(
     );
   }
 
-  models.sort((a, b) => a.id.localeCompare(b.id));
+  sortModels(models, opts.sort ?? "id");
 
-  const limit = Math.max(1, opts.limit ?? DEFAULT_LIMIT);
-  const total = models.length;
-  const pages = Math.max(1, Math.ceil(total / limit));
-  const page = Math.min(Math.max(1, opts.page ?? 1), pages);
-  const start = (page - 1) * limit;
+  return paginate(models, provider, opts);
+}
 
-  return { provider, models: models.slice(start, start + limit), total, page, pages };
+/**
+ * Merge several providers' catalogs into one page.
+ *
+ * One unreachable provider must not lose the others' models, so failures are
+ * collected and reported alongside the results rather than thrown. This mirrors
+ * webSearch(), which already treats a dead source as partial results.
+ *
+ * Sorting and paging happen after the merge, so `--sort price` compares across
+ * providers instead of within each one.
+ */
+export async function listAllProviderModels(
+  providers: Array<{ provider: SharedProvider; api_key?: string; base_url?: string }>,
+  opts: Omit<ListProviderModelsOptions, "api_key" | "base_url"> = {},
+): Promise<ProviderModelPage> {
+  const settled = await Promise.allSettled(
+    providers.map(async (entry) => {
+      // Page inside each provider would truncate before the merge, so take all.
+      const page = await listProviderModels(entry.provider, {
+        api_key: entry.api_key,
+        base_url: entry.base_url,
+        search: opts.search,
+        kinds: opts.kinds,
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      return page.models.map((model) => ({ ...model, provider: entry.provider }));
+    }),
+  );
+
+  const models: ProviderModel[] = [];
+  const failures: Array<{ provider: SharedProvider; reason: string }> = [];
+  settled.forEach((outcome, index) => {
+    const provider = providers[index]!.provider;
+    if (outcome.status === "fulfilled") {
+      models.push(...outcome.value);
+      return;
+    }
+    failures.push({ provider, reason: (outcome.reason as Error).message });
+  });
+
+  sortModels(models, opts.sort ?? "id");
+  return paginate(models, "all", opts, failures);
 }

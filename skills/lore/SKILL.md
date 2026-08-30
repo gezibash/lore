@@ -102,23 +102,47 @@ hardcoded defaults -> ~/.lore/config.json -> <project>/.lore/config.json -> prog
 - Read the resolved result with `lore sys config show`. It annotates which layer set each key.
 - `lore sys config set <key> <value>` writes the per-lore layer. It does not change other lores.
 - Store an API key once with `lore sys provider set <provider> --api-key <key>`. Shared
-  credentials apply to every registered lore. `lore sys provider list` masks the values.
+  credentials apply to every registered lore.
+- `lore sys provider list` shows every provider: whether a key is stored, whether its
+  catalog can be listed, and which roles this lore uses it for.
+
+### Find a model
+
+```bash
+lore sys provider models openrouter --search glm          # one provider
+lore sys provider models --search glm-5.3 --sort price    # every configured provider
+```
+
+- `--sort price` is cheapest first. `--sort context` is roomiest first. Unpriced
+  models sort last in both.
+- Only models lore can use are shown. Use `--type embedding` to narrow, or
+  `--all-kinds` to include video, image, and speech models.
+- Catalogs exist for `openrouter`, `gateway`, `openai`, `groq`, and `ollama`.
+  `openai-compatible` needs a base URL on the credential first.
+- With no provider named, one unreachable provider is reported in a footer. The
+  other providers still list.
 
 ### Switch the generation model
 
 This is safe at any time. No re-index is needed.
 
 ```bash
-lore sys config set ai.generation.provider openrouter
-lore sys config set ai.generation.model z-ai/glm-5.3-flash
 lore sys provider set openrouter --api-key sk-or-...
+lore sys provider use openrouter z-ai/glm-5.3-flash
 ```
 
-- Find the exact slug, the context window, and the price with
-  `lore sys provider models openrouter --search <text>`. Page through with `--page`.
-  `openai`, `groq`, and `ollama` also publish a catalog. `openai-compatible` needs a
-  base URL on the credential first.
+`use` writes the current project's config only, and rejects a model the provider
+does not serve. Pass `--skip-verify` to write an id the catalog does not know.
+The two `config set` calls below do the same thing without the check:
+
+```bash
+lore sys config set ai.generation.provider openrouter
+lore sys config set ai.generation.model z-ai/glm-5.3-flash
+```
+
 - For `openrouter`, the model string is the OpenRouter slug, copied exactly.
+- `gateway` is Vercel AI Gateway. `openai-compatible` reaches any OpenAI-shaped
+  endpoint, including Cloudflare Workers AI, once you set its base URL.
 - `base_url` is optional. It defaults to `https://openrouter.ai/api/v1`.
 - Generation providers: `ollama`, `openai`, `groq`, `openai-compatible`, `openrouter`,
   `moonshotai`, `alibaba`, `gateway`, `codex`.
@@ -129,11 +153,12 @@ lore sys provider set openrouter --api-key sk-or-...
 
 This is destructive. Do all three steps together.
 
-1. Set the provider and model.
-2. Set `ai.embedding.dim` to the new model's dimension.
-3. Run `lore sys embeddings refresh`.
+1. Run `lore sys provider use <provider> <model> --embedding --dim <n>`.
+2. Run `lore sys embeddings refresh`.
 
-If you skip step 3, every stored row keeps its old model tag, lore counts all of
+No catalog reports embedding dimensions, so `--dim` is required.
+
+If you skip step 2, every stored row keeps its old model tag, lore counts all of
 them as stale, and debt climbs toward 1.0. The debt bands are calibrated for
 `qwen/qwen3-embedding-8b`, so the numbers change meaning under a different embedder.
 

@@ -194,7 +194,17 @@ import {
 } from "./debt.ts";
 import { computeAskDebtSnapshot } from "./ask-debt.ts";
 import { webSearch } from "./web-search.ts";
-import { listProviderModels, type ProviderModelPage } from "./provider-models.ts";
+import {
+  ALL_PROVIDERS,
+  CATALOG_NEEDS_KEY,
+  catalogNeedsBaseUrl,
+  hasCatalog,
+  listAllProviderModels,
+  listProviderModels,
+  type ListProviderModelsOptions,
+  type ProviderModelPage,
+  type ProviderStatus,
+} from "./provider-models.ts";
 import type {
   Registry,
   FileRef,
@@ -3464,10 +3474,12 @@ export class LoreEngine {
    * generation call would: an explicit option first, then the shared
    * credential, then whichever configured role already points at this provider.
    */
-  async listProviderModels(
-    provider: SharedProvider,
-    opts: { search?: string; limit?: number; page?: number } = {},
-  ): Promise<ProviderModelPage> {
+  /**
+   * Resolve a provider's key and base URL the way a generation call would: an
+   * explicit credential first, then whichever configured role already points at
+   * this provider.
+   */
+  private credentialsFor(provider: SharedProvider): { api_key?: string; base_url?: string } {
     // Global config, not per-lore: you list models to choose one, which is
     // often before any lore is registered.
     const config = this.configFor();
@@ -3475,21 +3487,115 @@ export class LoreEngine {
     const roles = [config.ai.generation, config.ai.embedding].filter(
       (role) => role.provider === provider,
     );
-    const fromRole = <K extends "api_key" | "base_url">(key: K): string | undefined => {
+    const fromRole = (key: "api_key" | "base_url"): string | undefined => {
       for (const role of roles) {
         const value = role[key];
         if (value) return value;
       }
       return undefined;
     };
-
-    return listProviderModels(provider, {
+    return {
       api_key: credential?.api_key ?? fromRole("api_key"),
       base_url: credential?.base_url ?? fromRole("base_url"),
-      search: opts.search,
-      limit: opts.limit,
-      page: opts.page,
+    };
+  }
+
+  /** Every provider, with whether it is configured and what this lore uses it for. */
+  listProviders(): ProviderStatus[] {
+    // A lore may not be registered here; the roster is still worth showing.
+    let usedBy: Partial<Record<SharedProvider, string[]>> = {};
+    try {
+      const { entry } = this.resolveLoreMind();
+      const config = this.configFor(entry);
+      const generation: SharedProvider = config.ai.generation.provider;
+      const embedding: SharedProvider = config.ai.embedding.provider;
+      usedBy = { [generation]: ["generation"] };
+      usedBy[embedding] = [...(usedBy[embedding] ?? []), "embedding"];
+    } catch {
+      usedBy = {};
+    }
+
+    return ALL_PROVIDERS.map((provider) => {
+      const credential = getProviderConfig(this.registry, provider);
+      return {
+        provider,
+        has_key: Boolean(credential?.api_key),
+        base_url: credential?.base_url,
+        has_catalog: hasCatalog(provider),
+        catalog_needs_key: CATALOG_NEEDS_KEY.includes(provider),
+        catalog_needs_base_url: catalogNeedsBaseUrl(provider),
+        used_by: usedBy[provider] ?? [],
+      };
     });
+  }
+
+  async listProviderModels(
+    provider: SharedProvider,
+    opts: Omit<ListProviderModelsOptions, "api_key" | "base_url"> = {},
+  ): Promise<ProviderModelPage> {
+    return listProviderModels(provider, { ...this.credentialsFor(provider), ...opts });
+  }
+
+  /**
+   * Search every provider that can be listed right now: it has a catalog, and
+   * either needs no key or has one. Providers that would certainly fail are
+   * left out rather than reported as failures.
+   */
+  async listAllProviderModels(
+    opts: Omit<ListProviderModelsOptions, "api_key" | "base_url"> = {},
+  ): Promise<ProviderModelPage> {
+    const listable = this.listProviders()
+      .filter((row) => row.has_catalog)
+      .filter((row) => !row.catalog_needs_key || row.has_key)
+      .filter((row) => !row.catalog_needs_base_url || Boolean(row.base_url))
+      .map((row) => ({ provider: row.provider, ...this.credentialsFor(row.provider) }));
+
+    return listAllProviderModels(listable, opts);
+  }
+
+  /**
+   * Point this lore at a model. Writes only the current project's config.
+   *
+   * Verification is the whole point: a mistyped id is otherwise silent until
+   * the next ask fails.
+   */
+  async useModel(
+    provider: SharedProvider,
+    model: string,
+    opts: {
+      role?: "generation" | "embedding";
+      dim?: number;
+      verify?: boolean;
+      codePath?: string;
+    } = {},
+  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }> {
+    const role = opts.role ?? "generation";
+
+    if (opts.verify !== false && hasCatalog(provider)) {
+      const page = await listProviderModels(provider, {
+        ...this.credentialsFor(provider),
+        limit: Number.MAX_SAFE_INTEGER,
+        kinds: ["generation", "embedding", "other"],
+      });
+      if (!page.models.some((candidate) => candidate.id === model)) {
+        const near = page.models
+          .filter((candidate) => candidate.id.includes(model) || model.includes(candidate.id))
+          .slice(0, 3)
+          .map((candidate) => candidate.id);
+        const hint = near.length > 0 ? ` Close matches: ${near.join(", ")}.` : "";
+        throw new LoreError(
+          "CONFIG_INVALID",
+          `Provider '${provider}' serves no model '${model}'.${hint}`,
+        );
+      }
+    }
+
+    this.setLoreMindConfig(`ai.${role}.provider`, provider, opts);
+    this.setLoreMindConfig(`ai.${role}.model`, model, opts);
+    if (role === "embedding" && opts.dim !== undefined) {
+      this.setLoreMindConfig("ai.embedding.dim", opts.dim, opts);
+    }
+    return { provider, model, role };
   }
 
   setProviderCredential(

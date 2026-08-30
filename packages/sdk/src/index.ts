@@ -2,6 +2,7 @@ import {
   LoreEngine,
   LoreError,
   getDeepValue,
+  ALL_PROVIDERS,
   GENERATION_PROMPT_KEYS as CORE_GENERATION_PROMPT_KEYS,
   normalizePromptKey as coreNormalizePromptKey,
   describeSchemaIssue as coreDescribeSchemaIssue,
@@ -90,7 +91,9 @@ import type {
   SchemaRepairOptions,
   SchemaRepairResult,
   SharedProvider,
+  ListProviderModelsOptions,
   ProviderModelPage,
+  ProviderStatus,
   ShowResult,
   StatusResult,
   SuggestionKind,
@@ -101,7 +104,7 @@ import type {
 
 export type * from "./types.ts";
 export type { DiffHunk, DiffLine } from "@lore/core";
-export { LoreError, getDeepValue, timeAgo };
+export { LoreError, getDeepValue, timeAgo, ALL_PROVIDERS };
 export {
   renderNarrativeWithCitations,
   renderProvenance,
@@ -364,10 +367,17 @@ interface LoreClientEngine {
   resetLoreMind(opts?: { codePath?: string }): { name: string; lorePath: string };
   listProviderCredentials(): Array<{ provider: SharedProvider; config: ProviderCredential }>;
   getProviderCredential(provider: SharedProvider): ProviderCredential | undefined;
+  listProviders(): ProviderStatus[];
   listProviderModels(
     provider: SharedProvider,
-    opts?: { search?: string; limit?: number; page?: number },
+    opts?: ListProviderModelsOptions,
   ): Promise<ProviderModelPage>;
+  listAllProviderModels(opts?: ListProviderModelsOptions): Promise<ProviderModelPage>;
+  useModel(
+    provider: SharedProvider,
+    model: string,
+    opts?: { role?: "generation" | "embedding"; dim?: number; verify?: boolean; codePath?: string },
+  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }>;
   setProviderCredential(provider: SharedProvider, config: ProviderCredential): ProviderCredential;
   unsetProviderCredential(
     provider: SharedProvider,
@@ -815,11 +825,27 @@ export class LoreClient {
     return this.engine.getProviderCredential(provider);
   }
 
+  listProviders(): ProviderStatus[] {
+    return this.engine.listProviders();
+  }
+
   listProviderModels(
     provider: SharedProvider,
-    opts?: { search?: string; limit?: number; page?: number },
+    opts?: ListProviderModelsOptions,
   ): Promise<ProviderModelPage> {
     return this.engine.listProviderModels(provider, opts);
+  }
+
+  listAllProviderModels(opts?: ListProviderModelsOptions): Promise<ProviderModelPage> {
+    return this.engine.listAllProviderModels(opts);
+  }
+
+  useModel(
+    provider: SharedProvider,
+    model: string,
+    opts?: { role?: "generation" | "embedding"; dim?: number; verify?: boolean; codePath?: string },
+  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }> {
+    return this.engine.useModel(provider, model, opts);
   }
 
   setProviderCredential(provider: SharedProvider, config: ProviderCredential): ProviderCredential {
