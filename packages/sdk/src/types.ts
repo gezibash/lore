@@ -1234,9 +1234,15 @@ export interface OrphanedChunkRows {
   content_fts: number;
 }
 
+/** Rows in a symbol-keyed table whose symbol is gone, one count per table. */
+export interface OrphanedSymbolRows {
+  symbol_embeddings: number;
+  symbol_fts: number;
+}
+
 export interface PruneOrphansResult {
   mode: "check" | "apply";
-  orphans: OrphanedChunkRows;
+  orphans: OrphanedChunkRows & OrphanedSymbolRows;
   total: number;
   db_bytes_before: number;
   db_bytes_after: number;

@@ -113,20 +113,71 @@ export function insertSymbolBatch(
 }
 
 export function deleteSymbolsForSourceFile(db: Database, sourceFileId: string): void {
+  const doomed = `SELECT id FROM symbols WHERE source_file_id = ?`;
+  const params: [string] = [sourceFileId];
   // FTS entries must be deleted first (before cascade removes symbols)
-  db.run(
-    `DELETE FROM symbol_fts WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
-    [sourceFileId],
-  );
+  db.run(`DELETE FROM symbol_fts WHERE symbol_id IN (${doomed})`, params);
   // concept_symbols has no FK to symbols, so its rows must be dropped explicitly or they
   // survive as orphans pointing at deleted symbol ids — inflating binding counts on every
   // rescan. Callers that intend to keep bindings snapshot them first (saveBindingsForSourceFile)
   // and re-attach after re-insert (rematchBindings).
-  db.run(
-    `DELETE FROM concept_symbols WHERE symbol_id IN (SELECT id FROM symbols WHERE source_file_id = ?)`,
-    [sourceFileId],
-  );
-  db.run(`DELETE FROM symbols WHERE source_file_id = ?`, [sourceFileId]);
+  db.run(`DELETE FROM concept_symbols WHERE symbol_id IN (${doomed})`, params);
+  // symbol_embeddings has no FK either. insertSymbolBatch mints a fresh id for
+  // every symbol on every scan, so a changed file leaves one dead vector per
+  // symbol of the previous version. The unique index on (symbol_id, model)
+  // cannot reclaim them: INSERT OR REPLACE only matches an id that never
+  // comes back.
+  db.run(`DELETE FROM symbol_embeddings WHERE symbol_id IN (${doomed})`, params);
+  db.run(`DELETE FROM symbols WHERE source_file_id = ?`, params);
+}
+
+/** Rows in a symbol-keyed table whose symbol is gone, one count per table. */
+export interface OrphanedSymbolRows {
+  symbol_embeddings: number;
+  symbol_fts: number;
+}
+
+// Symbol-keyed tables that no other sweep owns. concept_symbols is left out on
+// purpose: pruneOrphanedBindings already clears it, and it drops bindings whose
+// concept is gone as well. NOT EXISTS, not NOT IN: SQLite lets a TEXT PRIMARY
+// KEY hold NULL, and one NULL id makes NOT IN match nothing.
+const SYMBOL_KEYED_TABLES = ["symbol_embeddings", "symbol_fts"] as const;
+
+function orphanPredicate(table: string): string {
+  return `NOT EXISTS (SELECT 1 FROM symbols s WHERE s.id = ${table}.symbol_id)`;
+}
+
+/** Count the rows each symbol-keyed table holds for symbols that no longer exist. */
+export function countOrphanedSymbolRows(db: Database): OrphanedSymbolRows {
+  const counts = {} as OrphanedSymbolRows;
+  for (const table of SYMBOL_KEYED_TABLES) {
+    counts[table] =
+      db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM ${table} WHERE ${orphanPredicate(table)}`,
+        )
+        .get()?.n ?? 0;
+  }
+  return counts;
+}
+
+/**
+ * Delete every row whose symbol is gone. Minds written before symbol
+ * replacement cleared its own dependents carry one generation of these rows per
+ * edit. Returns what it deleted, per table.
+ */
+export function deleteOrphanedSymbolRows(db: Database): OrphanedSymbolRows {
+  const deleted = countOrphanedSymbolRows(db);
+  for (const table of SYMBOL_KEYED_TABLES) {
+    if (deleted[table] === 0) continue;
+    db.run(`DELETE FROM ${table} WHERE ${orphanPredicate(table)}`);
+  }
+  return deleted;
+}
+
+/** Total orphaned rows across every symbol-keyed table. */
+export function sumOrphanedSymbolRows(counts: OrphanedSymbolRows): number {
+  return SYMBOL_KEYED_TABLES.reduce((total, table) => total + counts[table], 0);
 }
 
 export function getSymbolsForSourceFile(db: Database, sourceFileId: string): SymbolRow[] {

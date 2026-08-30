@@ -83,6 +83,9 @@ import {
   countOrphanedChunkRows,
   deleteOrphanedChunkRows,
   sumOrphanedChunkRows,
+  countOrphanedSymbolRows,
+  deleteOrphanedSymbolRows,
+  sumOrphanedSymbolRows,
   walkHistory,
   resolveRef,
   diffCommitTrees,
@@ -3119,10 +3122,11 @@ export class LoreEngine {
   }
 
   /**
-   * Delete rows left behind by chunks that no longer exist, then reclaim the
-   * pages. One-shot repair for minds written before chunk replacement cleared
-   * its own dependents. Retrieval does not change: the read paths join
-   * `chunks`, so these rows were already invisible.
+   * Delete rows left behind by chunks and symbols that no longer exist, then
+   * reclaim the pages. One-shot repair for minds written before chunk and
+   * symbol replacement cleared their own dependents. Retrieval does not change:
+   * the read paths reach a row through its parent, so these rows were already
+   * invisible.
    */
   pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
@@ -3130,18 +3134,21 @@ export class LoreEngine {
     const bytesBefore = statSync(dbPath).size;
 
     if (opts?.check) {
-      const orphans = countOrphanedChunkRows(db);
+      const chunkRows = countOrphanedChunkRows(db);
+      const symbolRows = countOrphanedSymbolRows(db);
       return {
         mode: "check",
-        orphans,
-        total: sumOrphanedChunkRows(orphans),
+        orphans: { ...chunkRows, ...symbolRows },
+        total: sumOrphanedChunkRows(chunkRows) + sumOrphanedSymbolRows(symbolRows),
         db_bytes_before: bytesBefore,
         db_bytes_after: bytesBefore,
       };
     }
 
-    const orphans = deleteOrphanedChunkRows(db);
-    const total = sumOrphanedChunkRows(orphans);
+    const chunkRows = deleteOrphanedChunkRows(db);
+    const symbolRows = deleteOrphanedSymbolRows(db);
+    const orphans = { ...chunkRows, ...symbolRows };
+    const total = sumOrphanedChunkRows(chunkRows) + sumOrphanedSymbolRows(symbolRows);
     if (total > 0) {
       // VACUUM only: a plain DELETE returns the pages to the free list and
       // leaves the file its old size. Checkpoint first so the WAL is not
