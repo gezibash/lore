@@ -53,6 +53,7 @@ import {
   setDeepValue,
   deleteDeepValue,
   loadLocalConfig,
+  setGlobalConfigValue,
   writeLocalConfig,
   seedGlobalConfigIfAbsent,
   type DeepPartial,
@@ -3566,10 +3567,17 @@ export class LoreEngine {
       role?: "generation" | "embedding";
       dim?: number;
       verify?: boolean;
+      scope?: "project" | "global";
       codePath?: string;
     } = {},
-  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }> {
+  ): Promise<{
+    provider: SharedProvider;
+    model: string;
+    role: "generation" | "embedding";
+    scope: "project" | "global";
+  }> {
     const role = opts.role ?? "generation";
+    const scope = opts.scope ?? "project";
 
     if (opts.verify !== false && hasCatalog(provider)) {
       const page = await listProviderModels(provider, {
@@ -3590,12 +3598,20 @@ export class LoreEngine {
       }
     }
 
-    this.setLoreMindConfig(`ai.${role}.provider`, provider, opts);
-    this.setLoreMindConfig(`ai.${role}.model`, model, opts);
+    const write = (key: string, value: unknown): void => {
+      if (scope === "global") {
+        setGlobalConfigValue(this.globalConfig.lore_root, key, value);
+        return;
+      }
+      this.setLoreMindConfig(key, value, opts);
+    };
+
+    write(`ai.${role}.provider`, provider);
+    write(`ai.${role}.model`, model);
     if (role === "embedding" && opts.dim !== undefined) {
-      this.setLoreMindConfig("ai.embedding.dim", opts.dim, opts);
+      write("ai.embedding.dim", opts.dim);
     }
-    return { provider, model, role };
+    return { provider, model, role, scope };
   }
 
   setProviderCredential(

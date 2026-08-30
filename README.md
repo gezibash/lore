@@ -255,7 +255,9 @@ lore sys provider use openrouter z-ai/glm-5.3-flash
 
 `openrouter`, `gateway`, `openai`, `groq`, and `ollama` publish a catalog. `openai-compatible` needs a `--base-url` on the credential first. The rest have no catalog endpoint and say so. With no provider named, `models` queries every provider that has a catalog and a key; one unreachable provider is reported in a footer and the rest still list.
 
-`use` writes to the current project only, so the same key can drive a different model in every repo. Add `--embedding --dim <n>` to switch the embedding role, and `--skip-verify` to write an id the catalog does not know yet.
+`use` writes to the current project by default, so the same key can drive a different model in every repo. `--scope global` writes `~/.lore/config.json` instead, setting the default for every lore; a project setting still wins over it. Either way the write keeps every other key in the file, including your API key.
+
+Add `--embedding --dim <n>` to switch the embedding role, and `--skip-verify` to write an id the catalog does not know yet.
 
 Default (no config needed): local Ollama with `qwen3-embedding:8b` (4096-dim) + `qwen3:8b`.
 

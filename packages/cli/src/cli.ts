@@ -1227,6 +1227,11 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                   },
                   // Not "no-verify": Commander reads a --no-x flag as the negation
                   // of x, so its value defaults to true and the meaning inverts.
+                  scope: {
+                    type: "string",
+                    description:
+                      "Where to write: project (default, this repo) or global (every lore)",
+                  },
                   "skip-verify": {
                     type: "boolean",
                     description: "Skip checking the model against the provider's catalog",
@@ -1237,6 +1242,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     embedding: options.embedding,
                     dim: options.dim,
                     noVerify: options["skip-verify"],
+                    scope: options.scope,
                   });
                 },
               }),

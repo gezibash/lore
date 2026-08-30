@@ -266,6 +266,13 @@ function parseSort(sort: string | undefined): ModelSort | undefined {
   throw new Error(`Unknown sort '${sort}'. Expected one of: id, price, context`);
 }
 
+function parseScope(scope: string | undefined): "project" | "global" | undefined {
+  if (scope === undefined) return undefined;
+  const normalized = scope.trim().toLowerCase();
+  if (normalized === "project" || normalized === "global") return normalized;
+  throw new Error(`Unknown scope '${scope}'. Expected one of: project, global`);
+}
+
 function parseKinds(type: string | undefined): ModelKind[] | undefined {
   if (type === undefined) return undefined;
   const normalized = type.trim().toLowerCase();
@@ -374,10 +381,11 @@ export async function providerUseCommand(
   client: WorkerClient,
   provider: string,
   model: string,
-  options: { embedding?: boolean; dim?: number; noVerify?: boolean },
+  options: { embedding?: boolean; dim?: number; noVerify?: boolean; scope?: string },
 ): Promise<void> {
   const parsedProvider = parseProvider(provider);
   const role = options.embedding ? "embedding" : "generation";
+  const scope = parseScope(options.scope);
 
   if (role === "embedding" && options.dim === undefined) {
     // No catalog reports embedding dimensions, so the caller must state it.
@@ -388,6 +396,7 @@ export async function providerUseCommand(
     role,
     dim: options.dim,
     verify: !options.noVerify,
+    scope,
   });
 
   if (isJsonOutput()) {
@@ -395,9 +404,13 @@ export async function providerUseCommand(
     return;
   }
 
+  const target = result.scope === "global" ? "Every lore" : "This lore";
   console.log(
-    `${GREEN}✓${RESET} This lore now uses ${BOLD}${CYAN}${result.model}${RESET} on ${BOLD}${result.provider}${RESET} for ${role}.`,
+    `${GREEN}✓${RESET} ${target} now uses ${BOLD}${CYAN}${result.model}${RESET} on ${BOLD}${result.provider}${RESET} for ${role}.`,
   );
+  if (result.scope === "global") {
+    console.log(`${DIM}Written to ~/.lore/config.json. A project override still wins.${RESET}`);
+  }
   if (role === "embedding") {
     console.log(
       `${DIM}Run 'lore sys embeddings refresh' now. Until you do, every stored row keeps its old model tag and counts as stale.${RESET}`,

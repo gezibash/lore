@@ -191,6 +191,21 @@ export function writeGlobalConfig(config: DeepPartial<LoreConfig>): void {
   writeFileSync(GLOBAL_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
+/**
+ * Set one key in ~/.lore/config.json, keeping the rest of the file.
+ *
+ * writeGlobalConfig replaces the whole document, which would drop every other
+ * setting. loreRoot is passed rather than read from the module constant so a
+ * test can point it somewhere other than the user's home.
+ */
+export function setGlobalConfigValue(loreRoot: string, key: string, value: unknown): void {
+  const path = join(loreRoot, "config.json");
+  const config = loadJsonConfig(path) as Record<string, unknown>;
+  setDeepValue(config, key, value);
+  mkdirSync(loreRoot, { recursive: true });
+  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+}
+
 /** Path to the per-project local config inside the codebase. */
 export function localConfigPath(codePath: string): string {
   return join(codePath, ".lore", "config.json");

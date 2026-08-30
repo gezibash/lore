@@ -376,8 +376,19 @@ interface LoreClientEngine {
   useModel(
     provider: SharedProvider,
     model: string,
-    opts?: { role?: "generation" | "embedding"; dim?: number; verify?: boolean; codePath?: string },
-  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }>;
+    opts?: {
+      role?: "generation" | "embedding";
+      dim?: number;
+      verify?: boolean;
+      scope?: "project" | "global";
+      codePath?: string;
+    },
+  ): Promise<{
+    provider: SharedProvider;
+    model: string;
+    role: "generation" | "embedding";
+    scope: "project" | "global";
+  }>;
   setProviderCredential(provider: SharedProvider, config: ProviderCredential): ProviderCredential;
   unsetProviderCredential(
     provider: SharedProvider,
@@ -843,8 +854,19 @@ export class LoreClient {
   useModel(
     provider: SharedProvider,
     model: string,
-    opts?: { role?: "generation" | "embedding"; dim?: number; verify?: boolean; codePath?: string },
-  ): Promise<{ provider: SharedProvider; model: string; role: "generation" | "embedding" }> {
+    opts?: {
+      role?: "generation" | "embedding";
+      dim?: number;
+      verify?: boolean;
+      scope?: "project" | "global";
+      codePath?: string;
+    },
+  ): Promise<{
+    provider: SharedProvider;
+    model: string;
+    role: "generation" | "embedding";
+    scope: "project" | "global";
+  }> {
     return this.engine.useModel(provider, model, opts);
   }
 

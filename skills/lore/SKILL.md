@@ -101,6 +101,8 @@ hardcoded defaults -> ~/.lore/config.json -> <project>/.lore/config.json -> prog
 
 - Read the resolved result with `lore sys config show`. It annotates which layer set each key.
 - `lore sys config set <key> <value>` writes the per-lore layer. It does not change other lores.
+- `lore sys provider use <provider> <model> --scope global` writes the
+  `~/.lore/config.json` layer instead, for every lore at once.
 - Store an API key once with `lore sys provider set <provider> --api-key <key>`. Shared
   credentials apply to every registered lore.
 - `lore sys provider list` shows every provider: whether a key is stored, whether its
@@ -131,8 +133,19 @@ lore sys provider set openrouter --api-key sk-or-...
 lore sys provider use openrouter z-ai/glm-5.3-flash
 ```
 
-`use` writes the current project's config only, and rejects a model the provider
-does not serve. Pass `--skip-verify` to write an id the catalog does not know.
+`use` rejects a model the provider does not serve. Pass `--skip-verify` to write
+an id the catalog does not know.
+
+Choose where it lands with `--scope`:
+
+- `--scope project` is the default. It writes `<project>/.lore/config.json` and
+  changes this repo only.
+- `--scope global` writes `~/.lore/config.json` and changes every lore that has
+  no project override. Use it to set your usual model once.
+
+A project setting always wins over the global one. Both writes keep every other
+key in the file, including your API key.
+
 The two `config set` calls below do the same thing without the check:
 
 ```bash
@@ -155,6 +168,9 @@ This is destructive. Do all three steps together.
 
 1. Run `lore sys provider use <provider> <model> --embedding --dim <n>`.
 2. Run `lore sys embeddings refresh`.
+
+`--scope global` works here too, but the refresh is per lore. Every lore that
+picks up the new embedding model needs its own refresh.
 
 No catalog reports embedding dimensions, so `--dim` is required.
 
