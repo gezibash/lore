@@ -98,30 +98,30 @@ export async function usageCommand(
     }
 
     console.log(
-      `${DIM}${padRight(groupBy.toUpperCase(), 28)}${padLeft("CALLS", 7)}${padLeft("IN", 9)}${padLeft("OUT", 9)}${padLeft("COST", 10)}${RESET}`,
+      `${DIM}${padRight(groupBy.toUpperCase(), 28)}${padLeft("CALLS", 7)}${padLeft("IN", 9)}${padLeft("OUT", 9)}${padLeft("COST", 11)}${RESET}`,
     );
     for (const [key, row] of [...grouped].sort(
       (a, b) => b[1].input + b[1].output - (a[1].input + a[1].output),
     )) {
-      const cost =
-        row.partial && row.cost === undefined ? "—" : `${row.partial ? "≥" : ""}${usd(row.cost)}`;
+      const cost = `${usd(row.cost)}${row.partial ? "*" : ""}`;
       console.log(
-        `${padRight(key, 28)}${DIM}${padLeft(String(row.calls), 7)}${padLeft(tokens(row.input), 9)}${padLeft(tokens(row.output), 9)}${RESET}${padLeft(cost, 10)}`,
+        `${padRight(key, 28)}${DIM}${padLeft(String(row.calls), 7)}${padLeft(tokens(row.input), 9)}${padLeft(tokens(row.output), 9)}${RESET}${padLeft(cost, 11)}`,
       );
     }
 
-    const totalCost =
-      total.partial && total.cost === undefined
-        ? "—"
-        : `${total.partial ? "≥" : ""}${usd(total.cost)}`;
+    // "≥<$0.01" read as "at least less than a cent". The footnote marker keeps
+    // the rounding and the missing prices as two separate facts.
+    const totalCost = `${usd(total.cost)}${total.partial ? "*" : ""}`;
     console.log(
-      `${BOLD}${padRight("total", 28)}${padLeft(String(total.calls), 7)}${padLeft(tokens(total.input), 9)}${padLeft(tokens(total.output), 9)}${padLeft(totalCost, 10)}${RESET}`,
+      `${BOLD}${padRight("total", 28)}${padLeft(String(total.calls), 7)}${padLeft(tokens(total.input), 9)}${padLeft(tokens(total.output), 9)}${padLeft(totalCost, 11)}${RESET}`,
     );
     if (report.first_seen) {
       console.log(`${DIM}since ${report.first_seen.slice(0, 10)}${RESET}`);
     }
     if (total.partial) {
-      console.log(`${DIM}≥ means some models had no published price; tokens are complete.${RESET}`);
+      console.log(
+        `${DIM}* excludes models with no published price. Token counts are complete.${RESET}`,
+      );
     }
     console.log();
   }

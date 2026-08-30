@@ -209,6 +209,7 @@ import {
   hasCatalog,
   hasUsage,
   getProviderUsage,
+  getProviderModel,
   listAllProviderModels,
   listProviderModels,
   type ListProviderModelsOptions,
@@ -3590,8 +3591,9 @@ export class LoreEngine {
       for (const row of totals) {
         const cacheKey = `${row.provider}:${row.model}`;
         if (!priced.has(cacheKey)) {
+          const provider = row.provider as SharedProvider;
           try {
-            const page = await this.listProviderModels(row.provider as SharedProvider, {
+            const page = await this.listProviderModels(provider, {
               search: row.model,
               limit: Number.MAX_SAFE_INTEGER,
               kinds: ["generation", "embedding", "other"],
@@ -3600,6 +3602,16 @@ export class LoreEngine {
             if (match) priced.set(cacheKey, match);
           } catch {
             // Offline or no catalog: report tokens without money.
+          }
+          if (!priced.has(cacheKey)) {
+            // OpenRouter leaves embedding models out of the bulk catalog while
+            // still serving and pricing them. A miss there is not an answer.
+            const single = await getProviderModel(
+              provider,
+              row.model,
+              this.credentialsFor(provider),
+            ).catch(() => null);
+            if (single) priced.set(cacheKey, single);
           }
         }
       }

@@ -306,9 +306,30 @@ export async function listProviderModels(
 
   const root = stripTrailingSlashes(baseUrl);
   const isOllama = provider === "ollama";
-  const url = isOllama ? `${root}/api/tags` : `${root}/models`;
-  const payload = await getJson(url, opts.api_key);
-  let models = isOllama ? parseOllamaShape(payload) : parseOpenAiShape(payload);
+  let models: ProviderModel[];
+
+  if (isOllama) {
+    models = parseOllamaShape(await getJson(`${root}/api/tags`, opts.api_key));
+  } else {
+    models = parseOpenAiShape(await getJson(`${root}/models`, opts.api_key));
+    if (provider === "openrouter") {
+      // OpenRouter's catalog defaults to text output, so its 34 embedding
+      // models are absent from the plain list. They are a separate query, not
+      // a missing feature.
+      const embeddings = await getJson(
+        `${root}/models?output_modalities=embeddings`,
+        opts.api_key,
+      ).catch(() => null);
+      if (embeddings) {
+        models.push(
+          ...parseOpenAiShape(embeddings).map((model) => ({
+            ...model,
+            kind: "embedding" as ModelKind,
+          })),
+        );
+      }
+    }
+  }
 
   models = models.filter((model) => model.id.length > 0);
   models = filterKinds(models, opts.kinds);
@@ -458,5 +479,63 @@ export async function getProviderUsage(
       typeof field(keyData, "is_free_tier") === "boolean"
         ? (field(keyData, "is_free_tier") as boolean)
         : undefined,
+  };
+}
+
+/**
+ * Look up one model the bulk catalog does not list.
+ *
+ * OpenRouter's /models returns 396 entries and not one embedding model, though
+ * it serves them and prices them. They surface only per model, so a miss in the
+ * bulk list is not proof the model is unknown — it may just be the wrong list.
+ *
+ * The per-model response carries one entry per serving provider. Their prices
+ * differ, so the cheapest is taken: it is the one a request routes to by
+ * default.
+ */
+export async function getProviderModel(
+  provider: SharedProvider,
+  modelId: string,
+  opts: { api_key?: string; base_url?: string } = {},
+): Promise<ProviderModel | null> {
+  // Only OpenRouter and Vercel document this per-model route.
+  if (provider !== "openrouter" && provider !== "gateway") return null;
+
+  const root = stripTrailingSlashes(opts.base_url ?? CATALOG_DEFAULT_BASE_URL[provider]!);
+  let payload: unknown;
+  try {
+    payload = await getJson(`${root}/models/${modelId}/endpoints`, opts.api_key);
+  } catch {
+    return null;
+  }
+
+  const data = field(payload, "data") ?? payload;
+  const id = str(field(data, "id"));
+  if (!id) return null;
+
+  const endpoints = rows(data, "endpoints");
+  let prompt: number | undefined;
+  let completion: number | undefined;
+  let context: number | undefined;
+  for (const endpoint of endpoints) {
+    const pricing = field(endpoint, "pricing");
+    const inPrice = perMillion(field(pricing, "prompt")) ?? perMillion(field(pricing, "input"));
+    if (inPrice !== undefined && (prompt === undefined || inPrice < prompt)) {
+      prompt = inPrice;
+      completion = perMillion(field(pricing, "completion")) ?? perMillion(field(pricing, "output"));
+    }
+    const ctx = num(field(endpoint, "context_length")) ?? num(field(endpoint, "context_window"));
+    if (ctx !== undefined && (context === undefined || ctx > context)) context = ctx;
+  }
+
+  const modality = str(field(field(data, "architecture"), "modality"));
+  return {
+    id,
+    name: str(field(data, "name")),
+    kind: modality?.includes("embedding") ? "embedding" : kindOf(data),
+    context_length: context ?? num(field(data, "context_length")),
+    prompt_usd_per_mtok: prompt,
+    completion_usd_per_mtok: completion,
+    modality,
   };
 }

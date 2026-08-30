@@ -1,5 +1,10 @@
 import { expect, test, afterEach } from "bun:test";
-import { getProviderUsage, listAllProviderModels, listProviderModels } from "./provider-models.ts";
+import {
+  getProviderModel,
+  getProviderUsage,
+  listAllProviderModels,
+  listProviderModels,
+} from "./provider-models.ts";
 import { LoreError } from "@/types/index.ts";
 
 const realFetch = globalThis.fetch;
@@ -9,6 +14,11 @@ afterEach(() => {
 
 function stubFetch(payload: unknown, capture?: { url?: string; auth?: string | null }) {
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    // OpenRouter is fetched twice: once for language models, once for
+    // embeddings. Only the first carries this payload.
+    if (String(url).includes("output_modalities=embeddings")) {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
     if (capture) {
       capture.url = String(url);
       capture.auth = new Headers(init?.headers).get("authorization");
@@ -154,14 +164,16 @@ test("kinds lore cannot use are hidden unless asked for", async () => {
 });
 
 test("price sort is cheapest first and puts unpriced models last", async () => {
-  globalThis.fetch = (async () =>
+  globalThis.fetch = (async (url: string) =>
     new Response(
       JSON.stringify({
-        data: [
-          { id: "b/mid", pricing: { input: "0.000002" } },
-          { id: "c/free" },
-          { id: "a/cheap", pricing: { input: "0.000001" } },
-        ],
+        data: String(url).includes("output_modalities")
+          ? []
+          : [
+              { id: "b/mid", pricing: { input: "0.000002" } },
+              { id: "c/free" },
+              { id: "a/cheap", pricing: { input: "0.000001" } },
+            ],
       }),
       { status: 200 },
     )) as unknown as typeof fetch;
@@ -197,6 +209,10 @@ test("one dead provider does not lose the others' models", async () => {
 
 test("cross-provider price sort compares across providers, not within each", async () => {
   globalThis.fetch = (async (url: string) => {
+    // OpenRouter is fetched twice; the embedding pass must not duplicate it.
+    if (String(url).includes("output_modalities")) {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
     const cheap = String(url).includes("openrouter");
     return new Response(
       JSON.stringify(
@@ -273,4 +289,99 @@ test("a provider with no balance names the ones that have one", async () => {
   await expect(getProviderUsage("ollama", { api_key: "x" })).rejects.toThrow(
     /reports no balance.*openrouter, gateway/s,
   );
+});
+
+test("a model missing from the bulk catalog is still priced per model", async () => {
+  const capture: { url?: string } = {};
+  globalThis.fetch = (async (url: string) => {
+    capture.url = String(url);
+    return new Response(
+      JSON.stringify({
+        data: {
+          id: "qwen/qwen3-embedding-8b",
+          name: "Qwen3 Embedding 8B",
+          architecture: { modality: "text->embeddings" },
+          endpoints: [
+            {
+              provider_name: "Nebius",
+              context_length: 32000,
+              pricing: { prompt: "0.00000001", completion: "0" },
+            },
+            {
+              provider_name: "DeepInfra",
+              context_length: 32768,
+              pricing: { prompt: "0.00000009", completion: "0" },
+            },
+          ],
+        },
+      }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  const model = await getProviderModel("openrouter", "qwen/qwen3-embedding-8b");
+  expect(capture.url).toBe("https://openrouter.ai/api/v1/models/qwen/qwen3-embedding-8b/endpoints");
+  expect(model?.kind).toBe("embedding");
+  // Cheapest serving endpoint wins: that is where a request routes by default.
+  expect(model?.prompt_usd_per_mtok).toBeCloseTo(0.01, 4);
+  // Roomiest context across endpoints.
+  expect(model?.context_length).toBe(32768);
+});
+
+test("a per-model lookup returns null rather than throwing when it fails", async () => {
+  globalThis.fetch = (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch;
+  expect(await getProviderModel("openrouter", "made/up")).toBeNull();
+});
+
+test("providers with no per-model route are not probed", async () => {
+  let called = false;
+  globalThis.fetch = (async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+  expect(await getProviderModel("ollama", "qwen3:8b")).toBeNull();
+  expect(called).toBe(false);
+});
+
+test("OpenRouter's embedding models come from a second query, not the plain list", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    urls.push(String(url));
+    const wantsEmbeddings = String(url).includes("output_modalities=embeddings");
+    return new Response(
+      JSON.stringify({
+        data: wantsEmbeddings
+          ? [
+              {
+                id: "qwen/qwen3-embedding-8b",
+                context_length: 32768,
+                pricing: { prompt: "0.00000001", completion: "0" },
+                architecture: { modality: "text->embeddings" },
+              },
+            ]
+          : [{ id: "z-ai/glm-5.3", pricing: { prompt: "0.0000014" } }],
+      }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  const page = await listProviderModels("openrouter");
+  expect(urls).toEqual([
+    "https://openrouter.ai/api/v1/models",
+    "https://openrouter.ai/api/v1/models?output_modalities=embeddings",
+  ]);
+  const embedding = page.models.find((m) => m.id === "qwen/qwen3-embedding-8b");
+  expect(embedding?.kind).toBe("embedding");
+  expect(embedding?.prompt_usd_per_mtok).toBeCloseTo(0.01, 4);
+  expect(page.models.find((m) => m.id === "z-ai/glm-5.3")?.kind).toBe("generation");
+});
+
+test("a failed embedding query still returns the language models", async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (String(url).includes("output_modalities")) throw new Error("down");
+    return new Response(JSON.stringify({ data: [{ id: "z-ai/glm-5.3" }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const page = await listProviderModels("openrouter");
+  expect(page.models.map((m) => m.id)).toEqual(["z-ai/glm-5.3"]);
 });

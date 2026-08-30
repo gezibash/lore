@@ -296,6 +296,11 @@ function formatPrice(usdPerMtok: number | undefined): string {
   return usdPerMtok < 1 ? `$${usdPerMtok.toFixed(3)}` : `$${usdPerMtok.toFixed(2)}`;
 }
 
+/** An embedding model has no output side; a zero there would read as "free". */
+function outputPrice(model: { kind?: string; completion_usd_per_mtok?: number }): string {
+  return model.kind === "embedding" ? "—" : formatPrice(model.completion_usd_per_mtok);
+}
+
 function formatContext(tokens: number | undefined): string {
   // Some catalogs report 0 for "not applicable", which reads as a real limit.
   if (tokens === undefined || tokens === 0) return "—";
@@ -349,7 +354,7 @@ export async function providerModelsCommand(
   for (const model of result.models) {
     const source = crossProvider ? `${padRight(model.provider ?? "", 20)}` : "";
     const price = priced
-      ? `${padLeft(formatContext(model.context_length), 6)}  ${padLeft(formatPrice(model.prompt_usd_per_mtok), 8)}  ${padLeft(formatPrice(model.completion_usd_per_mtok), 8)}  `
+      ? `${padLeft(formatContext(model.context_length), 6)}  ${padLeft(formatPrice(model.prompt_usd_per_mtok), 8)}  ${padLeft(outputPrice(model), 8)}  `
       : "";
     console.log(`${DIM}${source}${price}${RESET}${CYAN}${model.id}${RESET}`);
   }
