@@ -175,8 +175,8 @@ export class Generator {
     this.prompts = prompts;
   }
 
-  static async create(config: LoreConfig, appName?: string): Promise<Generator> {
-    const model = await createGenerationModel(config, appName);
+  static async create(config: LoreConfig): Promise<Generator> {
+    const model = await createGenerationModel(config);
     return new Generator(
       model,
       config.ai.generation.provider,

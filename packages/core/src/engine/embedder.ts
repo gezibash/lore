@@ -20,12 +20,12 @@ export class Embedder {
     this.model = model;
   }
 
-  static async create(config: LoreConfig, appName?: string): Promise<Embedder> {
-    const model = await createEmbeddingModel(config, appName);
+  static async create(config: LoreConfig): Promise<Embedder> {
+    const model = await createEmbeddingModel(config);
     return new Embedder(model);
   }
 
-  static async createForCode(config: LoreConfig, appName?: string): Promise<Embedder | null> {
+  static async createForCode(config: LoreConfig): Promise<Embedder | null> {
     const code = config.ai.embedding.code;
     if (!code) return null;
     const resolved: EmbeddingProviderConfig = {
@@ -34,7 +34,7 @@ export class Embedder {
       base_url: code.base_url ?? config.ai.embedding.base_url,
       api_key: code.api_key ?? config.ai.embedding.api_key,
     };
-    const model = await createEmbeddingModelFromProviderConfig(resolved, appName);
+    const model = await createEmbeddingModelFromProviderConfig(resolved);
     return new Embedder(model);
   }
 

@@ -12,9 +12,26 @@ export interface EmbeddingProviderConfig {
   api_key?: string;
 }
 
+/**
+ * OpenRouter attributes usage to an app by URL, not by name.
+ *
+ * HTTP-Referer is what creates the app entry; a title on its own is ignored and
+ * the calls land under "Unknown". The referer is lore's repository because that
+ * is the app making the call. The title is a constant for the same reason: the
+ * lore being served is a project of the user's, not a separate app, and letting
+ * it through would rename the one app page on every run.
+ *
+ * X-OpenRouter-Title is the current header. X-Title still works and is sent too,
+ * so attribution survives either end of the rename.
+ */
+const OPENROUTER_ATTRIBUTION = {
+  "HTTP-Referer": "https://github.com/gezibash/lore",
+  "X-OpenRouter-Title": "lore",
+  "X-Title": "lore",
+};
+
 export async function createEmbeddingModelFromProviderConfig(
   config: EmbeddingProviderConfig,
-  appName?: string,
 ): Promise<EmbeddingModel> {
   const { provider, model, base_url, api_key } = config;
   switch (provider) {
@@ -46,7 +63,7 @@ export async function createEmbeddingModelFromProviderConfig(
         baseURL: openrouterBaseUrl,
         apiKey: api_key,
         name: "openrouter",
-        headers: { "X-Title": appName ?? "lore" },
+        headers: OPENROUTER_ATTRIBUTION,
       }).textEmbeddingModel(model);
     }
     case "voyage": {
@@ -58,17 +75,11 @@ export async function createEmbeddingModelFromProviderConfig(
   }
 }
 
-export async function createEmbeddingModel(
-  config: LoreConfig,
-  appName?: string,
-): Promise<EmbeddingModel> {
-  return createEmbeddingModelFromProviderConfig(config.ai.embedding, appName);
+export async function createEmbeddingModel(config: LoreConfig): Promise<EmbeddingModel> {
+  return createEmbeddingModelFromProviderConfig(config.ai.embedding);
 }
 
-export async function createGenerationModel(
-  config: LoreConfig,
-  appName?: string,
-): Promise<LanguageModel> {
+export async function createGenerationModel(config: LoreConfig): Promise<LanguageModel> {
   const { provider, model, base_url, api_key } = config.ai.generation;
   switch (provider) {
     case "ollama": {
@@ -103,7 +114,7 @@ export async function createGenerationModel(
         baseURL: openrouterBaseUrl,
         apiKey: api_key,
         name: "openrouter",
-        headers: { "X-Title": appName ?? "lore" },
+        headers: OPENROUTER_ATTRIBUTION,
       }).chatModel(model);
     }
     case "codex": {

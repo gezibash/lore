@@ -513,12 +513,11 @@ export class LoreEngine {
       try {
         const payload = JSON.parse(job.payload_json) as CloseMaintenancePayload;
         config ??= this.configFor(entry);
-        const loreName = this.loreNameFor(entry);
         if (!embedder || !generator) {
           [embedder, generator, codeEmbedder] = await Promise.all([
-            this.embedderFor(config, loreName),
-            this.generatorFor(config, loreName),
-            this.codeEmbedderFor(config, loreName),
+            this.embedderFor(config),
+            this.generatorFor(config),
+            this.codeEmbedderFor(config),
           ]);
         }
         const { rescanFailed } = await runCloseMaintenanceJob(
@@ -677,14 +676,6 @@ export class LoreEngine {
     };
   }
 
-  private loreNameFor(entry?: RegistryEntry): string {
-    if (!entry) return "lore";
-    for (const [name, e] of Object.entries(this.registry.lore_minds)) {
-      if (e.code_path === entry.code_path) return name;
-    }
-    return "lore";
-  }
-
   private cachedEmbedder?: Embedder;
   private cachedGenerator?: Generator;
   private embedCacheKey?: string;
@@ -692,22 +683,21 @@ export class LoreEngine {
   private cachedCodeEmbedder?: Embedder | null;
   private codeCacheKey?: string;
 
-  private async embedderFor(config: LoreConfig, loreName?: string): Promise<Embedder> {
+  private async embedderFor(config: LoreConfig): Promise<Embedder> {
     const key = JSON.stringify({
       provider: config.ai.embedding.provider,
       model: config.ai.embedding.model,
       base_url: config.ai.embedding.base_url ?? "",
       api_key: config.ai.embedding.api_key ?? "",
-      loreName: loreName ?? "",
     });
     if (!this.cachedEmbedder || this.embedCacheKey !== key) {
-      this.cachedEmbedder = await Embedder.create(config, loreName);
+      this.cachedEmbedder = await Embedder.create(config);
       this.embedCacheKey = key;
     }
     return this.cachedEmbedder;
   }
 
-  private async codeEmbedderFor(config: LoreConfig, loreName?: string): Promise<Embedder | null> {
+  private async codeEmbedderFor(config: LoreConfig): Promise<Embedder | null> {
     const code = config.ai.embedding.code;
     if (!code) return null;
     const key = JSON.stringify({
@@ -715,16 +705,15 @@ export class LoreEngine {
       model: code.model,
       base_url: code.base_url ?? config.ai.embedding.base_url ?? "",
       api_key: code.api_key ?? config.ai.embedding.api_key ?? "",
-      loreName: loreName ?? "",
     });
     if (this.cachedCodeEmbedder === undefined || this.codeCacheKey !== key) {
-      this.cachedCodeEmbedder = await Embedder.createForCode(config, loreName);
+      this.cachedCodeEmbedder = await Embedder.createForCode(config);
       this.codeCacheKey = key;
     }
     return this.cachedCodeEmbedder;
   }
 
-  private async generatorFor(config: LoreConfig, loreName?: string): Promise<Generator> {
+  private async generatorFor(config: LoreConfig): Promise<Generator> {
     const key = JSON.stringify({
       provider: config.ai.generation.provider,
       model: config.ai.generation.model,
@@ -732,10 +721,9 @@ export class LoreEngine {
       api_key: config.ai.generation.api_key ?? "",
       reasoning: config.ai.generation.reasoning ?? "none",
       prompts: config.ai.generation.prompts,
-      loreName: loreName ?? "",
     });
     if (!this.cachedGenerator || this.genCacheKey !== key) {
-      this.cachedGenerator = await Generator.create(config, loreName);
+      this.cachedGenerator = await Generator.create(config);
       this.genCacheKey = key;
     }
     return this.cachedGenerator;
@@ -814,7 +802,7 @@ export class LoreEngine {
       narrativeName,
       intent,
       config,
-      await this.embedderFor(config, this.loreNameFor(entry)),
+      await this.embedderFor(config),
       opts?.resolveDangling,
       opts?.targets,
     );
@@ -876,7 +864,6 @@ export class LoreEngine {
     const summaryMaxMatches = summaryCfg?.max_matches ?? 10;
     const summaryMaxChars = summaryCfg?.max_chars ?? 1600;
     const summarySourceMaxChars = summaryCfg?.source_max_chars ?? 6000;
-    const loreName = this.loreNameFor(entry);
 
     const summaryGeneratorPromise = summaryEnabled
       ? (() => {
@@ -900,15 +887,15 @@ export class LoreEngine {
                   },
                 },
               };
-          return this.generatorFor(summaryGenConfig, loreName);
+          return this.generatorFor(summaryGenConfig);
         })()
       : Promise.resolve(undefined);
 
     opts?.onProgress?.("preparing embedder");
     const [summaryGenerator, embedder, codeEmbedder] = await Promise.all([
       summaryGeneratorPromise,
-      this.embedderFor(config, loreName),
-      this.codeEmbedderFor(config, loreName),
+      this.embedderFor(config),
+      this.codeEmbedderFor(config),
     ]);
 
     // If source chunks exist, a code model is required — no silent fallback
@@ -1134,7 +1121,7 @@ export class LoreEngine {
             },
           },
         };
-    const generator = await this.generatorFor(summaryGenConfig, this.loreNameFor(entry));
+    const generator = await this.generatorFor(summaryGenConfig);
 
     return generateExecutiveSummary(
       generator,
@@ -1156,13 +1143,12 @@ export class LoreEngine {
   }
 
   private lifecycleDeps(entry: RegistryEntry, db: Database, config: LoreConfig): LifecycleDeps {
-    const loreName = this.loreNameFor(entry);
     return {
       db,
       lorePath: entry.lore_path,
       embeddingModel: config.ai.embedding.model,
-      getEmbedder: () => this.embedderFor(config, loreName),
-      getGenerator: () => this.generatorFor(config, loreName),
+      getEmbedder: () => this.embedderFor(config),
+      getGenerator: () => this.generatorFor(config),
     };
   }
 
@@ -1190,11 +1176,10 @@ export class LoreEngine {
   }> {
     const payload = JSON.parse(job.payload_json) as CloseJobPayload;
     const config = this.configFor(entry);
-    const loreName = this.loreNameFor(entry);
     const [embedder, generator, codeEmbedder] = await Promise.all([
-      this.embedderFor(config, loreName),
-      this.generatorFor(config, loreName),
-      this.codeEmbedderFor(config, loreName),
+      this.embedderFor(config),
+      this.generatorFor(config),
+      this.codeEmbedderFor(config),
     ]);
 
     try {
@@ -2510,9 +2495,9 @@ export class LoreEngine {
         db,
         config,
         codePath: entry.code_path ?? null,
-        embedder: await this.embedderFor(config, name),
-        codeEmbedder: await this.codeEmbedderFor(config, name),
-        generator: await this.generatorFor(config, name),
+        embedder: await this.embedderFor(config),
+        codeEmbedder: await this.codeEmbedderFor(config),
+        generator: await this.generatorFor(config),
       };
 
       queueConceptHealLeases(db, {
@@ -2942,7 +2927,7 @@ export class LoreEngine {
   }> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const config = this.configFor(entry);
-    const embedder = await this.embedderFor(config, this.loreNameFor(entry));
+    const embedder = await this.embedderFor(config);
 
     const { deleteAllEmbeddings: deleteAllEmb } = await import("@/db/embeddings.ts");
     const {
@@ -2954,7 +2939,7 @@ export class LoreEngine {
     const { insertEmbedding: insertEmb } = await import("@/db/embeddings.ts");
 
     const textModel = config.ai.embedding.model;
-    const codeEmbedder = await this.codeEmbedderFor(config, this.loreNameFor(entry));
+    const codeEmbedder = await this.codeEmbedderFor(config);
     const resolvedCodeModel = codeEmbedder ? (config.ai.embedding.code?.model ?? null) : null;
 
     // 1. Delete all embeddings from DB
@@ -3075,7 +3060,7 @@ export class LoreEngine {
     if (reEmbedded >= 2) {
       opts?.onProgress?.("graph", 0, 1);
       const { discoverConcepts: discover } = await import("./concept-discovery.ts");
-      const generator = await this.generatorFor(config, this.loreNameFor(entry));
+      const generator = await this.generatorFor(config);
       await discover(db, generator);
       opts?.onProgress?.("graph", 1, 1);
     }
@@ -3339,11 +3324,7 @@ export class LoreEngine {
     if (!narrative || (narrative.status !== "open" && narrative.status !== "close_failed")) {
       throw new LoreError("NO_ACTIVE_NARRATIVE", `No open narrative named '${narrativeName}'`);
     }
-    const plan = await buildExplicitClosePlan(
-      db,
-      narrative,
-      await this.generatorFor(config, this.loreNameFor(entry)),
-    );
+    const plan = await buildExplicitClosePlan(db, narrative, await this.generatorFor(config));
     return {
       narrative,
       plan: {
@@ -3759,7 +3740,7 @@ export class LoreEngine {
     const config = this.configFor(entry);
     let generator: Generator | undefined;
     try {
-      generator = await this.generatorFor(config, this.loreNameFor(entry));
+      generator = await this.generatorFor(config);
     } catch {
       // No generator configured — drift questions will be skipped
     }
@@ -3827,7 +3808,6 @@ export class LoreEngine {
       .all();
     if (missing.length === 0) return;
 
-    const loreName = this.loreNameFor(entry);
     const { readChunk: readChunkFn } = await import("@/storage/chunk-reader.ts");
     const { insertEmbeddingBatch: insertBatch } = await import("@/db/embeddings.ts");
 
@@ -3886,11 +3866,11 @@ export class LoreEngine {
     };
 
     if (proseRows.length > 0) {
-      const embedder = await this.embedderFor(config, loreName);
+      const embedder = await this.embedderFor(config);
       await embedRows(proseRows, embedder, config.ai.embedding.model);
     }
     if (sourceRows.length > 0 && config.ai.embedding.code?.model) {
-      const codeEmbedder = await this.codeEmbedderFor(config, loreName);
+      const codeEmbedder = await this.codeEmbedderFor(config);
       if (codeEmbedder) {
         await embedRows(sourceRows, codeEmbedder, config.ai.embedding.code.model);
       }
