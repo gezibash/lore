@@ -290,6 +290,7 @@ import {
   getJournalEntryCount,
 } from "@/db/chunks.ts";
 import { countEmbeddingsByModel } from "@/db/embeddings.ts";
+import { countAllOrphanedRows } from "@/db/chunks.ts";
 
 interface CloseJobPayload {
   mergeStrategy?: MergeStrategy;
@@ -1552,8 +1553,8 @@ export class LoreEngine {
     const debtPrevious = null;
     const debtChange = null;
 
-    // Check embedding model mismatch. The count holds live embeddings only —
-    // see countEmbeddingsByModel for why orphans must stay out of it.
+    // Check embedding model mismatch. The count holds reachable embeddings
+    // only. See countEmbeddingsByModel for what it drops, and why.
     const embeddingModels = countEmbeddingsByModel(db);
     const currentModel = config.ai.embedding.model;
     const currentCodeModel = config.ai.embedding.code?.model ?? null;
@@ -1563,6 +1564,7 @@ export class LoreEngine {
       .filter((r) => validModels.has(r.model))
       .reduce((s, r) => s + r.cnt, 0);
     const staleEmbeddings = totalEmbeddings - matchingEmbeddings;
+    const orphanedRows = countAllOrphanedRows(db);
 
     // Priorities: ranked by expected debt share p(c)·R(c) — the concepts whose
     // healing moves debt most — among those with R(c) or σ(c) worth acting on.
@@ -1680,9 +1682,6 @@ export class LoreEngine {
     // Orphans no longer enter the embedding counts above, so status must name
     // them here. A mind written before the delete paths cleared their
     // dependents keeps the rows until a prune removes them.
-    const orphanedRows =
-      sumOrphanedChunkRows(countOrphanedChunkRows(db)) +
-      sumOrphanedSymbolRows(countOrphanedSymbolRows(db));
     if (orphanedRows > 0) {
       priorities.push({
         concept: "(database)",
@@ -1706,8 +1705,11 @@ export class LoreEngine {
       });
     }
 
+    // Reported whenever the mind holds embedding rows at all. A mind whose rows
+    // are every one of them orphaned reports zero live, which reads differently
+    // from a mind that was never embedded.
     const embeddingStatus =
-      totalEmbeddings > 0
+      totalEmbeddings > 0 || orphanedRows > 0
         ? {
             total: totalEmbeddings,
             current_model: matchingEmbeddings,

@@ -2,6 +2,18 @@ import type { Database } from "bun:sqlite";
 import { ulid } from "ulid";
 import type { EmbeddingRow, VectorSearchResult } from "@/types/index.ts";
 
+/**
+ * A concept chunk is reachable when no later version supersedes it and its
+ * concept is active. Every read path applies this test, so a count that reports
+ * the lake must apply it too. The clauses need `chunks c` and
+ * `LEFT JOIN current_concepts cc ON cc.id = c.concept_id` in scope.
+ *
+ * Only fl_type 'chunk' carries a lifecycle. A source or journal row is
+ * reachable as soon as its chunk exists.
+ */
+const LIVE_CHUNK_CLAUSES = `c.id NOT IN (SELECT supersedes_id FROM chunks WHERE supersedes_id IS NOT NULL)
+         AND (c.concept_id IS NULL OR cc.lifecycle_status IS NULL OR cc.lifecycle_status = 'active')`;
+
 export function insertEmbedding(
   db: Database,
   chunkId: string,
@@ -91,8 +103,7 @@ export function vectorSearch(
          LEFT JOIN current_concepts cc ON cc.id = c.concept_id
          WHERE c.fl_type = 'chunk'
            AND e.model = ?
-           AND c.id NOT IN (SELECT supersedes_id FROM chunks WHERE supersedes_id IS NOT NULL)
-           AND (c.concept_id IS NULL OR cc.lifecycle_status IS NULL OR cc.lifecycle_status = 'active')
+           AND ${LIVE_CHUNK_CLAUSES}
          ORDER BY distance ASC
          LIMIT ?`,
       )
@@ -107,8 +118,7 @@ export function vectorSearch(
        JOIN chunks c ON c.id = e.chunk_id
        LEFT JOIN current_concepts cc ON cc.id = c.concept_id
        WHERE c.fl_type = 'chunk'
-         AND c.id NOT IN (SELECT supersedes_id FROM chunks WHERE supersedes_id IS NOT NULL)
-         AND (c.concept_id IS NULL OR cc.lifecycle_status IS NULL OR cc.lifecycle_status = 'active')
+         AND ${LIVE_CHUNK_CLAUSES}
        ORDER BY distance ASC
        LIMIT ?`,
     )
@@ -137,8 +147,7 @@ export function getAllEmbeddings(
        JOIN chunks c ON c.id = e.chunk_id
        LEFT JOIN current_concepts cc ON cc.id = c.concept_id
        WHERE c.fl_type = ?
-         AND c.id NOT IN (SELECT supersedes_id FROM chunks WHERE supersedes_id IS NOT NULL)
-         AND (c.concept_id IS NULL OR cc.lifecycle_status IS NULL OR cc.lifecycle_status = 'active')`,
+         AND ${LIVE_CHUNK_CLAUSES}`,
     )
     .all(sourceType);
 }
@@ -148,12 +157,16 @@ export function deleteAllEmbeddings(db: Database): void {
 }
 
 /**
- * Count the live embeddings of each model.
+ * Count the reachable embeddings of each model.
  *
- * The join keeps orphans out. A mind written before chunk replacement cleared
- * its dependents holds an embedding for every chunk that has since gone. Those
- * rows reach no result set, so a count that includes them overstates the lake,
- * and an orphan on an outdated model raises a refresh the mind does not need.
+ * The join drops orphans. A mind written before chunk replacement cleared its
+ * dependents holds an embedding for every chunk that has since gone. Those rows
+ * reach no result set, so a count that holds them overstates the lake. An
+ * orphan on an outdated model then raises a refresh the mind does not need.
+ *
+ * A superseded chunk and an archived concept both keep their chunk row, so the
+ * join alone lets their embeddings through. LIVE_CHUNK_CLAUSES drops those too,
+ * which is what the read paths do.
  */
 export function countEmbeddingsByModel(db: Database): Array<{ model: string; cnt: number }> {
   return db
@@ -161,7 +174,10 @@ export function countEmbeddingsByModel(db: Database): Array<{ model: string; cnt
       `SELECT e.model, COUNT(*) AS cnt
        FROM embeddings e
        JOIN chunks c ON c.id = e.chunk_id
-       GROUP BY e.model`,
+       LEFT JOIN current_concepts cc ON cc.id = c.concept_id
+       WHERE c.fl_type <> 'chunk' OR (${LIVE_CHUNK_CLAUSES})
+       GROUP BY e.model
+       ORDER BY e.model`,
     )
     .all();
 }

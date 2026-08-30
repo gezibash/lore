@@ -164,8 +164,65 @@ test("countEmbeddingsByModel ignores embeddings whose chunk is gone", () => {
   expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM embeddings").get()?.c).toBe(3);
 
   const counts = countEmbeddingsByModel(db);
-  expect(counts).toEqual([{ model: "model-new", cnt: 1 }]);
+  expect(Object.fromEntries(counts.map((r) => [r.model, r.cnt]))).toEqual({ "model-new": 1 });
   expect(counts.reduce((sum, r) => sum + r.cnt, 0)).toBe(1);
+
+  db.close();
+});
+
+test("countEmbeddingsByModel ignores superseded and archived chunks", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+  const concept = insertConcept(db, "c1");
+  insertConceptVersion(db, concept.id, {
+    lifecycle_status: "archived",
+    archived_at: now,
+  });
+
+  // The same three shapes getAllEmbeddings already excludes. Their chunk rows
+  // all exist, so the join alone lets every one of them through.
+  insertChunk(db, {
+    id: "archived-chunk",
+    filePath: "./a.md",
+    flType: "chunk",
+    conceptId: concept.id,
+    createdAt: now,
+  });
+  insertChunk(db, { id: "active-chunk", filePath: "./b.md", flType: "chunk", createdAt: now });
+  insertChunk(db, {
+    id: "superseded-chunk",
+    filePath: "./c.md",
+    flType: "chunk",
+    supersedesId: "active-chunk",
+    createdAt: now,
+  });
+
+  insertEmbedding(db, "archived-chunk", new Float32Array([1]), "model-old");
+  insertEmbedding(db, "active-chunk", new Float32Array([1]), "model-old");
+  insertEmbedding(db, "superseded-chunk", new Float32Array([1]), "model-new");
+
+  // getAllEmbeddings returns superseded-chunk alone, so the count must agree.
+  expect(getAllEmbeddings(db, "chunk").map((r) => r.chunk_id)).toEqual(["superseded-chunk"]);
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "model-new": 1,
+  });
+
+  db.close();
+});
+
+test("countEmbeddingsByModel keeps source and journal rows, which carry no lifecycle", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  insertChunk(db, { id: "src", filePath: "./s.ts", flType: "source", createdAt: now });
+  insertChunk(db, { id: "jrn", filePath: "./j.md", flType: "journal", createdAt: now });
+  insertEmbedding(db, "src", new Float32Array([0.1]), "code-model");
+  insertEmbedding(db, "jrn", new Float32Array([0.2]), "text-model");
+
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "code-model": 1,
+    "text-model": 1,
+  });
 
   db.close();
 });
