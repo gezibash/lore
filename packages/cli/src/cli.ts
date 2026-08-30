@@ -40,6 +40,7 @@ import {
   systemMigrateStatusCommand,
   systemRepairCommand,
   systemPruneCommand,
+  systemVacuumCommand,
 } from "./commands/system.ts";
 import { refreshEmbeddingsCommand } from "./commands/embeddings.ts";
 import { conceptRestoreCommand } from "./commands/concept.ts";
@@ -1192,6 +1193,13 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             },
             async action({ options }) {
               await systemPruneCommand(getWorker(), options.dry);
+            },
+          }),
+          vacuum: defineCommand({
+            name: "vacuum",
+            description: "Rewrite the database file without its free pages",
+            async action() {
+              await systemVacuumCommand(getWorker());
             },
           }),
           remove: defineCommand({

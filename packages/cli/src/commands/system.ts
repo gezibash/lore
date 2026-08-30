@@ -133,3 +133,18 @@ export async function systemPruneCommand(client: WorkerClient, check?: boolean):
       `${formatBytes(reclaimed)} reclaimed)${RESET}`,
   );
 }
+
+export async function systemVacuumCommand(client: WorkerClient): Promise<void> {
+  const result = await client.vacuum();
+
+  console.log(`${BOLD}Vacuum summary${RESET}`);
+  console.log(`  ${DIM}before:${RESET} ${formatBytes(result.file_bytes_before)}`);
+  console.log(`  ${DIM}after:${RESET} ${formatBytes(result.file_bytes_after)}`);
+  console.log(`  ${DIM}reclaimed:${RESET} ${formatBytes(result.reclaimed_bytes)}`);
+
+  if (result.reclaimed_bytes === 0) {
+    console.log(`\n${DIM}The file held no free pages worth reclaiming.${RESET}`);
+    return;
+  }
+  console.log(`\n${GREEN}Reclaimed ${formatBytes(result.reclaimed_bytes)}.${RESET}`);
+}

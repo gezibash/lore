@@ -1248,6 +1248,12 @@ export interface PruneOrphansResult {
   db_bytes_after: number;
 }
 
+export interface VacuumResult {
+  file_bytes_before: number;
+  file_bytes_after: number;
+  reclaimed_bytes: number;
+}
+
 // ─── Suggest Types ────────────────────────────────────────
 export type SuggestionKind =
   | "merge"
