@@ -24,17 +24,18 @@ test("cosineDistance handles identical and opposite vectors", () => {
 });
 
 test("computeStaleness clamps to [0, 1]", () => {
-  const now = new Date().toISOString();
-  const stale = computeStaleness(now, {
+  const config = {
     thresholds: { staleness_days: 10 },
-  } as DeepPartial<LoreConfig> as LoreConfig);
-  expect(stale).toBe(0);
+  } as DeepPartial<LoreConfig> as LoreConfig;
+  const days = (n: number) => new Date(Date.now() + n * 24 * 60 * 60 * 1000).toISOString();
 
-  const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
-  const capped = computeStaleness(old, {
-    thresholds: { staleness_days: 10 },
-  } as DeepPartial<LoreConfig> as LoreConfig);
-  expect(capped).toBe(1);
+  // A timestamp the clock puts in the future reads as fresh, not as a negative
+  // score. Now itself is milliseconds old by the time this runs, so it belongs
+  // with the fractional case below, not with an exact-zero assertion.
+  expect(computeStaleness(days(1), config)).toBe(0);
+  expect(computeStaleness(days(-20), config)).toBe(1);
+  expect(computeStaleness(days(-5), config)).toBeCloseTo(0.5, 3);
+  expect(computeStaleness(new Date().toISOString(), config)).toBeCloseTo(0, 3);
 });
 
 test("computeDebtTrend classifies movement by RELATIVE threshold", () => {
