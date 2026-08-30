@@ -3,7 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from "os";
 import { join } from "path";
 import { createWorkerClient, type WorkerClientOptions } from "./index.ts";
-import { newestSourceMtimeMs, sourceRootForEntry } from "./daemon-client.ts";
+import {
+  daemonEntryScript,
+  daemonIsStale,
+  daemonSpawnArgs,
+  newestSourceMtimeMs,
+  sourceRootForEntry,
+} from "./daemon-client.ts";
 import {
   acquireLoreLock,
   loreDaemonLockPath,
@@ -22,6 +28,69 @@ function tempDaemonPaths(): LoreDaemonPaths {
     dbPath: join(baseDir, "queue.sqlite"),
   };
 }
+
+/** What `process.argv[1]` holds inside a `bun build --compile` executable. */
+const EMBEDDED_ARGV = "/$bunfs/root/lore";
+
+function withArgv<T>(entry: string, run: () => T): T {
+  const realArgv = process.argv[1]!;
+  const realEnv = process.env.LORE_DAEMON_ENTRY;
+  delete process.env.LORE_DAEMON_ENTRY;
+  process.argv[1] = entry;
+  try {
+    return run();
+  } finally {
+    process.argv[1] = realArgv;
+    if (realEnv === undefined) delete process.env.LORE_DAEMON_ENTRY;
+    else process.env.LORE_DAEMON_ENTRY = realEnv;
+  }
+}
+
+test("daemon spawn: a compiled binary gets no entry argument", () => {
+  const paths = tempDaemonPaths();
+  const serve = [
+    "daemon",
+    "serve",
+    "--socket",
+    paths.socketPath,
+    "--db",
+    paths.dbPath,
+    "--log",
+    paths.logPath,
+  ];
+
+  // The embedded path is not a file, so the binary runs its own subcommand.
+  // Passed back, it becomes the command the child runs: the child exits, and
+  // the parent reports only a start timeout.
+  withArgv(EMBEDDED_ARGV, () => {
+    expect(daemonEntryScript()).toBeNull();
+    expect(daemonSpawnArgs(daemonEntryScript(), paths)).toEqual(serve);
+  });
+
+  // A source checkout runs a real script, and the child still needs it.
+  const checkout = join(mkdtempSync(join(tmpdir(), "lore-entry-")), "index.ts");
+  writeFileSync(checkout, "export const a = 1;\n");
+  withArgv(checkout, () => {
+    expect(daemonEntryScript()).toBe(checkout);
+    expect(daemonSpawnArgs(daemonEntryScript(), paths)).toEqual([checkout, ...serve]);
+  });
+
+  // The override wins over argv when it names a file.
+  withArgv(EMBEDDED_ARGV, () => {
+    process.env.LORE_DAEMON_ENTRY = checkout;
+    expect(daemonEntryScript()).toBe(checkout);
+  });
+});
+
+test("daemon staleness: a compiled binary is never stale", () => {
+  // Source mtimes do not describe code baked into a binary. Calling it stale
+  // stops a daemon that the same sources cannot rebuild, so every later call
+  // stops the replacement again.
+  const started = { started_at: new Date(0).toISOString() };
+  withArgv(EMBEDDED_ARGV, () => {
+    expect(daemonIsStale(started)).toBeFalse();
+  });
+});
 
 test("daemon lock: only the first acquirer wins while its pid is alive", () => {
   const lockPath = loreDaemonLockPath(tempDaemonPaths());
