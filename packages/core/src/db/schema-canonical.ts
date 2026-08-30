@@ -12,12 +12,12 @@ function digestMigrationNames(names: string[]): string {
   return createHash("sha256").update(names.join("\n")).digest("hex");
 }
 
-export function buildCanonicalSchemaFromMigrations(): CanonicalSchema {
+export function buildCanonicalSchemaFromMigrations(migrationsDir?: string): CanonicalSchema {
   const shadow = openDb(":memory:");
   try {
-    const migrationNames = listMigrationNames();
+    const migrationNames = listMigrationNames(migrationsDir);
     for (const name of migrationNames) {
-      shadow.exec(readMigrationSql(name));
+      shadow.exec(readMigrationSql(name, migrationsDir));
     }
 
     const schema = inspectSchema(shadow);

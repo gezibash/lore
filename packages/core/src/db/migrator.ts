@@ -13,6 +13,10 @@ function resolveMigrationsDir(): string {
   return join(dirname(process.execPath), "migrations");
 }
 
+/** The installed migrations directory. Every function below takes it as a
+ *  parameter that defaults to this path. A caller passes a different directory
+ *  to read a different set of migrations. A test uses this to present a
+ *  migration that the installed set does not have. */
 const MIGRATIONS_DIR = resolveMigrationsDir();
 
 export interface MigrationStatus {
@@ -27,18 +31,18 @@ function ensureMigrationsTable(db: Database): void {
   )`);
 }
 
-export function listMigrationNames(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
+export function listMigrationNames(migrationsDir: string = MIGRATIONS_DIR): string[] {
+  return readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => f.replace(/\.sql$/, ""));
 }
 
-export function readMigrationSql(name: string): string {
-  return readFileSync(join(MIGRATIONS_DIR, `${name}.sql`), "utf-8");
+export function readMigrationSql(name: string, migrationsDir: string = MIGRATIONS_DIR): string {
+  return readFileSync(join(migrationsDir, `${name}.sql`), "utf-8");
 }
 
-export function getMigrationStatus(db: Database): MigrationStatus {
+export function getMigrationStatus(db: Database, migrationsDir?: string): MigrationStatus {
   ensureMigrationsTable(db);
 
   const applied = db
@@ -48,7 +52,7 @@ export function getMigrationStatus(db: Database): MigrationStatus {
     .all();
 
   const appliedSet = new Set(applied.map((r) => r.name));
-  const diskNames = listMigrationNames();
+  const diskNames = listMigrationNames(migrationsDir);
 
   // Integrity check: every applied migration must still exist on disk
   for (const row of applied) {
@@ -64,16 +68,121 @@ export function getMigrationStatus(db: Database): MigrationStatus {
   return { applied, pending };
 }
 
-export function migrate(db: Database): number {
-  const { pending } = getMigrationStatus(db);
+/** Split a migration file into single statements.
+ *
+ *  `db.exec` discards a run-time error when another statement follows the one
+ *  that failed, and every migration file ends with a newline. A failed data
+ *  statement therefore raised nothing and the migration still stamped as
+ *  applied. One statement per call makes every error reach the caller.
+ *
+ *  The scan tracks string literals, quoted identifiers, and comments, so a
+ *  semicolon inside one does not split the file. A CREATE TRIGGER body holds
+ *  its own semicolons, so the body ends at the END that closes it. A CASE
+ *  expression inside the body also ends with END, so those are counted and
+ *  do not close the body early. */
+export function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let i = 0;
+  let firstWord = "";
+  let isTrigger = false;
+  let bodyOpen = false;
+  let caseDepth = 0;
+  let sawContent = false;
+
+  function endStatement(end: number): void {
+    if (sawContent) statements.push(sql.slice(start, end).trim());
+    start = end;
+    firstWord = "";
+    isTrigger = false;
+    bodyOpen = false;
+    caseDepth = 0;
+    sawContent = false;
+  }
+
+  while (i < sql.length) {
+    const ch = sql[i]!;
+
+    if (ch === "-" && sql[i + 1] === "-") {
+      const newline = sql.indexOf("\n", i);
+      i = newline === -1 ? sql.length : newline + 1;
+      continue;
+    }
+    if (ch === "/" && sql[i + 1] === "*") {
+      const close = sql.indexOf("*/", i + 2);
+      i = close === -1 ? sql.length : close + 2;
+      continue;
+    }
+    if (ch === ";") {
+      i++;
+      if (!bodyOpen) endStatement(i);
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+
+    sawContent = true;
+
+    // A quoted string or identifier. A doubled quote inside one is an escape.
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] !== ch) {
+          i++;
+          continue;
+        }
+        if (sql[i + 1] === ch) {
+          i += 2;
+          continue;
+        }
+        i++;
+        break;
+      }
+      continue;
+    }
+    if (ch === "[") {
+      const close = sql.indexOf("]", i + 1);
+      i = close === -1 ? sql.length : close + 1;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      let end = i;
+      while (end < sql.length && /[A-Za-z0-9_]/.test(sql[end]!)) end++;
+      const word = sql.slice(i, end).toUpperCase();
+      i = end;
+
+      if (firstWord === "") firstWord = word;
+      if (word === "TRIGGER" && firstWord === "CREATE") isTrigger = true;
+      else if (isTrigger && !bodyOpen && word === "BEGIN") bodyOpen = true;
+      else if (bodyOpen && word === "CASE") caseDepth++;
+      else if (bodyOpen && word === "END") {
+        if (caseDepth > 0) caseDepth--;
+        else bodyOpen = false;
+      }
+      continue;
+    }
+
+    i++;
+  }
+
+  endStatement(sql.length);
+  return statements;
+}
+
+export function migrate(db: Database, migrationsDir?: string): number {
+  const { pending } = getMigrationStatus(db, migrationsDir);
 
   let count = 0;
   for (const name of pending) {
-    const sql = readMigrationSql(name);
+    const statements = splitSqlStatements(readMigrationSql(name, migrationsDir));
 
     db.transaction(() => {
-      db.exec(sql);
-      db.exec(
+      for (const statement of statements) {
+        db.run(statement);
+      }
+      db.run(
         `INSERT INTO _migrations (name, applied_at) VALUES ('${name}', '${new Date().toISOString()}')`,
       );
     })();
