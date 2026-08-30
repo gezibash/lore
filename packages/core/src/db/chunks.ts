@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { countOrphanedSymbolRows, sumOrphanedSymbolRows } from "./symbols.ts";
 import type { OrphanedSymbolRows } from "./symbols.ts";
 import { ulid } from "ulid";
 import type {
@@ -315,6 +316,14 @@ export function deleteOrphanedChunkRows(db: Database): OrphanedChunkRows {
 /** Total orphaned rows across every chunk-keyed table. */
 export function sumOrphanedChunkRows(counts: OrphanedChunkRows): number {
   return CHUNK_KEYED_TABLES.reduce((total, table) => total + counts[table], 0);
+}
+
+/** Every orphaned row the prune would delete, across both keyed families. */
+export function countAllOrphanedRows(db: Database): number {
+  return (
+    sumOrphanedChunkRows(countOrphanedChunkRows(db)) +
+    sumOrphanedSymbolRows(countOrphanedSymbolRows(db))
+  );
 }
 
 /** Count all source chunks (one per indexed symbol). */

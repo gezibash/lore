@@ -5,6 +5,7 @@ import {
   getEmbeddingForChunk,
   vectorSearch,
   getAllEmbeddings,
+  countEmbeddingsByModel,
 } from "./embeddings.ts";
 import { insertConcept, insertConceptVersion } from "./concepts.ts";
 import { insertChunk } from "./chunks.ts";
@@ -124,6 +125,104 @@ test("getAllEmbeddings excludes superseded and archived chunks", () => {
 
   const rows = getAllEmbeddings(db, "chunk");
   expect(rows.map((row) => row.chunk_id).sort()).toEqual(["superseded-chunk"]);
+
+  db.close();
+});
+
+test("countEmbeddingsByModel counts the live embeddings of each model", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  for (const id of ["live-a", "live-b", "live-c"]) {
+    insertChunk(db, { id, filePath: `./${id}.md`, flType: "chunk", createdAt: now });
+  }
+  insertEmbedding(db, "live-a", new Float32Array([0.1]), "model-new");
+  insertEmbedding(db, "live-b", new Float32Array([0.2]), "model-new");
+  insertEmbedding(db, "live-c", new Float32Array([0.3]), "model-old");
+
+  const counts = countEmbeddingsByModel(db);
+  expect(Object.fromEntries(counts.map((r) => [r.model, r.cnt]))).toEqual({
+    "model-new": 2,
+    "model-old": 1,
+  });
+
+  db.close();
+});
+
+test("countEmbeddingsByModel ignores embeddings whose chunk is gone", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  insertChunk(db, { id: "live", filePath: "./live.md", flType: "chunk", createdAt: now });
+  insertEmbedding(db, "live", new Float32Array([0.1]), "model-new");
+
+  // The state an older lore left behind: an embedding for a chunk that is gone.
+  // On an outdated model it would otherwise raise a refresh the mind does not need.
+  insertEmbedding(db, "chunk-gone-1", new Float32Array([0.2]), "model-old");
+  insertEmbedding(db, "chunk-gone-2", new Float32Array([0.3]), "model-new");
+
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM embeddings").get()?.c).toBe(3);
+
+  const counts = countEmbeddingsByModel(db);
+  expect(Object.fromEntries(counts.map((r) => [r.model, r.cnt]))).toEqual({ "model-new": 1 });
+  expect(counts.reduce((sum, r) => sum + r.cnt, 0)).toBe(1);
+
+  db.close();
+});
+
+test("countEmbeddingsByModel ignores superseded and archived chunks", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+  const concept = insertConcept(db, "c1");
+  insertConceptVersion(db, concept.id, {
+    lifecycle_status: "archived",
+    archived_at: now,
+  });
+
+  // The same three shapes getAllEmbeddings already excludes. Their chunk rows
+  // all exist, so the join alone lets every one of them through.
+  insertChunk(db, {
+    id: "archived-chunk",
+    filePath: "./a.md",
+    flType: "chunk",
+    conceptId: concept.id,
+    createdAt: now,
+  });
+  insertChunk(db, { id: "active-chunk", filePath: "./b.md", flType: "chunk", createdAt: now });
+  insertChunk(db, {
+    id: "superseded-chunk",
+    filePath: "./c.md",
+    flType: "chunk",
+    supersedesId: "active-chunk",
+    createdAt: now,
+  });
+
+  insertEmbedding(db, "archived-chunk", new Float32Array([1]), "model-old");
+  insertEmbedding(db, "active-chunk", new Float32Array([1]), "model-old");
+  insertEmbedding(db, "superseded-chunk", new Float32Array([1]), "model-new");
+
+  // getAllEmbeddings returns superseded-chunk alone, so the count must agree.
+  expect(getAllEmbeddings(db, "chunk").map((r) => r.chunk_id)).toEqual(["superseded-chunk"]);
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "model-new": 1,
+  });
+
+  db.close();
+});
+
+test("countEmbeddingsByModel keeps source and journal rows, which carry no lifecycle", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  insertChunk(db, { id: "src", filePath: "./s.ts", flType: "source", createdAt: now });
+  insertChunk(db, { id: "jrn", filePath: "./j.md", flType: "journal", createdAt: now });
+  insertEmbedding(db, "src", new Float32Array([0.1]), "code-model");
+  insertEmbedding(db, "jrn", new Float32Array([0.2]), "text-model");
+
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "code-model": 1,
+    "text-model": 1,
+  });
 
   db.close();
 });
