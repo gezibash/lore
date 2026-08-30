@@ -1,6 +1,6 @@
 ---
 name: lore
-description: Use Lore's CLI-first workflow in any repo: set the project up, inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest/ask, KPIs, or wants the agent to keep Lore updated while doing coding work.
+description: Use Lore's CLI-first workflow in any repo: set the project up, inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest/ask, KPIs, switching the model or provider, or wants the agent to keep Lore updated while doing coding work.
 ---
 
 # Lore
@@ -90,6 +90,55 @@ Lore is CLI-only. There is no MCP surface.
 - Set a target with `lore kpi goal <name> <target>`.
 - Read the trend with `lore kpi status [name]`.
 - Readings attach to the sole open narrative. Pass `--narrative <name>` when several are open.
+
+## Change The Model Or Provider
+
+Config resolves in layers. The highest wins:
+
+```
+hardcoded defaults -> ~/.lore/config.json -> <project>/.lore/config.json -> programmatic
+```
+
+- Read the resolved result with `lore sys config show`. It annotates which layer set each key.
+- `lore sys config set <key> <value>` writes the per-lore layer. It does not change other lores.
+- Store an API key once with `lore sys provider set <provider> --api-key <key>`. Shared
+  credentials apply to every registered lore. `lore sys provider list` masks the values.
+
+### Switch the generation model
+
+This is safe at any time. No re-index is needed.
+
+```bash
+lore sys config set ai.generation.provider openrouter
+lore sys config set ai.generation.model z-ai/glm-5.3-flash
+lore sys provider set openrouter --api-key sk-or-...
+```
+
+- For `openrouter`, the model string is the OpenRouter slug, copied exactly.
+- `base_url` is optional. It defaults to `https://openrouter.ai/api/v1`.
+- Generation providers: `ollama`, `openai`, `groq`, `openai-compatible`, `openrouter`,
+  `moonshotai`, `alibaba`, `gateway`, `codex`.
+- Control cost with `lore sys config set ai.generation.reasoning <none|low|default|high>`.
+  Override one operation under `ai.generation.reasoning_overrides.<scope>`.
+
+### Switch the embedding model
+
+This is destructive. Do all three steps together.
+
+1. Set the provider and model.
+2. Set `ai.embedding.dim` to the new model's dimension.
+3. Run `lore sys embeddings refresh`.
+
+If you skip step 3, every stored row keeps its old model tag, lore counts all of
+them as stale, and debt climbs toward 1.0. The debt bands are calibrated for
+`qwen/qwen3-embedding-8b`, so the numbers change meaning under a different embedder.
+
+- Embedding providers: `ollama`, `openai`, `openai-compatible`, `openrouter`,
+  `voyage`, `gateway`.
+- Defaults: local Ollama, `qwen3-embedding:8b` at 4096 dimensions, and `qwen3:8b`
+  for generation.
+- Set a separate code embedding model under `ai.embedding.code` for better symbol
+  search. It inherits provider, base URL, and key from `ai.embedding`.
 
 ## Prefer JSON For Automation
 
