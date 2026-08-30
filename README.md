@@ -228,7 +228,7 @@ lore wait <id>
 
 Use `lore close --wait` when the next step depends on the integrated concept state. `--merge-strategy` selects how an entry lands: `replace` (default), `extend`, or `patch`.
 
-The daemon serves the code it was spawned with. It compares its start time against the newest `.ts` file under the workspace root and restarts itself before dispatch. A busy daemon is left alone, because a leased job holds state a restart would strand. Set `LORE_DAEMON_STALE_CHECK=0` to opt out.
+The daemon serves the code it was spawned with. It compares its start time against the newest `.ts` file under the workspace root and restarts itself before dispatch. A busy daemon is left alone, because a leased job holds state a restart would strand. The check applies only to a source checkout: a compiled binary carries its code inside itself, so a restart cannot make it newer. Set `LORE_DAEMON_STALE_CHECK=0` to opt out.
 
 ---
 

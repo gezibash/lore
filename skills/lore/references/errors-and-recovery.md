@@ -95,6 +95,24 @@ Recover by:
   leased job blocks the automatic restart.
 - Setting `LORE_DAEMON_STALE_CHECK=0` only to opt out of the check on purpose.
 
+The check applies only to a source checkout. A compiled binary carries its code
+inside itself. To change what it runs, build and install it again.
+
+## `Lore daemon did not start within 5 seconds`
+
+Symptoms:
+
+- Every command fails with this message and names the daemon log.
+
+Recover by:
+
+- Reading the daemon log at the path in the message. The child writes its
+  startup error there.
+- Starting the daemon in the foreground to watch it fail:
+  `lore daemon serve --socket ~/.lore/daemon/lored.sock --db ~/.lore/daemon/queue.sqlite --log ~/.lore/daemon/daemon.log`.
+- Shortening the socket path if the log reports `Failed to listen`. macOS caps
+  a unix socket path at 104 characters.
+
 ## The `lore` Command Runs Old Code
 
 Symptoms:

@@ -1,4 +1,13 @@
-import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  type Dirent,
+} from "fs";
 import { dirname, join, resolve } from "path";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
@@ -29,12 +38,44 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function daemonEntryScript(): string {
+/**
+ * The CLI entry script the daemon child must run, or null when this program
+ * has none on disk.
+ *
+ * A compiled binary reports the embedded path `/$bunfs/root/lore` in
+ * `process.argv[1]`. That path is not a file. Passed back as the child's first
+ * argument, it becomes the command the child runs, and the child exits with
+ * `unknown command '/$bunfs/root/lore'` before it binds the socket. A compiled
+ * binary is its own entry and takes the subcommand directly.
+ */
+export function daemonEntryScript(): string | null {
   const entry = process.env.LORE_DAEMON_ENTRY ?? process.argv[1];
-  if (!entry) {
-    throw new Error("Unable to determine the lore CLI entrypoint for daemon startup");
+  if (!entry) return null;
+  try {
+    // Not existsSync: Bun's embedded filesystem answers true for the virtual
+    // path, and so does statSync. realpathSync is the one call that reaches
+    // the real disk, and it fails with ENOENT on `/$bunfs/root/lore`.
+    realpathSync(entry);
+  } catch {
+    return null;
   }
   return entry;
+}
+
+/** Child argv for `daemon serve`, appended to `process.execPath`. A null entry
+ *  means a compiled binary, which runs the subcommand itself. */
+export function daemonSpawnArgs(entry: string | null, paths: LoreDaemonPaths): string[] {
+  const serve = [
+    "daemon",
+    "serve",
+    "--socket",
+    paths.socketPath,
+    "--db",
+    paths.dbPath,
+    "--log",
+    paths.logPath,
+  ];
+  return entry === null ? serve : [entry, ...serve];
 }
 
 function daemonDisabled(): boolean {
@@ -100,17 +141,18 @@ export function newestSourceMtimeMs(root: string): number | null {
 }
 
 /** True when the running daemon was spawned before the newest source edit. */
-function daemonIsStale(status: LoreDaemonStatus): boolean {
+export function daemonIsStale(status: Pick<LoreDaemonStatus, "started_at">): boolean {
   if (process.env.LORE_DAEMON_STALE_CHECK === "0") return false;
   if (!status.started_at) return false;
   const startedAt = Date.parse(status.started_at);
   if (Number.isNaN(startedAt)) return false;
-  let root: string | null;
-  try {
-    root = sourceRootForEntry(daemonEntryScript());
-  } catch {
-    return false;
-  }
+  // A compiled binary carries its code inside itself, so source mtimes say
+  // nothing about what the daemon runs. Restarting it also cannot make it
+  // newer: the check would stop the daemon before every call and start the
+  // same code again.
+  const entry = daemonEntryScript();
+  if (entry === null) return false;
+  const root = sourceRootForEntry(entry);
   if (!root) return false;
   const newest = newestSourceMtimeMs(root);
   return newest !== null && newest > startedAt;
@@ -169,6 +211,10 @@ export class LoreDaemonRpcClient {
     this.paths = ensureLoreDaemonDir(paths);
   }
 
+  private startTimeoutMessage(): string {
+    return `Lore daemon did not start within 5 seconds. The daemon log records why: ${this.paths.logPath}`;
+  }
+
   async ensureRunning(): Promise<LoreDaemonStatus> {
     if (daemonDisabled()) {
       throw new Error("Lore daemon usage is disabled by LORE_DAEMON_DISABLE=1");
@@ -195,37 +241,30 @@ export class LoreDaemonRpcClient {
         const status = await this.status();
         if (status.running) return status;
       }
-      throw new Error("Lore daemon did not start within 5 seconds");
+      throw new Error(this.startTimeoutMessage());
     }
 
     try {
-      const entry = daemonEntryScript();
-      const child = spawn(
-        process.execPath,
-        [
-          entry,
-          "daemon",
-          "serve",
-          "--socket",
-          this.paths.socketPath,
-          "--db",
-          this.paths.dbPath,
-          "--log",
-          this.paths.logPath,
-        ],
-        {
+      // A discarded stdio hides every child startup failure behind the
+      // timeout below. The daemon writes to this log anyway, so a child that
+      // dies early lands its error directly above the lines it never wrote.
+      const logFd = openSync(this.paths.logPath, "a");
+      try {
+        const child = spawn(process.execPath, daemonSpawnArgs(daemonEntryScript(), this.paths), {
           detached: true,
-          stdio: "ignore",
-        },
-      );
-      child.unref();
+          stdio: ["ignore", logFd, logFd],
+        });
+        child.unref();
+      } finally {
+        closeSync(logFd);
+      }
       const deadline = Date.now() + SPAWN_TIMEOUT_MS;
       while (Date.now() < deadline) {
         await sleep(100);
         const status = await this.status();
         if (status.running) return status;
       }
-      throw new Error("Lore daemon did not start within 5 seconds");
+      throw new Error(this.startTimeoutMessage());
     } finally {
       releaseLoreLock(lockPath);
     }
