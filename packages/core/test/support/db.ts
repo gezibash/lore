@@ -1,5 +1,5 @@
 import { rmSync } from "fs";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { Database } from "bun:sqlite";
@@ -17,6 +17,28 @@ export function createTestDb(): Database {
 
 export function createTempDir(prefix = "lore-test-"): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/**
+ * A lore root whose config points embedding at the stub server.
+ *
+ * Use this for any engine test. The default config points embedding at
+ * Ollama on localhost, which makes the test depend on what the machine
+ * runs. See test/support/stub-embedder.ts.
+ */
+export function createTestLoreRoot(prefix = "lore-root-"): string {
+  const dir = createTempDir(prefix);
+  const baseUrl = process.env.LORE_TEST_EMBED_URL;
+  if (!baseUrl) {
+    throw new Error(
+      "LORE_TEST_EMBED_URL is unset — preload test/support/stub-embedder.ts",
+    );
+  }
+  writeFileSync(
+    join(dir, "config.json"),
+    JSON.stringify({ ai: { embedding: { provider: "ollama", base_url: baseUrl } } }),
+  );
+  return dir;
 }
 
 export function removeDir(path: string): void {

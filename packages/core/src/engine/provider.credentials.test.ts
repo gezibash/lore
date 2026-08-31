@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { LoreEngine } from "./index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 import type { LoreConfig } from "@/types/index.ts";
 
 test("shared provider credentials fill missing lore mind API keys and base URLs", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const loreMindPath = createTempDir("lore-mind-");
 
   const engine = new LoreEngine({
@@ -44,7 +44,7 @@ test("shared provider credentials fill missing lore mind API keys and base URLs"
 });
 
 test("lore mind API key overrides shared provider credentials", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const loreMindPath = createTempDir("lore-mind-");
 
   const engine = new LoreEngine({ lore_root: loreRoot });
@@ -73,7 +73,7 @@ test("lore mind API key overrides shared provider credentials", async () => {
 });
 
 test("executive summary provider can resolve credentials separately from generation", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const loreMindPath = createTempDir("lore-mind-");
 
   const engine = new LoreEngine({ lore_root: loreRoot });

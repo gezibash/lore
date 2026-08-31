@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { LoreEngine } from "./index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 
 test("cloneLoreMindConfig copies the entire source config stanza into the current lore mind", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const sourcePath = createTempDir("lore-src-");
   const targetPath = createTempDir("lore-dst-");
 
@@ -38,7 +38,7 @@ test("cloneLoreMindConfig copies the entire source config stanza into the curren
 });
 
 test("cloneLoreMindConfig clears current lore mind overrides when source lore mind has no config stanza", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const sourcePath = createTempDir("lore-src-");
   const targetPath = createTempDir("lore-dst-");
 
