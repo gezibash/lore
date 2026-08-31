@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describeSkill, installSkill, skillState, uninstallSkill } from "./skill.ts";
+import { describeSkill, installSkill, skillSource, skillState, uninstallSkill } from "./skill.ts";
 
 function makeSource(body = "# Lore\n"): string {
   const dir = mkdtempSync(join(tmpdir(), "lore-skill-src-"));
@@ -180,4 +180,21 @@ test("install reports a build that carries no skill", () => {
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
+});
+
+test("the shipped skill has frontmatter every agent can parse", () => {
+  // `npx skills` and the other agents parse this block with a strict YAML
+  // reader. An unquoted value holding ": " reads as a nested mapping and the
+  // whole skill is skipped, which is how this broke once.
+  const text = readFileSync(join(skillSource(), "SKILL.md"), "utf-8");
+  expect(text.startsWith("---\n")).toBe(true);
+
+  const end = text.indexOf("\n---", 3);
+  expect(end).toBeGreaterThan(0);
+
+  const front = Bun.YAML.parse(text.slice(4, end)) as Record<string, unknown>;
+  expect(typeof front.name).toBe("string");
+  expect(typeof front.description).toBe("string");
+  expect(front.name).toBe("lore");
+  expect((front.description as string).length).toBeGreaterThan(20);
 });
