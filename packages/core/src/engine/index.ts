@@ -207,6 +207,7 @@ import {
   computeDebtSnapshot,
   conceptLiveStaleness,
   conceptPressure,
+  describeConceptPriority,
   conceptDebtShare,
   type DebtSnapshot,
 } from "./debt.ts";
@@ -1610,23 +1611,12 @@ export class LoreEngine {
       .slice(0, 5);
 
     const priorities = priorityConcepts.map((c) => {
-      const g = debtSnapshot.residualByConcept.get(c.id);
-      const drifted = debtSnapshot.symbolDriftWarnings.get(c.id)?.length ?? 0;
-      const sigma = conceptLiveStaleness(c, debtSnapshot);
-      let reason: string;
-      let action: string;
-      if (!g || g.ungrounded) {
-        reason = `No symbol bindings — the prose cannot be verified against code (σ ${(sigma * 100).toFixed(0)}%)`;
-        action = "bind to code";
-      } else if (drifted > 0) {
-        reason = `${drifted} bound symbol(s) changed since verification (drift ${(g.eDrift * 100).toFixed(0)}%)`;
-        action = "update — bound code changed";
-      } else {
-        reason = g.eEmbedMeasured
-          ? `Prose diverges from bound code (embedding residual ${(g.eEmbed * 100).toFixed(0)}%)`
-          : "Bound, but the code-vs-prose residual was never measured";
-        action = g.residual > 0.5 ? "update docs" : "review";
-      }
+      const { reason, action } = describeConceptPriority({
+        groundedness: debtSnapshot.residualByConcept.get(c.id),
+        sigma: conceptLiveStaleness(c, debtSnapshot),
+        driftedCount: debtSnapshot.symbolDriftWarnings.get(c.id)?.length ?? 0,
+        coverage: debtSnapshot.bindingCoverageByConcept.get(c.id),
+      });
       const lastNarrative = getLastNarrativeForConcept(db, c.id);
       const chunkRow = c.active_chunk_id ? getChunk(db, c.active_chunk_id) : null;
       return {

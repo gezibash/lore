@@ -35,6 +35,36 @@ export function getConceptBindingStats(db: Database): Map<string, ConceptBinding
   return new Map(rows.map((r) => [r.concept_id, { total: r.total, drifted: r.drifted }]));
 }
 
+/** Bindings a concept holds, and how many of them are newer than its prose. */
+export interface ConceptBindingCoverage {
+  total: number;
+  addedAfterProse: number;
+}
+
+/**
+ * Which bindings arrived after the prose was last written. e_embed measures
+ * the distance between the prose and the bound code, so a binding added after
+ * the prose raises it by definition: the prose never described that symbol.
+ * That gap is a coverage gap, and the fix differs from the fix for stale
+ * prose, so the two must be told apart.
+ */
+export function getBindingCoverageByConcept(db: Database): Map<string, ConceptBindingCoverage> {
+  const rows = db
+    .query<{ concept_id: string; total: number; added_after: number }, []>(
+      `SELECT cs.concept_id,
+              COUNT(*) AS total,
+              SUM(CASE WHEN cs.created_at > ch.created_at THEN 1 ELSE 0 END) AS added_after
+       FROM concept_symbols cs
+       JOIN current_concepts c ON c.id = cs.concept_id
+       JOIN chunks ch ON ch.id = c.active_chunk_id
+       GROUP BY cs.concept_id`,
+    )
+    .all();
+  return new Map(
+    rows.map((row) => [row.concept_id, { total: row.total, addedAfterProse: row.added_after }]),
+  );
+}
+
 export interface GroundednessResult {
   /** R(c) ∈ [0,1] */
   residual: number;

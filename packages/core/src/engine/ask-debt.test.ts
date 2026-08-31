@@ -33,6 +33,7 @@ function makeDebtSnapshot(overrides?: Partial<DebtSnapshot>): DebtSnapshot {
     sigmaByConcept: new Map(),
     consultShareByConcept: new Map(),
     symbolDriftWarnings: new Map(),
+    bindingCoverageByConcept: new Map(),
     ungroundedCount: 0,
     unmeasuredEmbedCount: 0,
     ...overrides,

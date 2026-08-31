@@ -113,6 +113,13 @@ Evidence:
   confidence-weighted centroid of bound symbol embeddings (today's
   `ground_residual`).
 
+A new binding moves the centroid toward code the prose has never described, so
+`e_embed(c)` rises. That rise is correct: the concept now claims a wider
+surface than its prose covers. It is not the same defect as prose that drifted
+away from code it once described, and the two need different fixes — more
+prose or a split against a rewrite. Reports must name which one they found,
+because binding is advice the system itself gives.
+
 Combinator: `R(c) = max(e_drift(c), e_embed(c))` — doubt is disjunctive;
 either evidence source alone is sufficient to establish it.
 

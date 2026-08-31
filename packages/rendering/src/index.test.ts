@@ -452,6 +452,10 @@ test("renderAsk includes sources and CLI guidance", () => {
   expect(rendered).toContain("- auth-model (score 92.0%)");
   expect(rendered).toContain("lore show auth-model --from-result 01ASK123");
   expect(rendered).toContain("bindings: authenticateUser (function, src/auth.ts:12)");
+  // The nudge must state its own cost: binding raises residual until the prose
+  // covers the symbol, so the operator does not read the rise as a mistake.
+  expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
+  expect(rendered).toContain("raises the concept's residual until the prose covers the symbol");
   expect(rendered).toContain("## Investigation Trail");
   expect(rendered).toContain("lore trail auth-debug --from-result 01ASK123");
 });

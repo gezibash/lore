@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import type { ConceptRow } from "@/types/index.ts";
-import { conceptDebtShare, conceptLiveStaleness, conceptPressure } from "./debt.ts";
+import {
+  conceptDebtShare,
+  conceptLiveStaleness,
+  conceptPressure,
+  describeConceptPriority,
+} from "./debt.ts";
 
 function concept(overrides?: Partial<ConceptRow>): ConceptRow {
   return {
@@ -64,4 +69,62 @@ test("conceptDebtShare is p(c) · R(c) · fraction", () => {
   };
   expect(conceptDebtShare(c, snapshot)).toBeCloseTo(0.2);
   expect(conceptDebtShare(c, snapshot, 0.5)).toBeCloseTo(0.1);
+});
+
+/**
+ * `lore ask` tells the operator to bind unbound symbols. Every binding added
+ * after the prose raises e_embed, because the prose never described that
+ * symbol. The priority line has to say which of the two gaps it found, or the
+ * metric reads as a punishment for following the advice.
+ */
+const GROUNDED = {
+  residual: 0.41,
+  eDrift: 0,
+  eEmbed: 0.41,
+  eEmbedMeasured: true,
+  ungrounded: false,
+};
+
+test("a binding newer than the prose reads as a coverage gap, not divergence", () => {
+  const advice = describeConceptPriority({
+    groundedness: GROUNDED,
+    sigma: 0.1,
+    driftedCount: 0,
+    coverage: { total: 8, addedAfterProse: 6 },
+  });
+
+  expect(advice.reason).toContain("Prose predates 6 of 8 binding(s)");
+  expect(advice.reason).toContain("41%");
+  expect(advice.action).toBe("cover the new bindings, or split the concept");
+});
+
+test("prose written after every binding reads as divergence", () => {
+  const advice = describeConceptPriority({
+    groundedness: GROUNDED,
+    sigma: 0.1,
+    driftedCount: 0,
+    coverage: { total: 8, addedAfterProse: 0 },
+  });
+
+  expect(advice.reason).toBe("Prose diverges from bound code (embedding residual 41%)");
+  expect(advice.action).toBe("review");
+});
+
+test("drift and missing bindings keep their own reasons", () => {
+  const unbound = describeConceptPriority({
+    groundedness: { ...GROUNDED, ungrounded: true, residual: 1 },
+    sigma: 0.5,
+    driftedCount: 0,
+    coverage: undefined,
+  });
+  expect(unbound.action).toBe("bind to code");
+
+  const drifted = describeConceptPriority({
+    groundedness: { ...GROUNDED, eDrift: 0.25 },
+    sigma: 0.5,
+    driftedCount: 2,
+    coverage: { total: 8, addedAfterProse: 6 },
+  });
+  expect(drifted.reason).toContain("2 bound symbol(s) changed");
+  expect(drifted.action).toBe("update — bound code changed");
 });
