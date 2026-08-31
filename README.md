@@ -1,6 +1,14 @@
-# lore
+<p align="center">
+  <a href="https://github.com/gezibash/lore"><img width="520" src="docs/assets/lore-logo.png" alt="Lore"></a>
+</p>
 
-A local-first codebase knowledge system for AI agents and developers.
+<p align="center"><strong>Lore</strong> <em>— A local-first codebase knowledge system for AI agents and developers.</em></p>
+<p align="center">
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&amp;logoColor=000" alt="Bun"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/language-TypeScript-3178c6?logo=typescript&amp;logoColor=white" alt="TypeScript"></a>
+  <a href="https://github.com/gezibash/lore/stargazers"><img src="https://img.shields.io/github/stars/gezibash/lore?style=flat&amp;logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/gezibash/lore/blob/main/package.json"><img src="https://img.shields.io/badge/version-0.1.0-0d6efd" alt="Version 0.1.0"></a>
+</p>
 
 Lore turns a codebase into a queryable knowledge graph — named concepts, narrative exploration sessions, symbol-to-file bindings, and a running debt score. It is CLI-first, so agents can ask "how does auth work?" and get a precise, grounded answer with file references instead of grepping blind.
 
