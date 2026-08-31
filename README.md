@@ -350,11 +350,27 @@ A separate code embedding model can be configured under `ai.embedding.code` for 
 
 ## Agent skill
 
-`skills/lore/` is a Claude Code skill that teaches an agent this workflow. Link it in:
+`skills/lore/` is a Claude Code skill that teaches an agent this workflow. It
+travels inside the release, so an installed lore carries its own skill.
 
 ```bash
-ln -s "$PWD/skills/lore" ~/.claude/skills/lore
+lore skill install
 ```
+
+This links `~/.claude/skills/lore` at the skill the running lore carries. A link
+follows `lore upgrade` on its own, so the skill never falls behind the binary.
+
+```bash
+lore skill status      # where it is, and whether it follows this lore
+lore skill uninstall   # remove it
+```
+
+`--copy` writes a detached copy instead of a link. `lore skill status` then
+reports when the copy and the binary disagree, and `lore skill install --copy`
+refreshes it. `--dir` installs somewhere else.
+
+Install refuses to overwrite a directory it does not recognise. Pass `--force`
+when you mean to replace it.
 
 ---
 

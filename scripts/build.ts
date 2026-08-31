@@ -80,4 +80,24 @@ for (const entry of readdirSync(migrationsSrc)) {
 }
 console.log(`migrations/     ${migrationCount} files`);
 
+// The agent skill travels with the binary. A release install has no source
+// checkout, so `lore skill install` reads it from here.
+const skillsSrc = join(ROOT, "skills");
+const skillsOut = join(DIST, "skills");
+let skillFileCount = 0;
+function copyTree(from: string, to: string): void {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const src = join(from, entry.name);
+    const dst = join(to, entry.name);
+    if (entry.isDirectory()) copyTree(src, dst);
+    else {
+      copyFileSync(src, dst);
+      skillFileCount++;
+    }
+  }
+}
+copyTree(skillsSrc, skillsOut);
+console.log(`skills/         ${skillFileCount} files`);
+
 console.log(`\ndist/ is self-contained. Run it from anywhere: ${binary}`);
