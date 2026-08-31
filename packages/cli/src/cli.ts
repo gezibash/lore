@@ -2,6 +2,8 @@ import { spawnSync } from "child_process";
 import { createWorkerClient, serveLoreDaemon, LoreError, type WorkerClient } from "@lore/worker";
 import { formatError } from "./formatters.ts";
 import { buildCommanderCli } from "./commander-adapter.ts";
+import { isInteractiveOutputEnabled } from "./tty.ts";
+import { refreshUpdateCache, runUpgrade, updateNotice } from "./update.ts";
 import { defineCli, defineCommand } from "./cli-schema.ts";
 import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
@@ -723,6 +725,18 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           }),
         },
       }),
+      upgrade: defineCommand({
+        name: "upgrade",
+        description: "Install the latest release over this one",
+        async action() {
+          const result = await runUpgrade(getVersionString().split(" ")[0] ?? "0.0.0");
+          if (!result.ok) {
+            console.log(result.reason);
+            return;
+          }
+          console.log(`\nlore is now v${result.version}.`);
+        },
+      }),
       sys: defineCommand({
         name: "sys",
         description: "System administration for the current lore",
@@ -741,6 +755,21 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 watch,
                 pollMs: options["poll-ms"] as number | undefined,
               });
+            },
+          }),
+          "update-check": defineCommand({
+            name: "update-check",
+            description: "Refresh the cached latest release",
+            options: {
+              refresh: { type: "boolean", description: "Read GitHub and write the cache" },
+            },
+            async action() {
+              const latest = await refreshUpdateCache();
+              if (!latest) {
+                console.log("Could not reach GitHub.");
+                return;
+              }
+              console.log(latest);
             },
           }),
           rebuild: defineCommand({
@@ -1414,6 +1443,20 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
   return buildCommanderCli(spec);
 }
 
+/**
+ * Print the update notice, when there is one.
+ *
+ * The notice reads a cache, so it adds no delay. It stays off the output of
+ * `--json`, of a pipe, and of a build machine, because each of those reads the
+ * output by machine. The refresh command prints its own result.
+ */
+function printUpdateNotice(argv: string[]): void {
+  if (argv[0] === "upgrade" || argv.includes("update-check")) return;
+  if (!isInteractiveOutputEnabled()) return;
+  const notice = updateNotice(getVersionString().split(" ")[0] ?? "0.0.0");
+  if (notice) console.log(`\n${notice}`);
+}
+
 export async function runLoreCli(argv: string[], deps: LoreCliDeps = {}): Promise<void> {
   setJsonOutput(argv.includes("--json") || argv.includes("-j"));
   const cli = createLoreCli(deps);
@@ -1424,10 +1467,12 @@ export async function runLoreCli(argv: string[], deps: LoreCliDeps = {}): Promis
     });
   if (argv.length === 0) {
     cli.outputHelp();
+    printUpdateNotice(argv);
     return;
   }
   try {
     await cli.parseAsync(argv, { from: "user" });
+    printUpdateNotice(argv);
   } catch (error) {
     if (
       error &&
@@ -1435,6 +1480,9 @@ export async function runLoreCli(argv: string[], deps: LoreCliDeps = {}): Promis
       "code" in error &&
       (error.code === "commander.helpDisplayed" || error.code === "commander.version")
     ) {
+      // Commander reports help and --version by throwing. Both still deserve
+      // the notice, because both are where a user looks for the version.
+      printUpdateNotice(argv);
       return;
     }
     handleCliError(error, exit);

@@ -40,6 +40,22 @@ Intel macOS has no build, because LanceDB ships no Intel macOS binary.
 Pin a version with `LORE_VERSION=v0.1.0`. Remove it with
 `install.sh --uninstall`.
 
+### Stay current
+
+```bash
+lore upgrade
+```
+
+`lore upgrade` reads the latest release, then runs the install script from
+that same tag. The binary, its native libraries and the migrations move
+together, so the install stays complete.
+
+lore also checks once a day, in the background, and prints one line when a
+newer release exists. The check reads a cache file, so it never delays a
+command. It stays quiet under `--json`, in a pipe, and on a build machine.
+
+To turn the check off, set `LORE_NO_UPDATE_CHECK=1`.
+
 ### Build from source
 
 Requires [Bun](https://bun.sh).
