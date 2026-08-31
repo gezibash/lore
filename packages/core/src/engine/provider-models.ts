@@ -7,6 +7,7 @@
  * over HTTP; the rest have no such endpoint and say so.
  */
 import { LoreError, type SharedProvider } from "@/types/index.ts";
+import { OPENROUTER_ATTRIBUTION } from "./provider.ts";
 
 /** What lore can configure a model as. Anything else it cannot use at all. */
 export type ModelKind = "generation" | "embedding" | "other";
@@ -162,7 +163,7 @@ async function getJson(url: string, apiKey?: string): Promise<unknown> {
     response = await fetch(url, {
       headers: {
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        "X-Title": "lore",
+        ...OPENROUTER_ATTRIBUTION,
       },
     });
   } catch (error) {

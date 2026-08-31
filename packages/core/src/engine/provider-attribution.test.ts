@@ -1,5 +1,7 @@
 import { expect, test, afterEach } from "bun:test";
 import { createGenerationModel, createEmbeddingModel } from "./provider.ts";
+import { rerankResults } from "./reranker.ts";
+import { listProviderModels } from "./provider-models.ts";
 import { resolveConfig } from "@/config/index.ts";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
@@ -130,4 +132,61 @@ test("a base URL that is set passes the check", async () => {
     },
   });
   await expect(createGenerationModel(config)).resolves.toBeDefined();
+});
+
+test("openrouter rerank carries the attribution the SDK providers get", async () => {
+  const seen: Record<string, string> = {};
+  globalThis.fetch = (async (_url: unknown, init: RequestInit | undefined) => {
+    new Headers(init?.headers).forEach((value, key) => {
+      seen[key] = value;
+    });
+    return new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 1 }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+
+  const config = hermetic({
+    ai: {
+      search: {
+        rerank: { enabled: true, provider: "openrouter", api_key: "sk-test" },
+      },
+    },
+  });
+  const result = await rerankResults(
+    "q",
+    [
+      { content: "a", payload: 1 },
+      { content: "b", payload: 2 },
+    ],
+    config,
+  );
+
+  // The rerank endpoint is a raw fetch, so it can miss the headers the SDK
+  // providers add. Without them the calls land under "Unknown".
+  expect(result.failed).toBe(false);
+  expect(seen["http-referer"]).toBe("https://github.com/gezibash/lore");
+  expect(seen["x-openrouter-title"]).toBe("Lore");
+  expect(seen["x-title"]).toBe("Lore");
+});
+
+test("the model catalog carries the same attribution as the billed calls", async () => {
+  const seen: Record<string, string> = {};
+  globalThis.fetch = (async (_url: unknown, init: RequestInit | undefined) => {
+    new Headers(init?.headers).forEach((value, key) => {
+      seen[key] = value;
+    });
+    return new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+
+  await listProviderModels("openrouter", { api_key: "sk-test" });
+
+  // The catalog used to send a lowercase title and no referer, so it named an
+  // app OpenRouter never matched to the one the billed calls create.
+  expect(seen["http-referer"]).toBe("https://github.com/gezibash/lore");
+  expect(seen["x-openrouter-title"]).toBe("Lore");
+  expect(seen["x-title"]).toBe("Lore");
 });

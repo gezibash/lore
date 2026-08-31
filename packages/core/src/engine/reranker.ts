@@ -1,5 +1,6 @@
 import { rerank } from "ai";
 import { createCohere } from "@ai-sdk/cohere";
+import { OPENROUTER_ATTRIBUTION } from "./provider.ts";
 import type { LoreConfig } from "@/types/index.ts";
 
 export interface RerankCandidate<T> {
@@ -51,6 +52,10 @@ export async function rerankResults<T>(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${rr.api_key}`,
+          // The rerank endpoint is a raw fetch, so it needs the same
+          // attribution headers the SDK providers get. Without them
+          // OpenRouter files the rerank calls under "Unknown".
+          ...OPENROUTER_ATTRIBUTION,
         },
         body: JSON.stringify({ model: modelName, query, documents, top_n: topN }),
         ...(timeoutAbort ? { signal: timeoutAbort.signal } : {}),

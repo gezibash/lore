@@ -40,7 +40,7 @@ function requireBaseUrl(baseUrl: string | undefined, role: "embedding" | "genera
   );
 }
 
-const OPENROUTER_ATTRIBUTION = {
+export const OPENROUTER_ATTRIBUTION = {
   "HTTP-Referer": "https://github.com/gezibash/lore",
   "X-OpenRouter-Title": "Lore",
   "X-Title": "Lore",
