@@ -32,12 +32,12 @@ jobs:
     needs: check
     strategy:
       fail-fast: false
+      # No darwin-x64 target. @lancedb/lancedb ships no Intel macOS binary
+      # after 0.22.x, so the build runs and the binary then fails to load
+      # its native module.
       matrix:
         include:
           - { target: darwin-arm64, runner: macos-14 }
-          # macos-13 retired on 2025-12-08. macos-15-intel is the last x86_64
-          # macOS image, and GitHub removes it in August 2027.
-          - { target: darwin-x64, runner: macos-15-intel }
           - { target: linux-x64, runner: ubuntu-latest }
           - { target: linux-arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}

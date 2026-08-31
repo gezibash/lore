@@ -69,6 +69,12 @@ case $(uname -m) in
   *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
+# LanceDB ships no Intel macOS binary, so no build exists for this pair.
+# Name the reason here, because the download would only report a missing file.
+if [ "$os" = darwin ] && [ "$arch" = x64 ]; then
+  die "Intel macOS has no build — LanceDB ships no Intel macOS binary"
+fi
+
 asset=lore-$os-$arch.tar.gz
 
 # Check the destination before the download. The archive is large, and a
