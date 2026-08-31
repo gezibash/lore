@@ -2,10 +2,14 @@ import { expect, test } from "bun:test";
 import { setJsonOutput } from "./output.ts";
 import { createDraft, createSpinner, isInteractiveOutputEnabled } from "./tty.ts";
 
+// isInteractiveOutputEnabled() reads CI as well as isTTY. A build machine sets
+// CI=true, which turns interactive output off and makes a faked TTY do
+// nothing. The harness pins CI, so the tests read the same on both machines.
 function withPatchedStdout<T>(opts: { isTTY: boolean }, run: (writes: string[]) => T): T {
   const writes: string[] = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
   const originalIsTTY = process.stdout.isTTY;
+  const originalCI = process.env.CI;
 
   process.stdout.write = ((chunk: string | Uint8Array) => {
     writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
@@ -15,6 +19,7 @@ function withPatchedStdout<T>(opts: { isTTY: boolean }, run: (writes: string[]) 
     value: opts.isTTY,
     configurable: true,
   });
+  process.env.CI = "false";
 
   try {
     return run(writes);
@@ -24,6 +29,11 @@ function withPatchedStdout<T>(opts: { isTTY: boolean }, run: (writes: string[]) 
       value: originalIsTTY,
       configurable: true,
     });
+    if (originalCI === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = originalCI;
+    }
   }
 }
 

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    strategy:
+      fail-fast: false
+      # No darwin-x64 target. @lancedb/lancedb ships no Intel macOS binary
+      # after 0.22.x, so the build runs and the binary then fails to load
+      # its native module.
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14 }
+          - { target: linux-x64, runner: ubuntu-latest }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # build.ts reads libsqlite3.dylib from the Homebrew prefix. Apple ships
+      # SQLite without extension loading, so sqlite-vec cannot load into it.
+      - name: Install Homebrew SQLite
+        if: startsWith(matrix.target, 'darwin')
+        run: brew install sqlite
+
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: ./scripts/smoke.sh ./dist/lore
