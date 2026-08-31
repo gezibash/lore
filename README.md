@@ -116,15 +116,15 @@ List every registration with `lore sys ls`. Remove one with `lore sys remove <na
 
 Lore extracts symbols from these languages:
 
-| Language   | Extensions             | Symbols                                                       |
-| ---------- | ---------------------- | ------------------------------------------------------------- |
-| TypeScript | `.ts` `.tsx`           | function, class, method, interface, type, enum, constant      |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                         |
-| Python     | `.py`                  | function, class, constant                                     |
-| Go         | `.go`                  | function, method, struct, interface                           |
-| Rust       | `.rs`                  | function, struct, enum, trait, impl                           |
-| Elixir     | `.ex` `.exs`           | function, module, protocol                                    |
-| Lean 4     | `.lean`                | theorem, def, abbrev, structure, inductive, instance, axiom   |
+| Language   | Extensions                 | Symbols                                                     |
+| ---------- | -------------------------- | ----------------------------------------------------------- |
+| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant    |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                           |
+| Python     | `.py`                      | function, class, constant                                   |
+| Go         | `.go`                      | function, method, struct, interface                         |
+| Rust       | `.rs`                      | function, struct, enum, trait, impl                         |
+| Elixir     | `.ex` `.exs`               | function, module, protocol                                  |
+| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom |
 
 A file in another language is still indexed and still answers a `lore ask`.
 Lore reads it as text, so it has no symbols. Three features need symbols:
@@ -142,6 +142,20 @@ No package publishes a Lean grammar, so lore carries the built parser at
 `packages/core/grammars/tree-sitter-lean.wasm`. To rebuild it, run
 `scripts/build-lean-grammar.sh`. The script pins the grammar commit and needs
 Docker or Emscripten.
+
+The Lean grammar is experimental, and it reads mathematics better than it
+reads metaprogramming. On the `batteries` library, 258 files, lore finds:
+
+| Content                       | Declarations found |
+| ----------------------------- | ------------------ |
+| Theorems                      | 98%                |
+| All mathematical definitions  | 97%                |
+| Tactics, elaborators, linters | 48%                |
+
+A tactic file uses `do` notation and syntax quotations, and the parser stops
+early in them. It never fails a file: it returns the declarations it read and
+skips the rest. Expect full results for a file of theorems and definitions,
+and gaps in a file that extends Lean itself.
 
 ---
 

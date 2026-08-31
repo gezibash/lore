@@ -146,6 +146,34 @@ describe("Lean parser", () => {
     expect(inType.map((s) => s.callee_name)).toContain("validAt");
   });
 
+  test("`_root_` leaves the namespace instead of nesting under it", async () => {
+    const source = [
+      "namespace RBTree.RBNode.Path",
+      "",
+      "theorem _root_.RBTree.RBNode.Ordered.zoom : True := trivial",
+      "",
+      "theorem inside : True := trivial",
+      "",
+      "end RBTree.RBNode.Path",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // Lean declares this at the top level. Applying the open namespace would
+    // store RBTree.RBNode.Path._root_.RBTree.RBNode.Ordered.zoom, a name no
+    // Lean project holds and nobody can look up.
+    const escaped = symbols.find((s) => s.qualified_name.endsWith("Ordered.zoom"));
+    expect(escaped?.qualified_name).toBe("RBTree.RBNode.Ordered.zoom");
+    expect(escaped?.parent_name).toBeNull();
+    expect(escaped?.name).not.toContain("_root_");
+
+    // The escape applies to its own declaration only.
+    const inside = symbols.find((s) => s.name === "inside");
+    expect(inside?.qualified_name).toBe("RBTree.RBNode.Path.inside");
+  });
+
   test("a proof body stops before the next declaration's comment", async () => {
     const source = [
       "theorem first : True := by",

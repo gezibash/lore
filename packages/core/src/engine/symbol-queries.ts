@@ -249,6 +249,10 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
 
 // ─── Lean Namespace Scopes ────────────────────────────────
 
+/** Lean's escape to the top level. A name written with it ignores every open
+ *  namespace, so it is the whole name. */
+const LEAN_ROOT_PREFIX = "_root_.";
+
 /** One open `namespace` and the rows it covers. */
 interface LeanScope {
   name: string;
@@ -576,11 +580,21 @@ function collectSymbols(
     // from a top-level `__lt__`, and 66 different `__init__`s indistinguishable from each
     // other. findParentClass returns null at file scope, so top-level definitions are
     // unaffected in every language.
-    const parentClass =
-      language === "lean"
+    // Lean writes `_root_.` in front of a name to leave the open namespace and
+    // declare at the top level. `theorem _root_.RBTree.RBNode.Ordered.zoom`
+    // inside `namespace RBTree.RBNode.Path` names
+    // RBTree.RBNode.Ordered.zoom, so applying the namespace here would store
+    // RBTree.RBNode.Path._root_.RBTree.RBNode.Ordered.zoom — a name no Lean
+    // project holds, bound to a symbol nobody can look up.
+    const isLeanRoot = language === "lean" && nameText.startsWith(LEAN_ROOT_PREFIX);
+    const symbolName = isLeanRoot ? nameText.slice(LEAN_ROOT_PREFIX.length) : nameText;
+
+    const parentClass = isLeanRoot
+      ? null
+      : language === "lean"
         ? leanNamespacePrefix(leanScopes, definitionNode.startPosition.row)
         : findParentClass(definitionNode, language);
-    const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
+    const qualifiedName = parentClass ? `${parentClass}.${symbolName}` : symbolName;
 
     const startRow = definitionNode.startPosition.row;
     const positionKey = `${qualifiedName}:${startRow}`;
@@ -600,7 +614,7 @@ function collectSymbols(
         : definitionNode.endPosition.row;
 
     byPosition.set(positionKey, {
-      name: nameText,
+      name: symbolName,
       qualified_name: qualifiedName,
       kind,
       parent_name: parentClass,
