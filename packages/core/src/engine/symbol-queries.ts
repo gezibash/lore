@@ -5,7 +5,12 @@ import type {
   ExtractedSymbol,
   ExtractedCallSite,
 } from "@/types/index.ts";
-import type { TreeSitterLanguage, TreeSitterTree, TreeSitterNode } from "./tree-sitter.ts";
+import type {
+  TreeSitterLanguage,
+  TreeSitterTree,
+  TreeSitterNode,
+  TreeSitterQuery,
+} from "./tree-sitter.ts";
 import type { TreeSitterPool } from "./tree-sitter.ts";
 
 // ─── Per-Language S-Expression Queries ─────────────────────
@@ -134,8 +139,32 @@ const RUST_CALL_QUERY = `
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call.site
 `;
 
+// Elixir has no call syntax of its own: `def`, `defmodule`, `alias` and the
+// module attributes are all `call` nodes. Without the filter they become the
+// highest-degree callees in the graph, ahead of every real function.
+const ELIXIR_DECLARATION_KEYWORDS = [
+  "def",
+  "defp",
+  "defmacro",
+  "defmacrop",
+  "defmodule",
+  "defprotocol",
+  "defimpl",
+  "defstruct",
+  "defexception",
+  "defdelegate",
+  "defguard",
+  "defguardp",
+  "defoverridable",
+  "alias",
+  "import",
+  "require",
+  "use",
+];
+
 const ELIXIR_CALL_QUERY = `
-(call target: (identifier) @call.name) @call.site
+(call target: (identifier) @call.name
+  (#not-match? @call.name "^(${ELIXIR_DECLARATION_KEYWORDS.join("|")})$")) @call.site
 (call target: (dot right: (identifier) @call.name)) @call.site
 `;
 
@@ -167,7 +196,11 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
   return valid.includes(kind as SymbolKind) ? (kind as SymbolKind) : null;
 }
 
-function extractSignature(node: TreeSitterNode, sourceLines: string[]): string | null {
+function extractSignature(
+  node: TreeSitterNode,
+  sourceLines: string[],
+  language: SupportedLanguage,
+): string | null {
   const startLine = node.startPosition.row;
   const endLine = Math.min(startLine + 2, node.endPosition.row);
   const lines: string[] = [];
@@ -177,8 +210,10 @@ function extractSignature(node: TreeSitterNode, sourceLines: string[]): string |
     }
   }
   let sig = lines.join("\n").trim();
-  // Truncate at opening brace/colon for body
-  const bodyStart = sig.search(/\{|\bdo\b/);
+  // Truncate at the start of the body. Elixir bodies open with `do`, and its
+  // heads are full of `%Struct{}`, `%{}` and `{}` patterns, so cutting at `{`
+  // there truncates the head mid-pattern: `def sign(%__MODULE__`.
+  const bodyStart = language === "elixir" ? sig.search(/\bdo\b/) : sig.search(/\{|\bdo\b/);
   if (bodyStart > 0) {
     sig = sig.slice(0, bodyStart).trim();
   }
@@ -252,7 +287,13 @@ function detectExportStatus(
   return "local";
 }
 
-function findParentClass(node: TreeSitterNode): string | null {
+function findParentClass(node: TreeSitterNode, language: SupportedLanguage): string | null {
+  // Elixir modules nest, and each level names only its own segment: `Helper`
+  // inside `Arc.Storage` is `Arc.Storage.Helper`. Taking the nearest enclosing
+  // module would store its functions as `Helper.run`, which matches no module
+  // and collides with every other nested `Helper` in the project. Every other
+  // language here has one meaningful container, so they keep the nearest.
+  const elixirChain: string[] = [];
   let current = node.parent;
   while (current) {
     if (
@@ -273,18 +314,19 @@ function findParentClass(node: TreeSitterNode): string | null {
       if (target?.text === "defmodule" || target?.text === "defprotocol") {
         // Try: alias is a direct named child (e.g. defmodule Foo do)
         const directAlias = current.namedChildren.find((c) => c.type === "alias");
-        if (directAlias) return directAlias.text;
         // Try: alias inside an arguments node
         const argsNode = current.namedChildren.find((c) => c.type === "arguments");
-        if (argsNode) {
-          const alias = argsNode.namedChildren.find((c) => c.type === "alias");
-          if (alias) return alias.text;
+        const alias =
+          directAlias ?? argsNode?.namedChildren.find((c) => c.type === "alias") ?? null;
+        if (alias) {
+          if (language !== "elixir") return alias.text;
+          elixirChain.unshift(alias.text);
         }
       }
     }
     current = current.parent;
   }
-  return null;
+  return elixirChain.length > 0 ? elixirChain.join(".") : null;
 }
 
 export function extractSymbols(
@@ -298,7 +340,6 @@ export function extractSymbols(
   if (!querySource) return [];
 
   const sourceLines = sourceCode.split("\n");
-  const symbols: ExtractedSymbol[] = [];
 
   let query;
   try {
@@ -308,6 +349,30 @@ export function extractSymbols(
     return [];
   }
 
+  // `const f = () => ...` matches both the function pattern and the constant
+  // pattern, so it arrives twice. Keep one row per name and line, and prefer the
+  // more specific kind: a constant capture never carries what the function
+  // capture does.
+  const byPosition = new Map<string, ExtractedSymbol>();
+
+  try {
+    collectSymbols(query, tree, language, sourceLines, byPosition);
+  } finally {
+    // A throw from matches() or a node accessor would otherwise leak the
+    // compiled query, once per failing file.
+    query.delete();
+  }
+
+  return [...byPosition.values()];
+}
+
+function collectSymbols(
+  query: TreeSitterQuery,
+  tree: TreeSitterTree,
+  language: SupportedLanguage,
+  sourceLines: string[],
+  byPosition: Map<string, ExtractedSymbol>,
+): void {
   const matches = query.matches(tree.rootNode);
 
   for (const match of matches) {
@@ -337,24 +402,25 @@ export function extractSymbols(
     // from a top-level `__lt__`, and 66 different `__init__`s indistinguishable from each
     // other. findParentClass returns null at file scope, so top-level definitions are
     // unaffected in every language.
-    const parentClass = findParentClass(definitionNode);
+    const parentClass = findParentClass(definitionNode, language);
     const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
 
-    symbols.push({
+    const positionKey = `${qualifiedName}:${definitionNode.startPosition.row}`;
+    const existing = byPosition.get(positionKey);
+    if (existing && existing.kind !== "constant") continue;
+
+    byPosition.set(positionKey, {
       name: nameText,
       qualified_name: qualifiedName,
       kind,
       parent_name: parentClass,
       line_start: definitionNode.startPosition.row + 1, // 1-indexed
       line_end: definitionNode.endPosition.row + 1,
-      signature: extractSignature(definitionNode, sourceLines),
+      signature: extractSignature(definitionNode, sourceLines, language),
       body_hash: computeBodyHash(definitionNode),
       export_status: detectExportStatus(definitionNode, language),
     });
   }
-
-  query.delete();
-  return symbols;
 }
 
 // ─── Call-Site Extraction ─────────────────────────────────
@@ -368,6 +434,43 @@ const ENCLOSING_FUNCTION_TYPES = new Set([
   "arrow_function",
   "function_expression",
 ]);
+
+const ELIXIR_DEFINITION_TARGETS = new Set([
+  "def",
+  "defp",
+  "defmacro",
+  "defmacrop",
+  "defmodule",
+  "defprotocol",
+]);
+
+/** True when an Elixir `call` node is part of a declaration rather than a call.
+ *  Two shapes reach here: `@doc "..."`, where the attribute name parses as a
+ *  call under `@`, and the head of a definition — `def greet(name)` holds
+ *  `greet(name)` as a call inside its own arguments, so the function appears to
+ *  call itself on its definition line. */
+function isElixirDeclarationSite(site: TreeSitterNode): boolean {
+  const parent = site.parent;
+  if (!parent) return false;
+  if (parent.type === "unary_operator" && parent.childForFieldName("operator")?.text === "@") {
+    return true;
+  }
+  // A guard puts the head on the left of `when`: in
+  // `def decode(str) when is_binary(str)` the head is `decode(str)` and the
+  // guard `is_binary(str)` is a real call, so only the left side is skipped.
+  let args = parent;
+  if (parent.type === "binary_operator") {
+    // Compare by span: every accessor hands back a fresh wrapper, so two reads
+    // of the same node are never the same object.
+    const left = parent.childForFieldName("left");
+    if (!left || left.startPosition.row !== site.startPosition.row) return false;
+    if (left.startPosition.column !== site.startPosition.column) return false;
+    args = parent.parent!;
+  }
+  if (args?.type !== "arguments") return false;
+  const target = args.parent?.childForFieldName("target");
+  return target ? ELIXIR_DEFINITION_TARGETS.has(target.text) : false;
+}
 
 function findEnclosingFunction(node: TreeSitterNode): string {
   let current = node.parent;
@@ -438,8 +541,22 @@ export function extractCallSites(
     return [];
   }
 
-  const matches = query.matches(tree.rootNode);
   const sites: ExtractedCallSite[] = [];
+  try {
+    collectCallSites(query, tree, language, sites);
+  } finally {
+    query.delete();
+  }
+  return sites;
+}
+
+function collectCallSites(
+  query: TreeSitterQuery,
+  tree: TreeSitterTree,
+  language: SupportedLanguage,
+  sites: ExtractedCallSite[],
+): void {
+  const matches = query.matches(tree.rootNode);
   const seen = new Set<string>();
 
   for (const match of matches) {
@@ -455,6 +572,7 @@ export function extractCallSites(
     }
 
     if (!calleeName || !siteNode) continue;
+    if (language === "elixir" && isElixirDeclarationSite(siteNode)) continue;
 
     const line = siteNode.startPosition.row + 1; // 1-indexed
     const dedupKey = `${calleeName}:${line}`;
@@ -474,7 +592,4 @@ export function extractCallSites(
       snippet,
     });
   }
-
-  query.delete();
-  return sites;
 }
