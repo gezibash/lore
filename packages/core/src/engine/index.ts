@@ -289,7 +289,11 @@ import {
   getLastDocIndexedAt,
   getJournalEntryCount,
 } from "@/db/chunks.ts";
-import { countEmbeddingsByModel, countSymbolEmbeddingsByModel } from "@/db/embeddings.ts";
+import {
+  countEmbeddingsByModel,
+  countSymbolEmbeddingLane,
+  staleSymbolEmbeddingModels,
+} from "@/db/embeddings.ts";
 import { countAllOrphanedRows } from "@/db/chunks.ts";
 
 interface CloseJobPayload {
@@ -1568,17 +1572,12 @@ export class LoreEngine {
     // The code lane writes two tables, and the count above reads one of them.
     // The symbol lane keeps its own figure: the two lanes go stale apart, they
     // cost different amounts to rebuild, and one combined number names neither.
-    // Only the code model is ever written here, so it alone is the valid model.
-    // With no code model configured, every row is stale: binding extraction
-    // needs that model to read the table at all.
-    const symbolEmbeddingModels = countSymbolEmbeddingsByModel(db);
-    const totalSymbolEmbeddings = symbolEmbeddingModels.reduce((s, r) => s + r.cnt, 0);
-    const matchingSymbolEmbeddings = currentCodeModel
-      ? symbolEmbeddingModels
-          .filter((r) => r.model === currentCodeModel)
-          .reduce((s, r) => s + r.cnt, 0)
-      : 0;
-    const staleSymbolEmbeddings = totalSymbolEmbeddings - matchingSymbolEmbeddings;
+    // The unit is symbols. A symbol that holds an old row and a current one
+    // reads correctly, so only a symbol with no current-model row is stale.
+    // With no code model configured, every embedded symbol is stale: binding
+    // extraction needs that model to read the table at all.
+    const symbolLane = countSymbolEmbeddingLane(db, currentCodeModel);
+    const staleSymbolEmbeddings = symbolLane.embedded - symbolLane.currentModel;
     const orphanedRows = countAllOrphanedRows(db);
 
     // Priorities: ranked by expected debt share p(c)·R(c) — the concepts whose
@@ -1681,14 +1680,18 @@ export class LoreEngine {
     }
 
     // Embedding mismatch adds a maintenance priority and feeds ask-debt.
+    //
+    // The mind-level priorities below unshift, so they lead the concept work.
+    // The compact status renders the first three, and a mind with concept
+    // pressure is the one most likely to hide a broken lane behind them.
     if (staleEmbeddings > 0) {
       const staleModels = embeddingModels
         .filter((r) => !validModels.has(r.model))
         .map((r) => r.model);
-      priorities.push({
+      priorities.unshift({
         concept: "(embeddings)",
         action: "refresh embeddings",
-        reason: `${staleEmbeddings} embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore sys embeddings refresh.`,
+        reason: `${staleEmbeddings} chunk embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore sys embeddings refresh.`,
         last_narrative: undefined,
         changed_at: undefined,
       });
@@ -1696,19 +1699,17 @@ export class LoreEngine {
 
     // The symbol lane raises its own priority. `lore sys embeddings refresh`
     // repairs both lanes, but the reason must name the lane and its model, or
-    // the operator cannot tell which count moved. The failure it reports is
-    // silent otherwise: symbol search and automatic binding both return zero
-    // rows, which reads as a repository with no matches.
+    // the operator cannot tell which count moved. The count holds the symbols
+    // no reader can reach, so the consequence it names is true: a symbol that
+    // also carries a current-model row stays out of it.
     if (staleSymbolEmbeddings > 0) {
-      const staleSymbolModels = symbolEmbeddingModels
-        .filter((r) => r.model !== currentCodeModel)
-        .map((r) => r.model);
-      priorities.push({
+      const staleSymbolModels = staleSymbolEmbeddingModels(db, currentCodeModel);
+      priorities.unshift({
         concept: "(symbol embeddings)",
         action: "refresh embeddings",
         reason: currentCodeModel
-          ? `${staleSymbolEmbeddings} symbol embedding(s) use outdated model ${staleSymbolModels.join(", ")} (current code model: ${currentCodeModel}). Symbol search and automatic binding return nothing. Run lore sys embeddings refresh.`
-          : `${staleSymbolEmbeddings} symbol embedding(s) use model ${staleSymbolModels.join(", ")} and no code model is configured. Set ai.embedding.code.model, then run lore sys embeddings refresh.`,
+          ? `${staleSymbolEmbeddings} of ${symbolLane.embedded} embedded symbols hold no vector on code model ${currentCodeModel} (they hold ${staleSymbolModels.join(", ")}). Symbol search and automatic binding skip them. Run lore sys embeddings refresh.`
+          : `${staleSymbolEmbeddings} embedded symbols hold vectors on ${staleSymbolModels.join(", ")} and no code model is configured. Set ai.embedding.code.model, then run lore sys embeddings refresh.`,
         last_narrative: undefined,
         changed_at: undefined,
       });
@@ -1718,7 +1719,7 @@ export class LoreEngine {
     // them here. A mind written before the delete paths cleared their
     // dependents keeps the rows until a prune removes them.
     if (orphanedRows > 0) {
-      priorities.push({
+      priorities.unshift({
         concept: "(database)",
         action: "prune database",
         reason: `${orphanedRows} row(s) belong to chunks or symbols that are gone. Run lore sys prune.`,
@@ -1753,14 +1754,16 @@ export class LoreEngine {
           }
         : undefined;
 
-    // Reported whenever the symbol lane holds a reachable row. Orphans stay out
-    // of this figure; the prune priority above already names them, and it
-    // counts every symbol-keyed table, not this one alone.
+    // Reported whenever the mind holds a symbol, not only when the lane holds a
+    // vector. A lane the code pass emptied — it deletes first and swallows a
+    // failed batch — reports 0 embedded of N symbols, which reads differently
+    // from a mind that has no code indexed.
     const symbolEmbeddingStatus =
-      totalSymbolEmbeddings > 0
+      symbolLane.symbols > 0 || symbolLane.embedded > 0
         ? {
-            total: totalSymbolEmbeddings,
-            current_model: matchingSymbolEmbeddings,
+            symbols: symbolLane.symbols,
+            total: symbolLane.embedded,
+            current_model: symbolLane.currentModel,
             stale: staleSymbolEmbeddings,
             model: currentCodeModel,
           }
@@ -1862,12 +1865,16 @@ export class LoreEngine {
             doc_chunks: lake.doc_chunks,
           }
         : null,
-      embeddingStatus: embeddingStatus
-        ? {
-            total: embeddingStatus.total,
-            stale: embeddingStatus.stale,
-          }
-        : null,
+      // Both lanes. The component is one figure for the embedding state, so a
+      // stale symbol lane must move it; status would otherwise report a stale
+      // lane beside embedding_mismatch 0.
+      embeddingStatus:
+        embeddingStatus || symbolEmbeddingStatus
+          ? {
+              total: (embeddingStatus?.total ?? 0) + (symbolEmbeddingStatus?.total ?? 0),
+              stale: (embeddingStatus?.stale ?? 0) + (symbolEmbeddingStatus?.stale ?? 0),
+            }
+          : null,
     });
 
     // Health follows the config-owned band; an unmeasured mind is not "good".

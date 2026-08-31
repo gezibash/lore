@@ -502,23 +502,32 @@ export function formatStatus(result: StatusResult): string {
     }
   }
 
-  // Two lanes, two figures. The chunk lane and the symbol lane hold their own
-  // model, and a refresh that repairs both must still say which one went stale.
-  const staleChunkEmbeddings = result.embedding_status?.stale ?? 0;
-  const staleSymbolEmbeddings = result.symbol_embedding_status?.stale ?? 0;
-  if (staleChunkEmbeddings > 0 || staleSymbolEmbeddings > 0) {
+  // Two lanes, two figures. The chunk lane counts rows; the symbol lane counts
+  // symbols, because a symbol that holds a current vector beside an old one
+  // reads correctly. A refresh repairs both lanes, so the text must say which
+  // one went stale.
+  const chunkLane = result.embedding_status;
+  const symbolLane = result.symbol_embedding_status;
+  const staleChunkEmbeddings = chunkLane?.stale ?? 0;
+  const staleSymbolEmbeddings = symbolLane?.stale ?? 0;
+  const emptySymbolLane = symbolLane != null && symbolLane.symbols > 0 && symbolLane.total === 0;
+  if (staleChunkEmbeddings > 0 || staleSymbolEmbeddings > 0 || emptySymbolLane) {
     lines.push("\n## Embedding Mismatch\n");
-    if (result.embedding_status && staleChunkEmbeddings > 0) {
+    if (chunkLane && staleChunkEmbeddings > 0) {
       lines.push(
-        `${compactCount(result.embedding_status.stale)}/${compactCount(result.embedding_status.total)} chunk embeddings use an outdated model (current: **${result.embedding_status.model}**).`,
+        `${compactCount(chunkLane.stale)}/${compactCount(chunkLane.total)} chunk embeddings use an outdated model (current: **${chunkLane.model}**).`,
       );
     }
-    if (result.symbol_embedding_status && staleSymbolEmbeddings > 0) {
-      const symbols = result.symbol_embedding_status;
+    if (symbolLane && staleSymbolEmbeddings > 0) {
       lines.push(
-        symbols.model
-          ? `${compactCount(symbols.stale)}/${compactCount(symbols.total)} symbol embeddings use an outdated model (current: **${symbols.model}**). Symbol search and automatic binding return nothing.`
-          : `${compactCount(symbols.stale)}/${compactCount(symbols.total)} symbol embeddings remain and no code model is configured. Set **ai.embedding.code.model** first.`,
+        symbolLane.model
+          ? `${compactCount(symbolLane.stale)}/${compactCount(symbolLane.total)} embedded symbols hold no vector on code model **${symbolLane.model}**. Symbol search and automatic binding skip them.`
+          : `${compactCount(symbolLane.stale)}/${compactCount(symbolLane.total)} embedded symbols hold vectors no reader can use, because no code model is configured. Set **ai.embedding.code.model** first.`,
+      );
+    }
+    if (symbolLane && emptySymbolLane) {
+      lines.push(
+        `0/${compactCount(symbolLane.symbols)} symbols hold a code vector. The symbol lane is empty, so symbol search returns nothing until it is rebuilt.`,
       );
     }
     lines.push("Run `lore sys embeddings refresh` to recompute all embeddings.");

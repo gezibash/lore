@@ -869,6 +869,7 @@ export interface StatusResult {
     failed_close_jobs?: number;
     oldest_close_job_at?: string | null;
   };
+  /** The chunk lane: prose, doc, journal and source chunks. Counted in rows. */
   embedding_status?: {
     total: number;
     current_model: number;
@@ -876,10 +877,14 @@ export interface StatusResult {
     model: string;
   };
   /**
-   * The code lane's second table. `model` is the code model, and it is null
-   * when no code model is configured — every row is then unreadable.
+   * The code lane's second table, counted in symbols. `total` is the symbols
+   * that hold a vector, `stale` the ones the current code model cannot read,
+   * and `symbols` every live symbol, so an emptied lane reports 0 of N.
+   * `model` is the code model, and it is null when none is configured — every
+   * vector is then unreadable.
    */
   symbol_embedding_status?: {
+    symbols: number;
     total: number;
     current_model: number;
     stale: number;

@@ -5,6 +5,7 @@ import { getBindingCounts, getCoverageStats, getDriftedBindings } from "@/db/con
 import { computeStateDistance } from "./residuals.ts";
 import { getLastDocIndexedAt } from "@/db/chunks.ts";
 import { getLastScannedAt } from "@/db/source-files.ts";
+import { countEmbeddingsByModel, countSymbolEmbeddingLane } from "@/db/embeddings.ts";
 import type { DebtSnapshot } from "./debt.ts";
 import { discoverFiles } from "./file-discovery.ts";
 import { discoverTextFiles } from "./file-discovery-text.ts";
@@ -117,21 +118,22 @@ function computeEmbeddingMismatchRatio(
     return clamp01(precomputed.stale / precomputed.total);
   }
 
-  const rows = db
-    .query<{ model: string; cnt: number }, []>(
-      `SELECT model, COUNT(*) as cnt FROM embeddings GROUP BY model`,
-    )
-    .all();
-  const total = rows.reduce((sum, row) => sum + row.cnt, 0);
-  if (total <= 0) return 0;
+  // The same two lanes status reports, read the same way. A raw GROUP BY over
+  // the embeddings table counts rows whose chunk is gone, and it cannot see the
+  // symbol lane at all, so ask and status returned different numbers.
   const currentModel = config.ai.embedding.model;
   const currentCodeModel = config.ai.embedding.code?.model ?? null;
   const validModels = new Set([currentModel, ...(currentCodeModel ? [currentCodeModel] : [])]);
-  const matching = rows
-    .filter((row) => validModels.has(row.model))
-    .reduce((sum, row) => sum + row.cnt, 0);
-  const stale = total - matching;
-  return clamp01(stale / total);
+  const rows = countEmbeddingsByModel(db);
+  const chunkTotal = rows.reduce((sum, row) => sum + row.cnt, 0);
+  const chunkStale =
+    chunkTotal -
+    rows.filter((row) => validModels.has(row.model)).reduce((sum, row) => sum + row.cnt, 0);
+
+  const lane = countSymbolEmbeddingLane(db, currentCodeModel);
+  const total = chunkTotal + lane.embedded;
+  if (total <= 0) return 0;
+  return clamp01((chunkStale + (lane.embedded - lane.currentModel)) / total);
 }
 
 function computeFreshnessSnapshotFromLake(

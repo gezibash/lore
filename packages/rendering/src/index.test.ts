@@ -86,11 +86,17 @@ test("renderStatus names the symbol lane apart from the chunk lane", () => {
       concept: "(symbol embeddings)",
       action: "refresh embeddings",
       reason:
-        "7 symbol embedding(s) use outdated model code-old (current code model: code-new). Symbol search and automatic binding return nothing. Run lore sys embeddings refresh.",
+        "7 of 9 embedded symbols hold no vector on code model code-new (they hold code-old). Symbol search and automatic binding skip them. Run lore sys embeddings refresh.",
     },
   ];
   status.embedding_status = { total: 40, current_model: 40, stale: 0, model: "text-new" };
-  status.symbol_embedding_status = { total: 7, current_model: 0, stale: 7, model: "code-new" };
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 9,
+    current_model: 2,
+    stale: 7,
+    model: "code-new",
+  };
 
   const cli = stripAnsi(renderStatus(status, { route: "cli" }));
   expect(cli).toContain("symbol embeddings");
@@ -101,8 +107,41 @@ test("renderStatus names the symbol lane apart from the chunk lane", () => {
   // The chunk lane is current, so the mismatch section names the symbol lane
   // alone. One combined figure would name neither.
   const markdown = renderStatus(status, { format: "markdown" });
-  expect(markdown).toContain("7/7 symbol embeddings use an outdated model");
+  expect(markdown).toContain("7/9 embedded symbols hold no vector on code model **code-new**");
   expect(markdown).not.toContain("chunk embeddings use an outdated model");
+});
+
+test("renderStatus reports both lanes when both are stale", () => {
+  const status = sampleStatus();
+  status.embedding_status = { total: 40, current_model: 10, stale: 30, model: "text-new" };
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 9,
+    current_model: 0,
+    stale: 9,
+    model: null,
+  };
+
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("30/40 chunk embeddings use an outdated model");
+  // No code model: the vectors are unreadable, and the repair starts at config.
+  expect(markdown).toContain("9/9 embedded symbols hold vectors no reader can use");
+  expect(markdown).toContain("ai.embedding.code.model");
+  expect(markdown).toContain("lore sys embeddings refresh");
+});
+
+test("renderStatus names an emptied symbol lane", () => {
+  const status = sampleStatus();
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 0,
+    current_model: 0,
+    stale: 0,
+    model: "code-new",
+  };
+
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("0/12 symbols hold a code vector");
 });
 
 test("renderStatus sends the database priority to the prune", () => {

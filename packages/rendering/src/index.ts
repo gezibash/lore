@@ -452,11 +452,11 @@ function compactPriorityAction(action: string): string {
 
 function compactPriorityReason(priority: StatusResult["priorities"][number]): string {
   if (priority.concept === "(embeddings)") {
-    const staleMatch = priority.reason.match(/(\d+) embeddings?/);
+    const staleMatch = priority.reason.match(/(\d+) chunk embeddings?/);
     return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
   }
   if (priority.concept === "(symbol embeddings)") {
-    const staleMatch = priority.reason.match(/(\d+) symbol embedding/);
+    const staleMatch = priority.reason.match(/(\d+)(?: of \d+)? embedded symbols?/);
     return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
   }
   if (priority.concept === "(maintenance)") {
