@@ -19,6 +19,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -100,6 +101,62 @@ export function skillState(dir: string, source: string): SkillState {
 }
 
 export type SkillResult = { ok: boolean; message: string };
+
+/** Is the skills CLI reachable? It needs npx, which needs Node. */
+export function npxAvailable(run = defaultProbe): boolean {
+  return run();
+}
+
+function defaultProbe(): boolean {
+  try {
+    return spawnSync("npx", ["--version"], { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export type NpxRunner = (args: string[]) => number;
+
+function defaultNpxRunner(args: string[]): number {
+  const result = spawnSync("npx", args, { stdio: "inherit" });
+  return result.status ?? 1;
+}
+
+/**
+ * Hand the install to the skills CLI.
+ *
+ * The source is the skill this binary carries, not the repository. The CLI
+ * then installs the skill that matches the running lore, and still reaches
+ * every agent it supports.
+ */
+export function installWithNpx(opts: {
+  source?: string;
+  agents?: string[];
+  project?: boolean;
+  run?: NpxRunner;
+}): SkillResult {
+  const source = opts.source ?? skillSource();
+  const agents = opts.agents?.length ? opts.agents : ["claude-code"];
+  const run = opts.run ?? defaultNpxRunner;
+
+  if (!existsSync(join(source, "SKILL.md"))) {
+    return { ok: false, message: `This build carries no skill at ${source}.` };
+  }
+
+  const args = ["--yes", "skills@latest", "add", source];
+  for (const agent of agents) args.push("--agent", agent);
+  if (!opts.project) args.push("--global");
+  args.push("--yes");
+
+  const status = run(args);
+  if (status !== 0) return { ok: false, message: "npx skills failed." };
+  return {
+    ok: true,
+    message:
+      "The skills CLI copied the skill. It does not follow `lore upgrade` — " +
+      "run `lore skill install` again after an upgrade, or use --link.",
+  };
+}
 
 export function installSkill(opts: {
   dir?: string;

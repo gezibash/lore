@@ -2,7 +2,15 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describeSkill, installSkill, skillSource, skillState, uninstallSkill } from "./skill.ts";
+import {
+  describeSkill,
+  installSkill,
+  installWithNpx,
+  npxAvailable,
+  skillSource,
+  skillState,
+  uninstallSkill,
+} from "./skill.ts";
 
 function makeSource(body = "# Lore\n"): string {
   const dir = mkdtempSync(join(tmpdir(), "lore-skill-src-"));
@@ -197,4 +205,85 @@ test("the shipped skill has frontmatter every agent can parse", () => {
   expect(typeof front.description).toBe("string");
   expect(front.name).toBe("lore");
   expect((front.description as string).length).toBeGreaterThan(20);
+});
+
+test("npx delegation feeds the CLI the skill this binary carries", () => {
+  const source = makeSource();
+  const calls: string[][] = [];
+  try {
+    const result = installWithNpx({
+      source,
+      run: (args) => {
+        calls.push(args);
+        return 0;
+      },
+    });
+    expect(result.ok).toBe(true);
+    const args = calls[0]!;
+    // The source is the local skill, never the repository.
+    expect(args).toContain(source);
+    expect(args.some((a) => a.includes("gezibash/lore"))).toBe(false);
+    expect(args).toContain("--global");
+    expect(args.slice(args.indexOf("--agent"))).toContain("claude-code");
+    // The message warns that a copy does not follow an upgrade.
+    expect(result.message).toContain("--link");
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+  }
+});
+
+test("npx delegation passes agents through and drops --global for a project", () => {
+  const source = makeSource();
+  const calls: string[][] = [];
+  try {
+    installWithNpx({
+      source,
+      agents: ["claude-code", "codex"],
+      project: true,
+      run: (args) => {
+        calls.push(args);
+        return 0;
+      },
+    });
+    const args = calls[0]!;
+    expect(args).toContain("codex");
+    expect(args).toContain("claude-code");
+    expect(args).not.toContain("--global");
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+  }
+});
+
+test("npx delegation reports a non-zero exit", () => {
+  const source = makeSource();
+  try {
+    const result = installWithNpx({ source, run: () => 1 });
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("failed");
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+  }
+});
+
+test("npx delegation refuses a build with no skill", () => {
+  const empty = mkdtempSync(join(tmpdir(), "lore-skill-empty2-"));
+  let ran = false;
+  try {
+    const result = installWithNpx({
+      source: empty,
+      run: () => {
+        ran = true;
+        return 0;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(ran).toBe(false);
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test("npxAvailable reports what the probe says", () => {
+  expect(npxAvailable(() => true)).toBe(true);
+  expect(npxAvailable(() => false)).toBe(false);
 });

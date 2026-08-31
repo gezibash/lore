@@ -4,7 +4,13 @@ import { formatError } from "./formatters.ts";
 import { buildCommanderCli } from "./commander-adapter.ts";
 import { isInteractiveOutputEnabled } from "./tty.ts";
 import { refreshUpdateCache, runUpgrade, updateNotice } from "./update.ts";
-import { describeSkill, installSkill, uninstallSkill } from "./skill.ts";
+import {
+  describeSkill,
+  installSkill,
+  installWithNpx,
+  npxAvailable,
+  uninstallSkill,
+} from "./skill.ts";
 import { defineCli, defineCommand } from "./cli-schema.ts";
 import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
@@ -734,11 +740,43 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             name: "install",
             description: "Install the skill for Claude Code",
             options: {
+              agent: {
+                type: "string",
+                description: "Install for this agent (repeatable). Default: claude-code",
+                repeatable: true,
+              },
+              project: { type: "boolean", description: "Install into this project, not the home directory" },
+              link: { type: "boolean", description: "Link from this binary instead of calling the skills CLI" },
               dir: { type: "string", description: "Install somewhere other than ~/.claude/skills/lore" },
               copy: { type: "boolean", description: "Write a copy instead of a link" },
               force: { type: "boolean", description: "Replace whatever sits at the target" },
             },
             action({ options }) {
+              const agents = (options.agent as string[] | string | undefined) ?? [];
+              const agentList = Array.isArray(agents) ? agents : [agents];
+
+              // --dir, --link and --copy each name a path the skills CLI does
+              // not take, so they keep the install inside this binary.
+              const wantsBuiltIn =
+                Boolean(options.link) || Boolean(options.copy) || options.dir !== undefined;
+
+              if (!wantsBuiltIn) {
+                if (npxAvailable()) {
+                  const result = installWithNpx({
+                    agents: agentList,
+                    project: Boolean(options.project),
+                  });
+                  console.log(result.message);
+                  if (!result.ok) process.exitCode = 1;
+                  return;
+                }
+                console.log("npx is not available — linking from this binary instead.");
+              } else if (agentList.length > 0 || options.project) {
+                console.log("--agent and --project need the skills CLI. Drop --link, --copy and --dir.");
+                process.exitCode = 1;
+                return;
+              }
+
               const result = installSkill({
                 dir: options.dir as string | undefined,
                 copy: Boolean(options.copy),
