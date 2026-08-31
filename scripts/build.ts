@@ -1,11 +1,18 @@
 /**
  * Build a distributable lore.
  *
- * `bun build --compile` produces one executable, but two native pieces cannot
+ * `bun build --compile` produces one executable, but the native pieces cannot
  * travel inside it. sqlite-vec finds its loadable extension by walking up from
- * its own package directory, which does not exist inside a compiled bundle,
- * and the SQLite that Bun embeds is built without extension loading at all.
- * Both are copied into `dist/lib/`, where connection.ts looks first.
+ * its own package directory, which does not exist inside a compiled bundle.
+ * The extension is copied into `dist/lib/`, where connection.ts looks first.
+ *
+ * macOS needs a second copy. Bun uses the system SQLite there, and Apple
+ * builds it without extension loading, so the binary also carries a Homebrew
+ * libsqlite3.dylib and connection.ts hands it to setCustomSQLite.
+ *
+ * Linux needs no such copy. The SQLite that Bun carries on Linux loads
+ * extensions, so vec0.so alone is enough. The Linux CI builds prove this:
+ * their smoke test opens a database and loads the extension.
  */
 import { mkdirSync, copyFileSync, existsSync, readdirSync, statSync, rmSync } from "fs";
 import { dirname, join } from "path";
