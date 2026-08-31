@@ -164,6 +164,82 @@ test("scanProject keeps symbol bindings when a rescan re-qualifies the symbol", 
   }
 });
 
+test("scanProject indexes .jsx with the javascript grammar", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    // .jsx maps to javascript, so it must not be handed the tsx grammar: the
+    // javascript queries match nothing against a tsx tree and the file indexes
+    // with no symbols at all.
+    writeTextFile(
+      `${codeDir}/src/widget.jsx`,
+      [
+        "export function Widget(props) { return <div>{props.x}</div>; }",
+        "export class Panel { render() { return <span/>; } }",
+        "const arrow = (a) => a + 1;",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await scanProject(db, codeDir, loreDir);
+    expect(result.files_failed).toBe(0);
+
+    const stored = getSourceFileByPath(db, "src/widget.jsx");
+    expect(stored?.language).toBe("javascript");
+
+    const names = db
+      .query<{ qualified_name: string }, []>("SELECT qualified_name FROM symbols")
+      .all()
+      .map((row) => row.qualified_name)
+      .sort();
+    // One row per definition: a const holding an arrow function matches both
+    // the function pattern and the constant pattern, and must not be stored twice.
+    expect(names).toEqual(["Panel", "Panel.render", "Widget", "arrow"]);
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});
+
+test("rescanFiles refreshes an Elixir file instead of dropping it", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    // rescanFiles once carried its own extension map, which never learned about
+    // Elixir. Every .ex file was skipped, and filesFailed did not say so, so the
+    // stale symbols kept being served after a heal or a narrative close.
+    writeTextFile(`${codeDir}/src/g.ex`, "defmodule G do\n  def a(x) do\n    x\n  end\nend\n");
+    await scanProject(db, codeDir, loreDir);
+    expect(getSourceFileByPath(db, "src/g.ex")?.symbol_count).toBe(2);
+
+    writeTextFile(
+      `${codeDir}/src/g.ex`,
+      "defmodule G do\n  def a(x) do\n    x\n  end\n\n  def b(y) do\n    y\n  end\nend\n",
+    );
+    const result = await rescanFiles(db, codeDir, ["src/g.ex"], loreDir);
+
+    expect(result.rescanned).toBe(1);
+    expect(result.filesFailed).toEqual([]);
+    expect(getSourceFileByPath(db, "src/g.ex")?.symbol_count).toBe(3);
+
+    const names = db
+      .query<{ qualified_name: string }, []>("SELECT qualified_name FROM symbols")
+      .all()
+      .map((row) => row.qualified_name)
+      .sort();
+    expect(names).toEqual(["G", "G.a", "G.b"]);
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});
+
 test("rescanFiles reports files it dropped instead of silently skipping them", async () => {
   const db = createTestDb();
   const codeDir = createTempDir("lore-code-");
