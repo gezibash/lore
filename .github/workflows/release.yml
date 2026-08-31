@@ -36,7 +36,9 @@ jobs:
       matrix:
         include:
           - { target: darwin-arm64, runner: macos-14 }
-          - { target: darwin-x64, runner: macos-13 }
+          # macos-13 retired on 2025-12-08. macos-15-intel is the last x86_64
+          # macOS image, and GitHub removes it in August 2027.
+          - { target: darwin-x64, runner: macos-15-intel }
           - { target: linux-x64, runner: ubuntu-latest }
           - { target: linux-arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
