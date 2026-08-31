@@ -29,3 +29,24 @@ test("XML keeps paired drop tags, which the void list must not break", () => {
   const source = `<doc><meta><author>Hidden</author></meta><title>T</title><p>Visible text.</p></doc>`;
   expect(extractMarkupMarkdown(source, "xml")).toBe("## T\n\nVisible text.");
 });
+
+test("HTML inline tags keep the source spacing around them", () => {
+  const source =
+    '<p>Last <strong>paragraph</strong>. See <a href="x">the guide</a>, or <em>ask</em>!</p>';
+  expect(extractMarkupMarkdown(source, "html")).toBe("Last paragraph. See the guide, or ask!");
+});
+
+test("an inline tag with no surrounding space does not fuse two words", () => {
+  const source = "<p><span>Alpha</span> <span>Beta</span><br>Gamma</p>";
+  expect(extractMarkupMarkdown(source, "html")).toBe("Alpha Beta Gamma");
+});
+
+test("XML inline labels keep the space that holds them off their text", () => {
+  const source = "<P><NO.PARAG>1.</NO.PARAG>The paragraph text.</P>";
+  expect(extractMarkupMarkdown(source, "xml")).toBe("1. The paragraph text.");
+});
+
+test("an XML amount keeps its currency", () => {
+  const source = '<P><FT TYPE="NUMBER">20000000</FT> EUR</P>';
+  expect(extractMarkupMarkdown(source, "xml")).toBe("20000000 EUR");
+});
