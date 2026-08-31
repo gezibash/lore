@@ -49,6 +49,7 @@ Lore is CLI-only. There is no MCP surface.
    - Use `--target create:<concept>` when a new concept will be journaled.
    - Use `--target update:<concept>` when the narrative should feed an existing concept directly.
    - Lifecycle targets exist too: `rename:old:new`, `merge:src:into`, `archive:name[:reason]`, `split:name[:parts]`, `restore:name`.
+   - `create:name` against an archived name restores that concept and writes the new body. You do not need `lore sys concept restore` first. If the name was merged into another concept, the close stops and names it.
 4. Write often with `lore write <narrative> "<entry>"`.
    - Pass `--concept` unless the narrative has exactly one create/update target.
    - Add `--symbol` for touched symbols and `--ref` for file or line references.

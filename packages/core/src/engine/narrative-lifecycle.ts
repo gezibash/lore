@@ -3055,6 +3055,7 @@ export async function closeNarrativeOp(
 
   const conceptsUpdated: string[] = [];
   const conceptsCreated: string[] = [];
+  const conceptsRestored: string[] = [];
   const conflicts: MergeConflict[] = [];
 
   type PreparedChunkWrite = {
@@ -3065,6 +3066,8 @@ export async function closeNarrativeOp(
     filePath: string;
     content: string;
     sourceEntryIndices: number[];
+    /** The concept was archived and this write brings it back. */
+    restoresArchived: boolean;
   };
 
   type PreparedConceptIntegration = {
@@ -3228,6 +3231,7 @@ export async function closeNarrativeOp(
           filePath,
           content: finalContent,
           sourceEntryIndices: update.sourceEntryIndices,
+          restoresArchived: false,
         },
         pendingEmbed: { chunkId: id, content: finalContent },
         residualPair: {
@@ -3264,13 +3268,40 @@ export async function closeNarrativeOp(
     async (create): Promise<PreparedConceptIntegration> => {
       const existingConcept =
         activeConceptsByName.get(create.conceptName) ?? getConceptByName(db, create.conceptName);
+      // Archive and merge keep the record and hide it. The name still belongs
+      // to that record, so a create over the name lands on it.
+      const inactiveConcept =
+        existingConcept &&
+        existingConcept.lifecycle_status != null &&
+        existingConcept.lifecycle_status !== "active"
+          ? existingConcept
+          : null;
+      if (inactiveConcept?.lifecycle_status === "merged") {
+        const mergedInto = inactiveConcept.merged_into_concept_id
+          ? getConcept(db, inactiveConcept.merged_into_concept_id)
+          : null;
+        throw new LoreError(
+          "CONCEPT_INVALID_STATE",
+          `Concept '${create.conceptName}' was merged into '${mergedInto?.name ?? "another concept"}'. Write to that concept, or run 'lore sys concept restore ${create.conceptName}' and close again.`,
+          { concept: create.conceptName },
+        );
+      }
+      // An archived concept holds no active chunk. Supersede its last one, so
+      // the version chain and the residual pair stay whole.
+      const archivedChunk = inactiveConcept
+        ? (getChunksForConcept(db, inactiveConcept.id).at(-1) ?? null)
+        : null;
 
       let finalContent = create.content;
       let conceptId: string;
       let conflict: MergeConflict | null = null;
       let createdConcept: { id: string; name: string } | null = null;
 
-      if (existingConcept && !baseTree.has(existingConcept.id)) {
+      if (inactiveConcept) {
+        // Restore the record and write the new body onto it. Without this the
+        // close reports a create that `lore ls` and `lore show` never show.
+        conceptId = inactiveConcept.id;
+      } else if (existingConcept && !baseTree.has(existingConcept.id)) {
         // Concurrent create — concept exists now but didn't at merge base
         conceptId = existingConcept.id;
         if (existingConcept.active_chunk_id) {
@@ -3303,7 +3334,9 @@ export async function closeNarrativeOp(
 
       const currentParsed = existingConcept?.active_chunk_id
         ? (parsedChunksById.get(existingConcept.active_chunk_id) ?? null)
-        : null;
+        : archivedChunk
+          ? await readChunk(archivedChunk.file_path)
+          : null;
       const currentVersion =
         currentParsed && "fl_version" in currentParsed.frontmatter
           ? ((currentParsed.frontmatter as { fl_version: number }).fl_version ?? 0)
@@ -3324,6 +3357,7 @@ export async function closeNarrativeOp(
         conceptId,
         narrativeOrigin: narrativeName,
         version: nextVersion,
+        supersedes: archivedChunk?.id ?? null,
         content: finalContent,
       });
       writtenChunkPaths.push(filePath);
@@ -3334,14 +3368,15 @@ export async function closeNarrativeOp(
         preparedChunkWrite: {
           conceptId,
           conceptName: create.conceptName,
-          existingChunkId: null,
+          existingChunkId: archivedChunk?.id ?? null,
           chunkId: id,
           filePath,
           content: finalContent,
           sourceEntryIndices: create.sourceEntryIndices,
+          restoresArchived: inactiveConcept != null,
         },
         pendingEmbed: { chunkId: id, content: finalContent },
-        residualPair: { conceptId, newChunkId: id, oldChunkId: null },
+        residualPair: { conceptId, newChunkId: id, oldChunkId: archivedChunk?.id ?? null },
         conflict,
         createdConcept,
       };
@@ -3364,6 +3399,9 @@ export async function closeNarrativeOp(
     }
     touchedConceptIds.add(prepared.conceptId);
     conceptsCreated.push(prepared.conceptName);
+    if (prepared.preparedChunkWrite.restoresArchived) {
+      conceptsRestored.push(prepared.conceptName);
+    }
   }
 
   // Batch embed all new state chunks
@@ -3426,7 +3464,16 @@ export async function closeNarrativeOp(
       db,
       preparedChunkWrites.map((chunk) => ({
         id: chunk.conceptId,
-        fields: { active_chunk_id: chunk.chunkId, staleness: 0 },
+        fields: chunk.restoresArchived
+          ? {
+              active_chunk_id: chunk.chunkId,
+              staleness: 0,
+              lifecycle_status: "active" as const,
+              archived_at: null,
+              lifecycle_reason: null,
+              merged_into_concept_id: null,
+            }
+          : { active_chunk_id: chunk.chunkId, staleness: 0 },
       })),
     );
     markLanceDirty(db);
@@ -3546,6 +3593,10 @@ export async function closeNarrativeOp(
       .filter((transition) => transition.magnitude !== "moderate")
       .map((transition) => transition.concept_name);
     followUp = `Review phase-transition concepts: ${names.join(", ")}`;
+  }
+  if (conceptsRestored.length > 0) {
+    const restoredNote = `Restored archived concept(s) and wrote the new body: ${conceptsRestored.join(", ")}`;
+    followUp = followUp ? `${followUp}. ${restoredNote}` : restoredNote;
   }
   if (conflicts.length > 0) {
     const conflictNote = `${conflicts.length} merge conflict(s) auto-resolved`;
