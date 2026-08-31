@@ -354,30 +354,36 @@ A separate code embedding model can be configured under `ai.embedding.code` for 
 skills CLI, which reaches every agent, or with lore, which carries the skill
 inside the release.
 
-### With the skills CLI
-
-`npx skills` installs into any of 70+ agents, and keeps a lockfile.
-
 ```bash
-npx skills add gezibash/lore              # this project, ./.claude/skills/lore
-npx skills add gezibash/lore -g           # every project
-npx skills add gezibash/lore -a codex     # another agent
-npx skills update lore                    # later
+lore skill install                                  # Claude Code, every project
+lore skill install --agent codex --agent cursor     # other agents
+lore skill install --project                        # this project only
 ```
 
-GitHub is the registry, so there is nothing to publish. The CLI reads
-`skills/lore/` straight from this repository.
+`lore skill install` hands the work to the skills CLI, which reaches 70+ agents.
+It passes the skill this binary carries, not the repository, so the skill always
+matches the lore that installed it.
 
-### With lore itself
+The skills CLI copies. A copy does not follow `lore upgrade`, so run
+`lore skill install` again after one. `lore skill status` reports when the copy
+and the binary disagree.
 
 ```bash
-lore skill install
+lore skill install --link    # link instead, and follow every upgrade
 ```
 
-This links `~/.claude/skills/lore` at the skill the running lore carries. A link
-follows `lore upgrade` on its own, so the skill never falls behind the binary.
-It installs for Claude Code only, and at the personal level. For a project
-install, or for another agent, use the skills CLI above.
+`--link` needs no network and no npx. The link points inside the install, so the
+skill tracks the binary through an upgrade with no second command. It covers
+Claude Code at the personal level only. lore falls back to it when npx is
+absent.
+
+Install from the repository instead, without lore:
+
+```bash
+npx skills add gezibash/lore
+```
+
+GitHub is the registry for that CLI, so there is nothing to publish.
 
 ```bash
 lore skill status      # where it is, and whether it follows this lore
