@@ -15,6 +15,7 @@ const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".rs": "rust",
   ".ex": "elixir",
   ".exs": "elixir",
+  ".lean": "lean",
 };
 
 /** The language a file is indexed as, or null when lore does not parse it.

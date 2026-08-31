@@ -1198,7 +1198,14 @@ export interface RegisterResult {
 }
 
 // ─── Source Scanner Types ─────────────────────────────────
-export type SupportedLanguage = "typescript" | "javascript" | "python" | "go" | "rust" | "elixir";
+export type SupportedLanguage =
+  | "typescript"
+  | "javascript"
+  | "python"
+  | "go"
+  | "rust"
+  | "elixir"
+  | "lean";
 
 export type SymbolKind =
   | "function"
@@ -1211,7 +1218,11 @@ export type SymbolKind =
   | "trait"
   | "impl"
   | "module"
-  | "constant";
+  | "constant"
+  // Lean. A theorem is a proof, and the proof body is not the knowledge: the
+  // statement is. Kept apart from "function" so a reader can ask for the
+  // proofs about a concept without getting every definition too.
+  | "theorem";
 
 export interface SourceFileRow {
   id: string;

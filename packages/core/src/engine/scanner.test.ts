@@ -354,3 +354,51 @@ test("scanProject --force replaces chunks and symbols instead of duplicating the
     removeDir(loreDir);
   }
 });
+
+test("scanProject indexes a .lean file and keeps each doc comment with its theorem", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    writeTextFile(
+      `${codeDir}/src/Auth.lean`,
+      [
+        "namespace Auth",
+        "",
+        "/-- Refreshing a token never moves its expiry backwards. -/",
+        "theorem refresh_monotone (t : Token) : t.expiry ≤ (refresh t).expiry := by",
+        "  simp [refresh]",
+        "",
+        "-- A line comment documents this one.",
+        "def refresh (t : Token) : Token := mkToken (bump t.expiry)",
+        "",
+        "end Auth",
+        "",
+      ].join("\n"),
+    );
+
+    await scanProject(db, codeDir, loreDir);
+
+    const sourceFile = getSourceFileByPath(db, "src/Auth.lean");
+    expect(sourceFile?.language).toBe("lean");
+    expect(sourceFile!.symbol_count).toBeGreaterThan(0);
+
+    const chunkPaths = getSourceChunkPathsForFile(db, "src/Auth.lean");
+    const bodies = await Promise.all(chunkPaths.map((path) => Bun.file(path).text()));
+
+    // A `/-- ... -/` block states in words what the type says in symbols. It
+    // must travel with the theorem, not land in a neighbouring gap chunk.
+    const withTheorem = bodies.filter((body) => body.includes("theorem refresh_monotone"));
+    expect(withTheorem.length).toBe(1);
+    expect(withTheorem[0]).toContain("never moves its expiry backwards");
+
+    const withDef = bodies.filter((body) => body.includes("def refresh"));
+    expect(withDef.length).toBe(1);
+    expect(withDef[0]).toContain("A line comment documents this one.");
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});

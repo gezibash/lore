@@ -91,8 +91,12 @@ export class GrammarLoadError extends Error {
 const RUNTIME_WASM: GrammarLoader = () =>
   import("web-tree-sitter/web-tree-sitter.wasm", { with: { type: "file" } });
 
-// @repomix/tree-sitter-wasms ships 17 grammars, and Elixir is not one of them.
-// tree-sitter-elixir ships its own prebuilt wasm.
+// @repomix/tree-sitter-wasms ships prebuilt grammars for five of these
+// languages. tree-sitter-elixir ships its own.
+//
+// Lean has neither. Its grammar is a GitHub repository with no npm release, so
+// lore carries the built wasm in packages/core/grammars. Rebuild it with
+// scripts/build-lean-grammar.sh, which pins the grammar commit.
 const LANGUAGE_WASM_MAP: Record<SupportedLanguage, GrammarLoader> = {
   typescript: () =>
     import("@repomix/tree-sitter-wasms/out/tree-sitter-typescript.wasm", {
@@ -109,6 +113,7 @@ const LANGUAGE_WASM_MAP: Record<SupportedLanguage, GrammarLoader> = {
   rust: () =>
     import("@repomix/tree-sitter-wasms/out/tree-sitter-rust.wasm", { with: { type: "file" } }),
   elixir: () => import("tree-sitter-elixir/tree-sitter-elixir.wasm", { with: { type: "file" } }),
+  lean: () => import("../../grammars/tree-sitter-lean.wasm", { with: { type: "file" } }),
 };
 
 const TSX_WASM: GrammarLoader = () =>
@@ -216,7 +221,7 @@ export class TreeSitterPool {
 /** The pool every scan uses. web-tree-sitter offers no way to free a grammar —
  *  Language has no delete — so a pool per scan would load the same grammars
  *  again on every close and every heal and grow the wasm heap without bound.
- *  One pool loads each grammar once and holds at most seven for the process.
+ *  One pool loads each grammar once and holds at most eight for the process.
  *  Parsers, trees and queries stay per-call, so concurrent scans do not share
  *  mutable state. */
 let sharedPool: TreeSitterPool | null = null;

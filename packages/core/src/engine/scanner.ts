@@ -131,12 +131,28 @@ async function cleanupChunkFiles(filePaths: string[]): Promise<void> {
   await Promise.all(filePaths.map((filePath) => deleteSourceChunkFile(filePath)));
 }
 
-/** A line that carries only a comment. One predicate covers every supported
- *  language: `//`, `///`, `//!` (ts/js/go/rust), `#` (python/elixir), and the
- *  `/* ... *\/` block forms including continuation lines starting with `*`. */
-function isCommentLine(line: string): boolean {
+/** A line that carries only a comment: `//`, `///`, `//!` (ts/js/go/rust), `#`
+ *  (python/elixir), and the `/* ... *\/` block forms including continuation
+ *  lines starting with `*`.
+ *
+ *  Lean is asked separately, because its markers are code in the others. `--`
+ *  opens a Lean comment and decrements a TypeScript variable, so one shared
+ *  predicate would read `--count;` as documentation and attach it to whatever
+ *  declaration follows. */
+function isCommentLine(line: string, language: SupportedLanguage): boolean {
   const trimmed = line.trim();
   if (trimmed.length === 0) return false;
+  if (language === "lean") {
+    // `/-- ... -/` above a theorem says in words what the statement means. A
+    // reader who gets the statement without it reconstructs the intent from
+    // the type, which is the work the comment already did.
+    return (
+      trimmed.startsWith("--") ||
+      trimmed.startsWith("/-") ||
+      trimmed.startsWith("-/") ||
+      trimmed.startsWith("*")
+    );
+  }
   return (
     trimmed.startsWith("//") ||
     trimmed.startsWith("#") ||
@@ -158,12 +174,13 @@ function leadingCommentStart(
   contentLines: string[],
   symbolStart: number,
   claimed: Uint8Array,
+  language: SupportedLanguage,
 ): number {
   let start = symbolStart;
   for (let line = symbolStart - 1; line >= 1; line--) {
     if (claimed[line] === 1) break;
     const text = contentLines[line - 1];
-    if (text === undefined || !isCommentLine(text)) break;
+    if (text === undefined || !isCommentLine(text, language)) break;
     start = line;
   }
   return start;
@@ -218,7 +235,7 @@ async function writeSourceChunkFilesForSymbols(
   }
   const chunkRanges = symbols.map((sym) => ({
     sym,
-    start: leadingCommentStart(contentLines, sym.line_start, claimed),
+    start: leadingCommentStart(contentLines, sym.line_start, claimed, language),
     end: sym.line_end,
   }));
   for (const range of chunkRanges) {
