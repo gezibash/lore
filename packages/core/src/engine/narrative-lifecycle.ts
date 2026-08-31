@@ -100,7 +100,7 @@ import {
   getDriftedBindings,
   getBindingSummariesForConcept,
   getCoverageStats,
-  upsertConceptSymbol,
+  upsertInferredConceptSymbol,
 } from "@/db/concept-symbols.ts";
 import type { ConceptSymbolLineRange } from "@/db/concept-symbols.ts";
 import { getConceptRelations, get2HopNeighbors } from "@/db/concept-relations.ts";
@@ -3783,7 +3783,7 @@ export async function runCloseMaintenanceJob(
   ]);
   for (const pair of autoBindPairs.values()) {
     try {
-      upsertConceptSymbol(db, {
+      upsertInferredConceptSymbol(db, {
         conceptId: pair.conceptId,
         symbolId: pair.symbolId,
         bindingType: "mention",

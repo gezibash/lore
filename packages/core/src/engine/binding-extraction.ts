@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { SymbolRow, LoreConfig } from "@/types/index.ts";
 import {
-  deleteBindingsForConcept,
-  upsertConceptSymbol,
+  deleteInferredBindingsForConcept,
+  getExplicitBindingSymbolIds,
+  upsertInferredConceptSymbol,
   getFilesForConcept,
   pruneOrphanedBindings as pruneOrphanedBindingsDb,
 } from "@/db/concept-symbols.ts";
@@ -63,6 +64,11 @@ function getAllSymbolsByName(db: Database): Map<string, Array<SymbolRow & { file
 /**
  * Extract symbol bindings for a set of concepts.
  * Zero LLM calls — uses name mention matching against all scanned symbols.
+ *
+ * The pass rewrites what inference wrote and keeps what the operator stated.
+ * An explicit `ref` binding survives with its type, its confidence and its
+ * body hash. The result counts the concepts' bindings after the pass, so the
+ * kept `ref` rows are in it.
  */
 export async function extractBindingsForConcepts(
   db: Database,
@@ -70,6 +76,7 @@ export async function extractBindingsForConcepts(
 ): Promise<BindingExtractionResult> {
   let totalBound = 0;
   let mentionCount = 0;
+  let refCount = 0;
 
   // Build name→symbol map once for all concepts
   const symbolsByName = getAllSymbolsByName(db);
@@ -92,8 +99,11 @@ export async function extractBindingsForConcepts(
 
     if (!conceptContent) continue;
 
-    // Clean slate for this concept
-    deleteBindingsForConcept(db, conceptId);
+    // Clear what inference wrote last time; keep the explicit bindings.
+    const explicitSymbolIds = getExplicitBindingSymbolIds(db, conceptId);
+    deleteInferredBindingsForConcept(db, conceptId);
+    refCount += explicitSymbolIds.size;
+    totalBound += explicitSymbolIds.size;
 
     // Word-boundary match symbol names against concept content
     for (const [symbolName, symbols] of symbolsByName) {
@@ -106,7 +116,8 @@ export async function extractBindingsForConcepts(
 
       // Bind all symbols with this name (may be in multiple files)
       for (const symbol of symbols) {
-        upsertConceptSymbol(db, {
+        if (explicitSymbolIds.has(symbol.id)) continue;
+        upsertInferredConceptSymbol(db, {
           conceptId,
           symbolId: symbol.id,
           bindingType: "mention",
@@ -119,7 +130,7 @@ export async function extractBindingsForConcepts(
     }
   }
 
-  return { bound: totalBound, byType: { ref: 0, mention: mentionCount } };
+  return { bound: totalBound, byType: { ref: refCount, mention: mentionCount } };
 }
 
 /**
@@ -272,7 +283,7 @@ export async function autoBindSemantic(
     const toBind = candidates.slice(0, SEMANTIC_MAX_PER_CONCEPT);
 
     for (const c of toBind) {
-      upsertConceptSymbol(db, {
+      upsertInferredConceptSymbol(db, {
         conceptId: concept.id,
         symbolId: c.symbolId,
         bindingType: "mention",
@@ -405,7 +416,7 @@ export async function autoBindByFileOverlap(
         skippedExisting++;
         continue;
       }
-      upsertConceptSymbol(db, {
+      upsertInferredConceptSymbol(db, {
         conceptId: concept.id,
         symbolId: sym.id,
         bindingType: "mention",

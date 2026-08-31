@@ -1,7 +1,15 @@
 import { test, expect } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { createTestDb } from "../../test/support/db.ts";
-import { pruneOrphanedBindings, upsertConceptSymbol, getBindingCounts } from "./concept-symbols.ts";
+import {
+  deleteInferredBindingsForConcept,
+  getBindingCounts,
+  getBindingsForConcept,
+  getExplicitBindingSymbolIds,
+  pruneOrphanedBindings,
+  upsertConceptSymbol,
+  upsertInferredConceptSymbol,
+} from "./concept-symbols.ts";
 import { insertConcept } from "./concepts.ts";
 import { insertSymbol } from "./symbols.ts";
 import { upsertSourceFile } from "./source-files.ts";
@@ -85,5 +93,78 @@ test("a NULL symbol id does not stop the sweep", () => {
   expect(pruneOrphanedBindings(db)).toBe(1);
   expect(getBindingCounts(db).total).toBe(1);
 
+  db.close();
+});
+
+/**
+ * `lore sys concept bind` writes a `ref` binding: the operator stated it.
+ * The binding refresh that runs after a close used to wipe every binding and
+ * rewrite the matches as `mention`, so `lore status` reported `ref: 4 → 0` and
+ * read as data loss.
+ */
+function bindRef(db: Database, conceptId: string, symbolId: string): void {
+  upsertConceptSymbol(db, {
+    conceptId,
+    symbolId,
+    bindingType: "ref",
+    boundBodyHash: "body-at-bind-time",
+    confidence: 1.0,
+  });
+}
+
+test("an inferred upsert leaves an explicit ref binding alone", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "posting-rules");
+  const symbol = addSymbol(db, "transferPaths");
+  bindRef(db, concept.id, symbol);
+
+  upsertInferredConceptSymbol(db, {
+    conceptId: concept.id,
+    symbolId: symbol,
+    bindingType: "mention",
+    boundBodyHash: "body-now",
+    confidence: 0.6,
+  });
+
+  const [binding] = getBindingsForConcept(db, concept.id);
+  expect(binding?.binding_type).toBe("ref");
+  expect(binding?.confidence).toBe(1);
+  // The hash drift is measured against must survive too.
+  expect(binding?.bound_body_hash).toBe("body-at-bind-time");
+  db.close();
+});
+
+test("an inferred upsert still refreshes an inferred binding", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "posting-rules");
+  const symbol = addSymbol(db, "transferPaths");
+  bind(db, concept.id, symbol);
+
+  upsertInferredConceptSymbol(db, {
+    conceptId: concept.id,
+    symbolId: symbol,
+    bindingType: "mention",
+    boundBodyHash: "body-now",
+    confidence: 0.5,
+  });
+
+  const [binding] = getBindingsForConcept(db, concept.id);
+  expect(binding?.confidence).toBe(0.5);
+  expect(binding?.bound_body_hash).toBe("body-now");
+  db.close();
+});
+
+test("the inferred delete keeps the explicit bindings", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "posting-rules");
+  const stated = addSymbol(db, "transferPaths");
+  const guessed = addSymbol(db, "buildEvents");
+  bindRef(db, concept.id, stated);
+  bind(db, concept.id, guessed);
+
+  deleteInferredBindingsForConcept(db, concept.id);
+
+  expect(getBindingCounts(db)).toMatchObject({ ref: 1, mention: 0 });
+  expect([...getExplicitBindingSymbolIds(db, concept.id)]).toEqual([stated]);
   db.close();
 });

@@ -60,6 +60,53 @@ export function upsertConceptSymbol(db: Database, opts: UpsertConceptSymbolOpts)
   };
 }
 
+/**
+ * The upsert every inference pass must use. A `ref` binding is a statement the
+ * operator made with `lore sys concept bind`; inference must never weaken it,
+ * so a `ref` row is left exactly as it is — type, confidence and the body hash
+ * that drift is measured against. Everything else behaves like the plain
+ * upsert.
+ */
+export function upsertInferredConceptSymbol(db: Database, opts: UpsertConceptSymbolOpts): void {
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO concept_symbols (id, concept_id, symbol_id, binding_type, bound_body_hash, bound_body, confidence, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(concept_id, symbol_id) DO UPDATE SET
+       binding_type = CASE WHEN concept_symbols.binding_type = 'ref'
+                           THEN concept_symbols.binding_type ELSE excluded.binding_type END,
+       bound_body_hash = CASE WHEN concept_symbols.binding_type = 'ref'
+                              THEN concept_symbols.bound_body_hash ELSE excluded.bound_body_hash END,
+       bound_body = CASE WHEN concept_symbols.binding_type = 'ref'
+                         THEN concept_symbols.bound_body ELSE excluded.bound_body END,
+       confidence = CASE WHEN concept_symbols.binding_type = 'ref'
+                         THEN concept_symbols.confidence ELSE excluded.confidence END,
+       updated_at = CASE WHEN concept_symbols.binding_type = 'ref'
+                         THEN concept_symbols.updated_at ELSE excluded.updated_at END`,
+    [
+      ulid(),
+      opts.conceptId,
+      opts.symbolId,
+      opts.bindingType,
+      opts.boundBodyHash,
+      opts.boundBody ?? null,
+      opts.confidence,
+      now,
+      now,
+    ],
+  );
+}
+
+/** Symbol ids a concept holds through an explicit `lore sys concept bind`. */
+export function getExplicitBindingSymbolIds(db: Database, conceptId: string): Set<string> {
+  const rows = db
+    .query<{ symbol_id: string }, [string]>(
+      `SELECT symbol_id FROM concept_symbols WHERE concept_id = ? AND binding_type = 'ref'`,
+    )
+    .all(conceptId);
+  return new Set(rows.map((row) => row.symbol_id));
+}
+
 export function getBindingsForConcept(db: Database, conceptId: string): ConceptSymbolRow[] {
   return db
     .query<ConceptSymbolRow, [string]>(
@@ -133,8 +180,9 @@ export function deleteConceptSymbol(db: Database, conceptId: string, symbolId: s
   return (result.changes ?? 0) > 0;
 }
 
-export function deleteBindingsForConcept(db: Database, conceptId: string): void {
-  db.run(`DELETE FROM concept_symbols WHERE concept_id = ?`, [conceptId]);
+/** Clear what inference wrote and keep what the operator stated. */
+export function deleteInferredBindingsForConcept(db: Database, conceptId: string): void {
+  db.run(`DELETE FROM concept_symbols WHERE concept_id = ? AND binding_type != 'ref'`, [conceptId]);
 }
 
 export function getBindingSummariesForConcept(
