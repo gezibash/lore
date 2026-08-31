@@ -239,6 +239,74 @@ export function symbolVectorSearch(
     .all(queryBlob, model, limit);
 }
 
+export interface SymbolEmbeddingLane {
+  /** Live symbols in the mind. */
+  symbols: number;
+  /** Live symbols that hold at least one embedding. */
+  embedded: number;
+  /** Of those, the ones the current code model can read. */
+  currentModel: number;
+}
+
+/**
+ * Measure the code lane's second table, in symbols.
+ *
+ * The code lane writes two tables. countEmbeddingsByModel reads the source
+ * chunks in `embeddings`; the symbols live here, under the same code model.
+ * symbolVectorSearch and the cache that binding extraction loads both filter on
+ * the model, so a symbol the current model cannot read returns nothing rather
+ * than a wrong answer.
+ *
+ * The unit is symbols, not rows. The unique index is (symbol_id, model), so a
+ * symbol keeps its old row when a new model writes a second one. Those symbols
+ * read correctly, and a row count would report them as broken. `embedded` minus
+ * `currentModel` is therefore the figure that matters: the symbols no reader
+ * can reach.
+ *
+ * The query drives off `symbols`, so it drops orphans the way the prune does
+ * (see SYMBOL_KEYED_TABLES in db/symbols.ts). Both subqueries seek
+ * idx_symbol_embeddings_symbol_model, whose leading column they carry, so the
+ * whole lane costs one scan of `symbols` and no sort. A GROUP BY over the model
+ * would have added a temp b-tree, and COUNT(DISTINCT) one per aggregate.
+ */
+export function countSymbolEmbeddingLane(
+  db: Database,
+  currentCodeModel: string | null,
+): SymbolEmbeddingLane {
+  const row = db
+    .query<{ symbols: number; embedded: number; current_model: number }, [string | null]>(
+      `SELECT COUNT(*) AS symbols,
+              SUM(EXISTS (SELECT 1 FROM symbol_embeddings se WHERE se.symbol_id = s.id))
+                AS embedded,
+              SUM(EXISTS (SELECT 1 FROM symbol_embeddings se
+                          WHERE se.symbol_id = s.id AND se.model = ?)) AS current_model
+       FROM symbols s`,
+    )
+    .get(currentCodeModel);
+  return {
+    symbols: row?.symbols ?? 0,
+    embedded: row?.embedded ?? 0,
+    currentModel: row?.current_model ?? 0,
+  };
+}
+
+/** The models on the rows the current code model cannot read. Called only when the lane is stale. */
+export function staleSymbolEmbeddingModels(
+  db: Database,
+  currentCodeModel: string | null,
+): string[] {
+  return db
+    .query<{ model: string }, [string | null, string | null]>(
+      `SELECT DISTINCT se.model
+       FROM symbol_embeddings se
+       JOIN symbols s ON s.id = se.symbol_id
+       WHERE ? IS NULL OR se.model <> ?
+       ORDER BY se.model`,
+    )
+    .all(currentCodeModel, currentCodeModel)
+    .map((r) => r.model);
+}
+
 export function deleteAllSymbolEmbeddings(db: Database): void {
   db.run("DELETE FROM symbol_embeddings");
 }

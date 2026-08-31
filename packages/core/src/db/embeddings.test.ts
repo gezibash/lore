@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { createTestDb } from "../../test/support/db.ts";
 import {
   insertEmbedding,
@@ -6,9 +7,14 @@ import {
   vectorSearch,
   getAllEmbeddings,
   countEmbeddingsByModel,
+  countSymbolEmbeddingLane,
+  staleSymbolEmbeddingModels,
+  insertSymbolEmbedding,
 } from "./embeddings.ts";
 import { insertConcept, insertConceptVersion } from "./concepts.ts";
 import { insertChunk } from "./chunks.ts";
+import { insertSymbol } from "./symbols.ts";
+import { upsertSourceFile } from "./source-files.ts";
 
 test("insertEmbedding and getEmbeddingForChunk roundtrip", () => {
   const db = createTestDb();
@@ -222,6 +228,136 @@ test("countEmbeddingsByModel keeps source and journal rows, which carry no lifec
   expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
     "code-model": 1,
     "text-model": 1,
+  });
+
+  db.close();
+});
+
+function addSymbol(db: Database, name: string): string {
+  const sourceFileId = upsertSourceFile(db, {
+    filePath: `src/${name}.ts`,
+    language: "typescript",
+    contentHash: `hash-${name}`,
+    sizeBytes: 100,
+    symbolCount: 1,
+  }).id;
+  return insertSymbol(db, {
+    sourceFileId,
+    name,
+    qualifiedName: name,
+    kind: "function",
+    parentId: null,
+    lineStart: 1,
+    lineEnd: 5,
+    signature: null,
+    bodyHash: `body-${name}`,
+    exportStatus: "exported",
+  }).id;
+}
+
+test("countSymbolEmbeddingLane measures the code lane's second table", () => {
+  const db = createTestDb();
+
+  // The lane the chunk count never reads. Both readers filter on the model, so
+  // a symbol with no current-model vector returns nothing.
+  insertSymbolEmbedding(db, addSymbol(db, "alpha"), new Float32Array([0.1]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "beta"), new Float32Array([0.2]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "gamma"), new Float32Array([0.3]), "code-old");
+  addSymbol(db, "never-embedded");
+
+  expect(countSymbolEmbeddingLane(db, "code-new")).toEqual({
+    symbols: 4,
+    embedded: 3,
+    currentModel: 2,
+  });
+  expect(staleSymbolEmbeddingModels(db, "code-new")).toEqual(["code-old"]);
+
+  db.close();
+});
+
+test("countSymbolEmbeddingLane keeps a symbol that holds both models", () => {
+  const db = createTestDb();
+  const both = addSymbol(db, "both");
+
+  // The unique index is (symbol_id, model), so binding extraction writing a
+  // current vector leaves the old row in place. This symbol reads correctly,
+  // and a row count would report it as broken.
+  insertSymbolEmbedding(db, both, new Float32Array([0.1]), "code-old");
+  insertSymbolEmbedding(db, both, new Float32Array([0.2]), "code-new");
+
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM symbol_embeddings").get()?.c).toBe(2);
+
+  const lane = countSymbolEmbeddingLane(db, "code-new");
+  expect(lane).toEqual({ symbols: 1, embedded: 1, currentModel: 1 });
+  expect(lane.embedded - lane.currentModel).toBe(0);
+
+  db.close();
+});
+
+test("countSymbolEmbeddingLane counts every embedded symbol stale with no code model", () => {
+  const db = createTestDb();
+  insertSymbolEmbedding(db, addSymbol(db, "one"), new Float32Array([0.1]), "code-old");
+
+  const lane = countSymbolEmbeddingLane(db, null);
+  expect(lane).toEqual({ symbols: 1, embedded: 1, currentModel: 0 });
+  expect(staleSymbolEmbeddingModels(db, null)).toEqual(["code-old"]);
+
+  db.close();
+});
+
+test("countSymbolEmbeddingLane reports an emptied lane against the live symbols", () => {
+  const db = createTestDb();
+  addSymbol(db, "one");
+  addSymbol(db, "two");
+
+  // What a code pass leaves behind when it deletes the lane and every batch
+  // then fails. The old count reported nothing at all here.
+  expect(countSymbolEmbeddingLane(db, "code-new")).toEqual({
+    symbols: 2,
+    embedded: 0,
+    currentModel: 0,
+  });
+
+  db.close();
+});
+
+test("countSymbolEmbeddingLane ignores embeddings whose symbol is gone", () => {
+  const db = createTestDb();
+
+  insertSymbolEmbedding(db, addSymbol(db, "live"), new Float32Array([0.1]), "code-new");
+  // What a replaced symbol left behind. Binding extraction reads its cache
+  // against the live symbol list, so this row reaches no reader. It would
+  // otherwise raise a refresh the mind does not need.
+  insertSymbolEmbedding(db, "symbol-gone", new Float32Array([0.2]), "code-old");
+
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM symbol_embeddings").get()?.c).toBe(2);
+  expect(countSymbolEmbeddingLane(db, "code-new")).toEqual({
+    symbols: 1,
+    embedded: 1,
+    currentModel: 1,
+  });
+  expect(staleSymbolEmbeddingModels(db, "code-new")).toEqual([]);
+
+  db.close();
+});
+
+test("the two lanes report apart", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  // One code model change, two tables. The source chunk moves with the refresh;
+  // the symbol does not, unless status counts it.
+  insertChunk(db, { id: "src", filePath: "./s.ts", flType: "source", createdAt: now });
+  insertEmbedding(db, "src", new Float32Array([0.1]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "stale"), new Float32Array([0.2]), "code-old");
+
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "code-new": 1,
+  });
+  expect(countSymbolEmbeddingLane(db, "code-new")).toEqual({
+    symbols: 1,
+    embedded: 1,
+    currentModel: 0,
   });
 
   db.close();

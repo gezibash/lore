@@ -180,7 +180,7 @@ export function formatRebuildCli(result: {
 }): string {
   let text = `Rebuilt: ${compactCount(result.conceptCount)} concepts, ${compactCount(result.narrativeCount)} narratives, ${compactCount(result.stateChunkCount)} state chunks, ${compactCount(result.journalChunkCount)} journal chunks, ${compactCount(result.embeddingCount)} embeddings`;
   if (result.staleEmbeddingCount > 0) {
-    text += ` ${YELLOW}(${compactCount(result.staleEmbeddingCount)} stale — run lore mind embeddings refresh)${RESET}`;
+    text += ` ${YELLOW}(${compactCount(result.staleEmbeddingCount)} stale — run lore sys embeddings refresh)${RESET}`;
   }
   return text;
 }

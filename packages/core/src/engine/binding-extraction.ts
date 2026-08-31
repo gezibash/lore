@@ -128,7 +128,7 @@ export async function extractBindingsForConcepts(
  * For each active concept:
  *   1. Embed the concept's prose via the code model (voyage-code-3).
  *   2. Compare against all symbol embeddings in `symbol_embeddings` (pre-populated
- *      by `lore mind embeddings refresh`, or computed here on the fly if missing).
+ *      by `lore sys embeddings refresh`, or computed here on the fly if missing).
  *   3. Bind the top-N symbols with cosine distance ≤ SEMANTIC_DISTANCE_THRESHOLD,
  *      setting confidence = min(0.85, 1 − distance) instead of a hardcoded value.
  *

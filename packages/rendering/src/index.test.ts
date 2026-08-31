@@ -79,6 +79,89 @@ test("renderStatus uses route defaults", () => {
   expect(parsed.debt).toBe(0.12);
 });
 
+test("renderStatus names the symbol lane apart from the chunk lane", () => {
+  const status = sampleStatus();
+  status.priorities = [
+    {
+      concept: "(symbol embeddings)",
+      action: "refresh embeddings",
+      reason:
+        "7 of 9 embedded symbols hold no vector on code model code-new (they hold code-old). Symbol search and automatic binding skip them. Run lore sys embeddings refresh.",
+    },
+  ];
+  status.embedding_status = { total: 40, current_model: 40, stale: 0, model: "text-new" };
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 9,
+    current_model: 2,
+    stale: 7,
+    model: "code-new",
+  };
+
+  const cli = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(cli).toContain("symbol embeddings");
+  expect(cli).toContain("refresh");
+  expect(cli).toContain("7 stale");
+  expect(cli).toContain("lore sys embeddings refresh");
+
+  // The chunk lane is current, so the mismatch section names the symbol lane
+  // alone. One combined figure would name neither.
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("7/9 embedded symbols hold no vector on code model **code-new**");
+  expect(markdown).not.toContain("chunk embeddings use an outdated model");
+});
+
+test("renderStatus reports both lanes when both are stale", () => {
+  const status = sampleStatus();
+  status.embedding_status = { total: 40, current_model: 10, stale: 30, model: "text-new" };
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 9,
+    current_model: 0,
+    stale: 9,
+    model: null,
+  };
+
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("30/40 chunk embeddings use an outdated model");
+  // No code model: the vectors are unreadable, and the repair starts at config.
+  expect(markdown).toContain("9/9 embedded symbols hold vectors no reader can use");
+  expect(markdown).toContain("ai.embedding.code.model");
+  expect(markdown).toContain("lore sys embeddings refresh");
+});
+
+test("renderStatus names an emptied symbol lane", () => {
+  const status = sampleStatus();
+  status.symbol_embedding_status = {
+    symbols: 12,
+    total: 0,
+    current_model: 0,
+    stale: 0,
+    model: "code-new",
+  };
+
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("0/12 symbols hold a code vector");
+});
+
+test("renderStatus sends the database priority to the prune", () => {
+  const status = sampleStatus();
+  status.priorities = [
+    {
+      concept: "(database)",
+      action: "prune database",
+      reason: "412 row(s) belong to chunks or symbols that are gone. Run lore sys prune.",
+    },
+  ];
+
+  const cli = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(cli).toContain("database");
+  expect(cli).toContain("412 orphaned");
+  expect(cli).toContain("lore sys prune");
+  // `lore show` takes a concept name, so a bracketed priority must never reach it.
+  expect(cli).not.toContain("lore show (");
+});
+
 test("renderLs uses route defaults", () => {
   const ls = sampleLs();
 

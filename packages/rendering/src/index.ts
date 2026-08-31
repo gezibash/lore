@@ -435,7 +435,9 @@ function compactStatusBand(result: StatusResult): { label: string; color: string
 
 function compactPriorityConcept(concept: string): string {
   if (concept === "(embeddings)") return "embeddings";
+  if (concept === "(symbol embeddings)") return "symbol embeddings";
   if (concept === "(maintenance)") return "maintenance";
+  if (concept === "(database)") return "database";
   return concept;
 }
 
@@ -450,7 +452,11 @@ function compactPriorityAction(action: string): string {
 
 function compactPriorityReason(priority: StatusResult["priorities"][number]): string {
   if (priority.concept === "(embeddings)") {
-    const staleMatch = priority.reason.match(/(\d+) embeddings?/);
+    const staleMatch = priority.reason.match(/(\d+) chunk embeddings?/);
+    return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
+  }
+  if (priority.concept === "(symbol embeddings)") {
+    const staleMatch = priority.reason.match(/(\d+)(?: of \d+)? embedded symbols?/);
     return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
   }
   if (priority.concept === "(maintenance)") {
@@ -458,6 +464,10 @@ function compactPriorityReason(priority: StatusResult["priorities"][number]): st
     if (pendingMatch) return `${pendingMatch[1]} queued`;
     if (priority.reason.includes("failed")) return "failed jobs";
     return "queued";
+  }
+  if (priority.concept === "(database)") {
+    const orphanMatch = priority.reason.match(/(\d+) row/);
+    return orphanMatch ? `${orphanMatch[1]} orphaned` : "orphaned rows";
   }
   if (priority.reason.startsWith("Referenced files changed:")) return "source changed";
   if (priority.reason.startsWith("Not updated in a long time")) return "stale";
@@ -517,6 +527,11 @@ function compactNextCommand(result: StatusResult): string | null {
   if (priority) {
     if (priority.concept === "(maintenance)") return "lore ingest";
     if (priority.concept === "(embeddings)") return "lore sys embeddings refresh";
+    if (priority.concept === "(symbol embeddings)") return "lore sys embeddings refresh";
+    if (priority.concept === "(database)") return "lore sys prune";
+    // Brackets mark a priority the mind raises about itself, not a concept.
+    // `lore show` takes a concept name, so it cannot open one of these.
+    if (priority.concept.startsWith("(")) return "lore status --details";
     return `lore show ${priority.concept}`;
   }
   if (result.suggestions.length > 0) return "lore suggest";
