@@ -215,6 +215,7 @@ function renderBindingNudge(summary: ExecutiveSummary | null | undefined): strin
   return [
     "",
     `⚠ Used authoritative source-chunk grounding for: ${unboundSymbols.join(", ")}. These symbols have no concept bindings — future retrieval will rely on embedding similarity. Bind them now: ${bindCommand()}`,
+    "  A new binding raises the concept's residual until the prose covers the symbol. The retrieval is better; the number goes up. Write the prose, or run `lore rebuild <concept>`.",
   ];
 }
 

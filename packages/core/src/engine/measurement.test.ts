@@ -6,10 +6,13 @@ import {
   computeExpectedDebt,
   computeSigmaByConcept,
   computeStateDistanceSpec,
+  getBindingCoverageByConcept,
   getConceptBindingStats,
   groundednessResidual,
   stalenessSigma,
 } from "./measurement.ts";
+import { insertConceptRaw } from "@/db/concepts.ts";
+import { insertChunk } from "@/db/chunks.ts";
 
 function concept(id: string, groundResidual: number | null): ConceptRow {
   return {
@@ -194,4 +197,34 @@ test("a bound concept with no e_embed on record is counted as unmeasured", () =>
   expect(g.eEmbedMeasured).toBe(false);
   expect(result.unmeasuredEmbedCount).toBe(1);
   expect(result.ungroundedCount).toBe(1); // b has no bindings
+});
+
+/**
+ * A binding added after the prose raises e_embed on its own: the prose was
+ * never written against that symbol. Counting those separates a coverage gap
+ * from stale prose, which need different fixes.
+ */
+test("binding coverage counts the bindings that arrived after the prose", () => {
+  const db = createTestDb();
+  insertConceptRaw(db, "c-a", "alpha", { activeChunkId: null });
+  insertChunk(db, {
+    id: "chunk-a",
+    filePath: "/tmp/chunk-a.md",
+    flType: "chunk",
+    conceptId: "c-a",
+    createdAt: "2026-02-01T00:00:00.000Z",
+  });
+  db.run("UPDATE concepts SET active_chunk_id = 'chunk-a' WHERE id = 'c-a'");
+  seedSymbol(db, "sym-old", "hash-1");
+  seedSymbol(db, "sym-new", "hash-2");
+  db.run(
+    `INSERT INTO concept_symbols (id, concept_id, symbol_id, binding_type, confidence, bound_body_hash, created_at, updated_at)
+     VALUES ('cs-old', 'c-a', 'sym-old', 'ref', 1.0, 'hash-1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            ('cs-new', 'c-a', 'sym-new', 'ref', 1.0, 'hash-2', '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z')`,
+  );
+
+  const coverage = getBindingCoverageByConcept(db).get("c-a");
+
+  expect(coverage).toEqual({ total: 2, addedAfterProse: 1 });
+  db.close();
 });
