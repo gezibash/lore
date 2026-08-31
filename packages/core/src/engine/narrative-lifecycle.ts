@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { unlink } from "fs/promises";
 import { ulid } from "ulid";
 import { timeAgo } from "@/format.ts";
 import {
@@ -3132,6 +3133,24 @@ export async function closeNarrativeOp(
   const chunkRowsById = batchLoadChunksByIds(db, [...relevantChunkIds]);
   const parsedChunksById = await batchReadParsedChunksByIds(chunkRowsById, [...relevantChunkIds]);
 
+  // A state chunk file has no row in `chunks` until the commit lands. If the
+  // close fails first, the file stays on disk forever and the retry writes a
+  // new one under a new ID. Remove what this close wrote.
+  const writtenChunkPaths: string[] = [];
+  const discardWrittenChunkFiles = async (): Promise<void> => {
+    await mapConcurrent(writtenChunkPaths.splice(0), 6, async (filePath) => {
+      try {
+        await unlink(filePath);
+      } catch {
+        // Best-effort — the close already failed.
+      }
+    });
+  };
+  const discardChunkFilesAndRethrow = async (error: unknown): Promise<never> => {
+    await discardWrittenChunkFiles();
+    throw error;
+  };
+
   // Apply updates — 3-way merge when needed
   const preparedUpdates = await mapConcurrent(
     plan.updates,
@@ -3179,6 +3198,14 @@ export async function closeNarrativeOp(
           : 0;
       const nextVersion = currentVersion + 1;
 
+      if (finalContent.trim().length === 0) {
+        throw new LoreError(
+          "EMPTY_CONCEPT_BODY",
+          `Concept '${update.conceptName}' resolved to an empty body. The close stopped before it wrote the chunk.`,
+          { concept: update.conceptName },
+        );
+      }
+
       const { id, filePath } = await writeStateChunk({
         lorePath,
         concept: update.conceptName,
@@ -3188,6 +3215,7 @@ export async function closeNarrativeOp(
         supersedes: update.existingChunkId,
         content: finalContent,
       });
+      writtenChunkPaths.push(filePath);
 
       return {
         conceptId: update.conceptId,
@@ -3211,7 +3239,7 @@ export async function closeNarrativeOp(
         createdConcept: null,
       };
     },
-  );
+  ).catch(discardChunkFilesAndRethrow);
   for (const prepared of preparedUpdates) {
     if (!prepared) continue;
     preparedChunkWrites.push(prepared.preparedChunkWrite);
@@ -3282,6 +3310,14 @@ export async function closeNarrativeOp(
           : 0;
       const nextVersion = currentVersion + 1;
 
+      if (finalContent.trim().length === 0) {
+        throw new LoreError(
+          "EMPTY_CONCEPT_BODY",
+          `Concept '${create.conceptName}' resolved to an empty body. The close stopped before it wrote the chunk.`,
+          { concept: create.conceptName },
+        );
+      }
+
       const { id, filePath } = await writeStateChunk({
         lorePath,
         concept: create.conceptName,
@@ -3290,6 +3326,7 @@ export async function closeNarrativeOp(
         version: nextVersion,
         content: finalContent,
       });
+      writtenChunkPaths.push(filePath);
 
       return {
         conceptId,
@@ -3309,7 +3346,7 @@ export async function closeNarrativeOp(
         createdConcept,
       };
     },
-  );
+  ).catch(discardChunkFilesAndRethrow);
   for (const prepared of preparedCreates) {
     if (prepared.createdConcept) {
       preparedConceptCreates.push(prepared.createdConcept);
@@ -3335,7 +3372,9 @@ export async function closeNarrativeOp(
   const frontmatterUpdatesByPath = new Map<string, Record<string, unknown>>();
   let embeddedAt: string | null = null;
   if (pendingEmbeds.length > 0) {
-    const embeddings = await embedder.embedBatch(pendingEmbeds.map((p) => p.content));
+    const embeddings = await embedder
+      .embedBatch(pendingEmbeds.map((p) => p.content))
+      .catch(discardChunkFilesAndRethrow);
     for (let i = 0; i < pendingEmbeds.length; i++) {
       embeddingByChunkId.set(pendingEmbeds[i]!.chunkId, embeddings[i]!);
     }
@@ -3423,6 +3462,7 @@ export async function closeNarrativeOp(
     try {
       db.run("ROLLBACK");
     } catch {}
+    await discardWrittenChunkFiles();
     throw error;
   }
 

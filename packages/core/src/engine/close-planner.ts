@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { getActiveConceptByName, getChunk, getJournalChunksForNarrative } from "@/db/index.ts";
 import { readChunk } from "@/storage/index.ts";
-import type { MergeStrategy, NarrativeRow } from "@/types/index.ts";
+import { LoreError, type MergeStrategy, type NarrativeRow } from "@/types/index.ts";
 import type { Generator } from "./generator.ts";
 import { mapConcurrent } from "./async.ts";
 import { getCreateUpdateTargets, loadJournalConceptDesignations } from "./journal-routing.ts";
@@ -204,6 +204,27 @@ function applyPatchOps(
   return content.length > 0 ? content : null;
 }
 
+/**
+ * A concept body must carry prose. An empty body writes a chunk file with
+ * frontmatter and nothing else, and the embedder rejects the empty string —
+ * the close then fails after the files are on disk. Retry the concept once,
+ * then stop the close and name the concept.
+ */
+async function synthesizeConceptBody(
+  conceptName: string,
+  synthesize: () => Promise<string>,
+): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const content = await synthesize();
+    if (content.trim().length > 0) return content;
+  }
+  throw new LoreError(
+    "EMPTY_CONCEPT_BODY",
+    `The generator returned an empty body for concept '${conceptName}' twice. The close stopped and wrote nothing.`,
+    { concept: conceptName },
+  );
+}
+
 async function generatePatchUpdate(
   generator: Generator,
   journalEntries: readonly string[],
@@ -211,14 +232,19 @@ async function generatePatchUpdate(
   existingContent: string,
   mergeStrategy: MergeStrategy | undefined,
 ): Promise<{ content: string; strategy: "patch" | "rewrite" }> {
-  if ((mergeStrategy ?? "replace") === "correct") {
-    return {
-      content: await generator.generateIntegration(
+  const rewrite = (): Promise<string> =>
+    synthesizeConceptBody(conceptName, () =>
+      generator.generateIntegration(
         [...journalEntries],
         [existingContent],
         conceptName,
         mergeStrategy,
       ),
+    );
+
+  if ((mergeStrategy ?? "replace") === "correct") {
+    return {
+      content: await rewrite(),
       strategy: "rewrite",
     };
   }
@@ -226,12 +252,7 @@ async function generatePatchUpdate(
   const blocks = splitContentIntoBlocks(existingContent);
   if (blocks.length === 0) {
     return {
-      content: await generator.generateIntegration(
-        [...journalEntries],
-        [existingContent],
-        conceptName,
-        mergeStrategy,
-      ),
+      content: await rewrite(),
       strategy: "rewrite",
     };
   }
@@ -239,12 +260,7 @@ async function generatePatchUpdate(
   const scopedBlocks = scoreBlocks(blocks, journalEntries);
   if (scopedBlocks.length === 0) {
     return {
-      content: await generator.generateIntegration(
-        [...journalEntries],
-        [existingContent],
-        conceptName,
-        mergeStrategy,
-      ),
+      content: await rewrite(),
       strategy: "rewrite",
     };
   }
@@ -281,12 +297,7 @@ Rules:
   const ops = parsePatchOps(raw);
   if (!ops || ops.length === 0) {
     return {
-      content: await generator.generateIntegration(
-        [...journalEntries],
-        [existingContent],
-        conceptName,
-        mergeStrategy,
-      ),
+      content: await rewrite(),
       strategy: "rewrite",
     };
   }
@@ -295,12 +306,7 @@ Rules:
     if (op.op === "append") continue;
     if (!allowedBlockIds.has(op.block_id)) {
       return {
-        content: await generator.generateIntegration(
-          [...journalEntries],
-          [existingContent],
-          conceptName,
-          mergeStrategy,
-        ),
+        content: await rewrite(),
         strategy: "rewrite",
       };
     }
@@ -309,12 +315,7 @@ Rules:
   const patched = applyPatchOps(blocks, ops);
   if (!patched) {
     return {
-      content: await generator.generateIntegration(
-        [...journalEntries],
-        [existingContent],
-        conceptName,
-        mergeStrategy,
-      ),
+      content: await rewrite(),
       strategy: "rewrite",
     };
   }
@@ -437,11 +438,8 @@ export async function buildExplicitClosePlan(
         kind: "create",
         value: {
           conceptName,
-          content: await generator.generateIntegration(
-            group.entries,
-            [],
-            conceptName,
-            mergeStrategy,
+          content: await synthesizeConceptBody(conceptName, () =>
+            generator.generateIntegration(group.entries, [], conceptName, mergeStrategy),
           ),
           sourceEntryIndices: group.indices,
         },
