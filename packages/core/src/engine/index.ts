@@ -1404,6 +1404,13 @@ export class LoreEngine {
       await sleep(Math.max(50, opts?.pollMs ?? 250));
     }
 
+    // A close maintenance job rescans files and rewrites chunks, so it feeds
+    // the Lance store the same superseded versions an ingest does. The worker
+    // holds nobody waiting, unlike the drain a `lore close` runs itself.
+    if (maintenanceJobsProcessed > 0) {
+      await reclaimLanceSpace(lanceDir(entry.lore_path));
+    }
+
     return {
       mode,
       close_jobs_processed: closeJobsProcessed,
