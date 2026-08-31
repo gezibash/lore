@@ -127,6 +127,7 @@ type DirectWorkerClientDeps = Pick<
   | "conceptRename"
   | "conceptArchive"
   | "conceptRestore"
+  | "conceptRebuild"
   | "conceptMerge"
   | "conceptSplit"
   | "conceptPatch"
@@ -210,6 +211,7 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "conceptRename",
   "conceptArchive",
   "conceptRestore",
+  "conceptRebuild",
   "conceptMerge",
   "conceptSplit",
   "conceptPatch",
@@ -533,6 +535,10 @@ export class WorkerClient {
 
   async conceptRestore(...args: Parameters<DirectWorkerClientDeps["conceptRestore"]>) {
     return this.call("conceptRestore", args);
+  }
+
+  async conceptRebuild(...args: Parameters<DirectWorkerClientDeps["conceptRebuild"]>) {
+    return this.call("conceptRebuild", args);
   }
 
   async conceptMerge(...args: Parameters<DirectWorkerClientDeps["conceptMerge"]>) {

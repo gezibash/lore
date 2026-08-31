@@ -1107,7 +1107,7 @@ export interface RegisterResult {
 }
 
 export interface LifecycleResult {
-  action: "rename" | "archive" | "restore" | "merge" | "split" | "patch";
+  action: "rename" | "archive" | "restore" | "merge" | "split" | "patch" | "rebuild";
   commit_id: string | null;
   summary: string;
   affected: string[];

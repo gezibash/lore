@@ -52,7 +52,7 @@ import {
   systemVacuumCommand,
 } from "./commands/system.ts";
 import { refreshEmbeddingsCommand } from "./commands/embeddings.ts";
-import { conceptRestoreCommand } from "./commands/concept.ts";
+import { conceptRebuildCommand, conceptRestoreCommand } from "./commands/concept.ts";
 import { narrativeDesignateCommand } from "./commands/narrative.ts";
 import {
   conceptBindingsCommand,
@@ -552,6 +552,16 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           await lsCommand(getWorker(), {
             groupBy: groupRaw as "cluster" | undefined,
           });
+        },
+      }),
+      rebuild: defineCommand({
+        name: "rebuild",
+        description: "Rewrite a concept body from its journal entries and bindings",
+        arguments: {
+          concept: { type: "string", required: true, description: "Concept name" },
+        },
+        async action({ args }) {
+          await conceptRebuildCommand(getWorker(), args.concept);
         },
       }),
       close: defineCommand({

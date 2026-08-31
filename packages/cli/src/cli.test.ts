@@ -390,3 +390,24 @@ test("the version does not report the caller's repository", () => {
   // Source runs say so, so a stale binary cannot be mistaken for one.
   expect(here).toMatch(/from source|^\d+\.\d+\.\d+$/);
 });
+
+test("rebuild passes the concept name to the worker", async () => {
+  const calls: string[] = [];
+  const worker = createWorkerStub({
+    conceptRebuild: async (concept: string) => {
+      calls.push(concept);
+      return {
+        action: "rebuild",
+        commit_id: "01COMMIT",
+        summary: "Rebuilt 'auth-model' from 4 journal entries and 2 bindings.",
+        affected: ["auth-model"],
+      } as unknown as Awaited<ReturnType<WorkerClient["conceptRebuild"]>>;
+    },
+  });
+
+  const result = await runCliForTest(["rebuild", "auth-model"], { createWorker: () => worker });
+
+  expect(result.exitCode).toBeUndefined();
+  expect(calls).toEqual(["auth-model"]);
+  expect(result.stdout).toContain("Rebuilt 'auth-model'");
+});

@@ -194,6 +194,7 @@ import {
   archiveConcept,
   mergeConcept,
   patchConcept,
+  rebuildConcept,
   renameConcept,
   resolveConceptByNameCi,
   restoreConcept,
@@ -2231,6 +2232,11 @@ export class LoreEngine {
       topics: opts?.topics,
       direct: opts?.direct,
     });
+  }
+
+  async conceptRebuild(name: string, opts?: { codePath?: string }): Promise<LifecycleResult> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    return rebuildConcept(this.lifecycleDeps(entry, db, this.configFor(entry)), name);
   }
 
   setConceptRelation(

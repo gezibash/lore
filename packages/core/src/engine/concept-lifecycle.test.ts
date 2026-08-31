@@ -7,14 +7,16 @@ import { getChunk, insertChunk } from "@/db/chunks.ts";
 import { getEmbeddingForChunk, insertEmbedding } from "@/db/embeddings.ts";
 import { getConcept } from "@/db/index.ts";
 import { readChunk } from "@/storage/chunk-reader.ts";
-import { writeStateChunk } from "@/storage/index.ts";
+import { writeJournalChunk, writeStateChunk } from "@/storage/index.ts";
 import { createTestDb, createTempDir, removeDir } from "../../test/support/db.ts";
 import {
   appendStateChunkForConcept,
   archiveConcept,
+  rebuildConcept,
   renameConcept,
   type LifecycleDeps,
 } from "./concept-lifecycle.ts";
+import type { Generator } from "./generator.ts";
 
 const config = defaultConfig;
 const model = config.ai.embedding.model;
@@ -242,6 +244,109 @@ test("rename and archive stay lazy: no embedder or generator instantiated", asyn
     expect(embedderTouched).toBe(false);
     expect(generatorTouched).toBe(false);
     expect(getConcept(fx.db, fx.conceptId)!.lifecycle_status).toBe("archived");
+  } finally {
+    cleanup(fx);
+  }
+});
+
+/**
+ * A concept is a rollup of its journal entries and its bound code. Rebuild
+ * recomputes it from those inputs, so a wrong sentence in the current body
+ * disappears instead of surviving every merge.
+ */
+async function seedJournalEntries(fx: Fixture, entries: string[]): Promise<void> {
+  for (const [index, content] of entries.entries()) {
+    const chunk = await writeJournalChunk({
+      lorePath: fx.lorePath,
+      narrativeName: "seed-narrative",
+      content,
+      conceptDesignations: ["alpha"],
+    });
+    insertChunk(fx.db, {
+      id: chunk.id,
+      filePath: chunk.filePath,
+      flType: "journal",
+      narrativeId: "n-0",
+      conceptDesignations: ["alpha"],
+      createdAt: `2026-01-0${index + 2}T00:00:00.000Z`,
+    });
+  }
+}
+
+/** A generator that reports what rebuild handed it. */
+function rebuildGenerator(body: string) {
+  const seen: { inputs: string[][]; existing: string[][] } = { inputs: [], existing: [] };
+  const generator = {
+    generateIntegration: async (entries: string[], existingState: string[]): Promise<string> => {
+      seen.inputs.push(entries);
+      seen.existing.push(existingState);
+      return body;
+    },
+    generate: async (): Promise<string> => "alpha-cluster",
+  } as unknown as Generator;
+  return { generator, seen };
+}
+
+test("rebuild writes the body from the journal entries and keeps the old version", async () => {
+  const fx = await seedFixture("The timeout is 10 seconds. A wrong sentence stays forever.");
+  try {
+    await seedJournalEntries(fx, ["The timeout is 30 seconds.", "Retries stop after three."]);
+    const { generator, seen } = rebuildGenerator(
+      "The timeout is 30 seconds. Retries stop after three.",
+    );
+    const deps = fx.deps();
+    deps.getGenerator = async () => generator;
+
+    const result = await rebuildConcept(deps, "alpha");
+
+    expect(result.action).toBe("rebuild");
+    expect(result.commit_id).not.toBeNull();
+    // The current body is an output, not an input.
+    expect(seen.existing).toEqual([[]]);
+    expect(seen.inputs[0]).toEqual(["The timeout is 30 seconds.", "Retries stop after three."]);
+
+    const active = getConcept(fx.db, fx.conceptId)!.active_chunk_id!;
+    expect(active).not.toBe(fx.v1ChunkId);
+    const parsed = await readChunk(getChunk(fx.db, active)!.file_path);
+    expect(parsed.content).toBe("The timeout is 30 seconds. Retries stop after three.");
+    // History stays inspectable.
+    expect(getChunk(fx.db, fx.v1ChunkId)).not.toBeNull();
+    expect((await frontmatterOf(fx, fx.v1ChunkId)).fl_superseded_by).toBe(active);
+  } finally {
+    cleanup(fx);
+  }
+});
+
+test("rebuild keeps the current body when the generator returns nothing", async () => {
+  const fx = await seedFixture("The original body.");
+  try {
+    await seedJournalEntries(fx, ["The timeout is 30 seconds."]);
+    const { generator } = rebuildGenerator("   ");
+    const deps = fx.deps();
+    deps.getGenerator = async () => generator;
+
+    await expect(rebuildConcept(deps, "alpha")).rejects.toMatchObject({
+      code: "EMPTY_CONCEPT_BODY",
+      message: expect.stringContaining("alpha"),
+    });
+    expect(getConcept(fx.db, fx.conceptId)!.active_chunk_id).toBe(fx.v1ChunkId);
+  } finally {
+    cleanup(fx);
+  }
+});
+
+test("rebuild refuses a concept with no journal entries", async () => {
+  const fx = await seedFixture("The original body.");
+  try {
+    const { generator } = rebuildGenerator("unused");
+    const deps = fx.deps();
+    deps.getGenerator = async () => generator;
+
+    await expect(rebuildConcept(deps, "alpha")).rejects.toMatchObject({
+      code: "CONCEPT_INVALID_STATE",
+      message: expect.stringContaining("alpha"),
+    });
+    expect(getConcept(fx.db, fx.conceptId)!.active_chunk_id).toBe(fx.v1ChunkId);
   } finally {
     cleanup(fx);
   }

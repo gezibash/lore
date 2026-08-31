@@ -297,6 +297,7 @@ interface LoreClientEngine {
     opts?: { codePath?: string; reason?: string },
   ): Promise<LifecycleResult>;
   conceptRestore(concept: string, opts?: { codePath?: string }): Promise<LifecycleResult>;
+  conceptRebuild(concept: string, opts?: { codePath?: string }): Promise<LifecycleResult>;
   conceptMerge(
     source: string,
     target: string,
@@ -682,6 +683,10 @@ export class LoreClient {
 
   conceptRestore(concept: string, opts?: { codePath?: string }): Promise<LifecycleResult> {
     return this.engine.conceptRestore(concept, opts);
+  }
+
+  conceptRebuild(concept: string, opts?: { codePath?: string }): Promise<LifecycleResult> {
+    return this.engine.conceptRebuild(concept, opts);
   }
 
   conceptMerge(

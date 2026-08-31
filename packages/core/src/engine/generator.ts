@@ -157,6 +157,26 @@ ${rules}`;
   }
 }
 
+/**
+ * A concept body must carry prose. An empty body writes a chunk file with
+ * frontmatter and nothing else, and the embedder rejects the empty string.
+ * Retry the concept once, then stop and name the concept.
+ */
+export async function synthesizeConceptBody(
+  conceptName: string,
+  synthesize: () => Promise<string>,
+): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const content = await synthesize();
+    if (content.trim().length > 0) return content;
+  }
+  throw new LoreError(
+    "EMPTY_CONCEPT_BODY",
+    `The generator returned an empty body for concept '${conceptName}' twice. Nothing was written.`,
+    { concept: conceptName },
+  );
+}
+
 export class Generator {
   private model: LanguageModel;
   private provider: GenerationProvider;

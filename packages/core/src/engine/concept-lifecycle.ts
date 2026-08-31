@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { ConceptRow, NarrativeTarget } from "@/types/index.ts";
+import type { ConceptBindingSummary, ConceptRow, NarrativeTarget } from "@/types/index.ts";
 import { LoreError } from "@/types/index.ts";
 import {
   getActiveConcepts,
@@ -8,6 +8,7 @@ import {
   getConceptsByNameCaseInsensitive,
   getEmbeddingForChunk,
   getHeadCommit,
+  getJournalChunksForConcept,
   getManifest,
   insertChunk,
   insertCommit,
@@ -27,11 +28,14 @@ import {
   writeEmbeddingFile,
   writeStateChunk,
 } from "@/storage/index.ts";
+import { getBindingSummariesForConcept } from "@/db/concept-symbols.ts";
 import { readChunk } from "@/storage/chunk-reader.ts";
 import { createGenesisCommit } from "./narrative-lifecycle.ts";
 import type { Embedder } from "./embedder.ts";
+import { synthesizeConceptBody } from "./generator.ts";
 import type { Generator } from "./generator.ts";
 import { discoverConcepts } from "./concept-discovery.ts";
+import { mapConcurrent } from "./async.ts";
 import { cosineDistance, computeDebtTrend } from "./residuals.ts";
 import { computeExpectedDebt } from "./measurement.ts";
 
@@ -50,7 +54,7 @@ import { computeExpectedDebt } from "./measurement.ts";
  */
 
 export interface LifecycleResult {
-  action: "rename" | "archive" | "restore" | "merge" | "split" | "patch";
+  action: "rename" | "archive" | "restore" | "merge" | "split" | "patch" | "rebuild";
   commit_id: string | null;
   summary: string;
   affected: string[];
@@ -605,6 +609,87 @@ export async function patchConcept(
     action: "patch",
     commit_id: commit.id,
     summary: `Patched concept '${concept.name}'.`,
+    affected: [concept.name],
+  };
+}
+
+function formatBindingInventory(bindings: ConceptBindingSummary[]): string {
+  const lines = bindings.map(
+    (binding) =>
+      `- ${binding.symbol_qualified_name ?? binding.symbol_name} (${binding.symbol_kind}) in ${binding.file_path}:${binding.line_start}`,
+  );
+  return `Bound code for this concept:\n${lines.join("\n")}`;
+}
+
+/**
+ * Rewrite a concept body from its inputs: the journal entries designated to it
+ * and the code it is bound to. The current body is an output, not an input, so
+ * a wrong sentence in it disappears. The old body stays in the version history.
+ */
+export async function rebuildConcept(deps: LifecycleDeps, name: string): Promise<LifecycleResult> {
+  const { db } = deps;
+  const concept = resolveConceptByNameCi(db, name, { activeOnly: true });
+
+  const journalChunks = getJournalChunksForConcept(db, {
+    conceptId: concept.id,
+    conceptName: concept.name,
+  });
+  if (journalChunks.length === 0) {
+    throw new LoreError(
+      "CONCEPT_INVALID_STATE",
+      `Concept '${concept.name}' has no journal entries to rebuild from. Write entries against it, then rebuild.`,
+      { concept: concept.name },
+    );
+  }
+
+  const entries = await mapConcurrent(journalChunks, 8, async (chunk) => {
+    const parsed = await readChunk(chunk.file_path);
+    return parsed.content;
+  });
+  const inputs = entries.filter((entry) => entry.trim().length > 0);
+
+  const bindings = getBindingSummariesForConcept(db, concept.id);
+  if (bindings.length > 0) {
+    inputs.push(formatBindingInventory(bindings));
+  }
+
+  const generator = await deps.getGenerator();
+  // `replace` writes the whole body from the inputs. The guard keeps the
+  // current body when the generator returns nothing.
+  const newContent = await synthesizeConceptBody(concept.name, () =>
+    generator.generateIntegration(inputs, [], concept.name, "replace"),
+  );
+
+  const currentContent = await readConceptContent(db, concept);
+  if (newContent.trim() === currentContent.trim()) {
+    return {
+      action: "rebuild",
+      commit_id: null,
+      summary: `Rebuild produced the same body for '${concept.name}'.`,
+      affected: [concept.name],
+    };
+  }
+
+  const debtBefore = getManifest(db)?.debt ?? 0;
+  await appendStateChunkForConcept(
+    db,
+    deps.lorePath,
+    concept,
+    newContent,
+    `lifecycle-rebuild:${concept.name}`,
+    await deps.getEmbedder(),
+    deps.embeddingModel,
+    { supersedesId: concept.active_chunk_id },
+  );
+
+  await discoverConcepts(db, generator);
+  const commit = snapshotCurrentTree(db, `lifecycle: rebuild ${concept.name}`);
+  updateManifestForLifecycle(db, debtBefore);
+
+  return {
+    action: "rebuild",
+    commit_id: commit.id,
+    summary: `Rebuilt '${concept.name}' from ${journalChunks.length} journal entries and ${bindings.length} bindings.`,
     affected: [concept.name],
   };
 }

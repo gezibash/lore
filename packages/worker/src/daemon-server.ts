@@ -125,6 +125,7 @@ const PROXY_METHODS = {
   conceptRename: { maxArgs: 3, inject: 2 },
   conceptArchive: { maxArgs: 2, inject: 1 },
   conceptRestore: { maxArgs: 2, inject: 1 },
+  conceptRebuild: { maxArgs: 2, inject: 1 },
   conceptMerge: { maxArgs: 3, inject: 2 },
   conceptSplit: { maxArgs: 2, inject: 1 },
   conceptPatch: { maxArgs: 3, inject: 2 },
