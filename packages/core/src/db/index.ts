@@ -13,6 +13,7 @@ export {
   getChunk,
   getActiveChunks,
   getChunksForConcept,
+  getJournalChunksForConcept,
   getJournalChunksForNarrative,
   updateJournalChunkRouting,
   getJournalTopicsForNarrative,

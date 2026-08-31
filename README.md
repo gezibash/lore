@@ -148,6 +148,21 @@ lore suggest
 | `lore write <narrative> <entry>` | Journal a finding against explicit concept designations    |
 | `lore ask <query>`               | Query the knowledge graph                                  |
 | `lore close <narrative>`         | Queue a close job. `--wait` blocks until it finishes       |
+| `lore rebuild <concept>`         | Rewrite a concept body from its inputs                     |
+
+### Rebuilding a concept
+
+A concept is a rollup of the journal entries designated to it and the code it is bound to. `lore rebuild <concept>` recomputes the body from those inputs and discards the current prose:
+
+```bash
+lore rebuild numscript-movement-posting
+```
+
+Use it when a wrong sentence sits in a concept body. A close merges into the body, so the sentence survives. A rebuild does not read the body, so the sentence goes.
+
+The old body stays in the version history — `lore show <concept>@<ref>` still prints it. If the generator returns an empty body, the rebuild stops and the current body stays. A concept with no journal entries cannot be rebuilt.
+
+`lore sys rebuild` is a different command. It rebuilds the database from the files on disk.
 
 ### Declaring targets on open
 

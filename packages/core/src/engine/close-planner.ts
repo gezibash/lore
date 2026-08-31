@@ -1,12 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { getActiveConceptByName, getChunk, getJournalChunksForNarrative } from "@/db/index.ts";
 import { readChunk } from "@/storage/index.ts";
-import {
-  DEFAULT_MERGE_STRATEGY,
-  LoreError,
-  type MergeStrategy,
-  type NarrativeRow,
-} from "@/types/index.ts";
+import { DEFAULT_MERGE_STRATEGY, type MergeStrategy, type NarrativeRow } from "@/types/index.ts";
+import { synthesizeConceptBody } from "./generator.ts";
 import type { Generator } from "./generator.ts";
 import { mapConcurrent } from "./async.ts";
 import { getCreateUpdateTargets, loadJournalConceptDesignations } from "./journal-routing.ts";
@@ -207,27 +203,6 @@ function applyPatchOps(
     .join("\n\n")
     .trim();
   return content.length > 0 ? content : null;
-}
-
-/**
- * A concept body must carry prose. An empty body writes a chunk file with
- * frontmatter and nothing else, and the embedder rejects the empty string —
- * the close then fails after the files are on disk. Retry the concept once,
- * then stop the close and name the concept.
- */
-async function synthesizeConceptBody(
-  conceptName: string,
-  synthesize: () => Promise<string>,
-): Promise<string> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const content = await synthesize();
-    if (content.trim().length > 0) return content;
-  }
-  throw new LoreError(
-    "EMPTY_CONCEPT_BODY",
-    `The generator returned an empty body for concept '${conceptName}' twice. The close stopped and wrote nothing.`,
-    { concept: conceptName },
-  );
 }
 
 async function generatePatchUpdate(

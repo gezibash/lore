@@ -5,3 +5,8 @@ export async function conceptRestoreCommand(client: WorkerClient, concept: strin
   const result = await client.conceptRestore(concept);
   console.log(formatLifecycleResultCli(result));
 }
+
+export async function conceptRebuildCommand(client: WorkerClient, concept: string): Promise<void> {
+  const result = await client.conceptRebuild(concept);
+  console.log(formatLifecycleResultCli(result));
+}

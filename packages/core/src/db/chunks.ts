@@ -110,6 +110,40 @@ export function getChunksForConcept(db: Database, conceptId: string): ChunkRow[]
     .all(conceptId);
 }
 
+function jsonArrayHolds(raw: string | null, value: string): boolean {
+  if (!raw) return false;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(value);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every journal entry designated to one concept, oldest first. The SQL LIKE
+ * narrows the scan; the JSON parse decides, because LIKE also matches a name
+ * that is a substring of another name.
+ */
+export function getJournalChunksForConcept(
+  db: Database,
+  opts: { conceptId: string; conceptName: string },
+): ChunkRow[] {
+  return db
+    .query<ChunkRow, [string, string]>(
+      `SELECT * FROM chunks
+       WHERE fl_type = 'journal'
+         AND (concept_designations LIKE ? OR concept_refs LIKE ?)
+       ORDER BY created_at`,
+    )
+    .all(`%${opts.conceptName}%`, `%${opts.conceptId}%`)
+    .filter(
+      (chunk) =>
+        jsonArrayHolds(chunk.concept_designations, opts.conceptName) ||
+        jsonArrayHolds(chunk.concept_refs, opts.conceptId),
+    );
+}
+
 export function getJournalChunksForNarrative(db: Database, narrativeId: string): ChunkRow[] {
   return db
     .query<ChunkRow, [string]>(
