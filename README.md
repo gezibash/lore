@@ -350,8 +350,25 @@ A separate code embedding model can be configured under `ai.embedding.code` for 
 
 ## Agent skill
 
-`skills/lore/` is a Claude Code skill that teaches an agent this workflow. It
-travels inside the release, so an installed lore carries its own skill.
+`skills/lore/` teaches an agent this workflow. Install it two ways: with the
+skills CLI, which reaches every agent, or with lore, which carries the skill
+inside the release.
+
+### With the skills CLI
+
+`npx skills` installs into any of 70+ agents, and keeps a lockfile.
+
+```bash
+npx skills add gezibash/lore              # this project, ./.claude/skills/lore
+npx skills add gezibash/lore -g           # every project
+npx skills add gezibash/lore -a codex     # another agent
+npx skills update lore                    # later
+```
+
+GitHub is the registry, so there is nothing to publish. The CLI reads
+`skills/lore/` straight from this repository.
+
+### With lore itself
 
 ```bash
 lore skill install
@@ -359,6 +376,8 @@ lore skill install
 
 This links `~/.claude/skills/lore` at the skill the running lore carries. A link
 follows `lore upgrade` on its own, so the skill never falls behind the binary.
+It installs for Claude Code only, and at the personal level. For a project
+install, or for another agent, use the skills CLI above.
 
 ```bash
 lore skill status      # where it is, and whether it follows this lore
