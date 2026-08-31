@@ -4,6 +4,7 @@ import { formatError } from "./formatters.ts";
 import { buildCommanderCli } from "./commander-adapter.ts";
 import { isInteractiveOutputEnabled } from "./tty.ts";
 import { refreshUpdateCache, runUpgrade, updateNotice } from "./update.ts";
+import { describeSkill, installSkill, uninstallSkill } from "./skill.ts";
 import { defineCli, defineCommand } from "./cli-schema.ts";
 import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
@@ -721,6 +722,54 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 db: options.db as string | undefined,
                 log: options.log as string | undefined,
               });
+            },
+          }),
+        },
+      }),
+      skill: defineCommand({
+        name: "skill",
+        description: "Manage the agent skill this lore carries",
+        subcommands: {
+          install: defineCommand({
+            name: "install",
+            description: "Install the skill for Claude Code",
+            options: {
+              dir: { type: "string", description: "Install somewhere other than ~/.claude/skills/lore" },
+              copy: { type: "boolean", description: "Write a copy instead of a link" },
+              force: { type: "boolean", description: "Replace whatever sits at the target" },
+            },
+            action({ options }) {
+              const result = installSkill({
+                dir: options.dir as string | undefined,
+                copy: Boolean(options.copy),
+                force: Boolean(options.force),
+              });
+              console.log(result.message);
+              if (!result.ok) process.exitCode = 1;
+            },
+          }),
+          status: defineCommand({
+            name: "status",
+            description: "Show where the skill is, and whether it follows this lore",
+            options: {
+              dir: { type: "string", description: "Check somewhere other than ~/.claude/skills/lore" },
+            },
+            action({ options }) {
+              for (const line of describeSkill({ dir: options.dir as string | undefined })) {
+                console.log(line);
+              }
+            },
+          }),
+          uninstall: defineCommand({
+            name: "uninstall",
+            description: "Remove the installed skill",
+            options: {
+              dir: { type: "string", description: "Remove from somewhere other than ~/.claude/skills/lore" },
+            },
+            action({ options }) {
+              const result = uninstallSkill({ dir: options.dir as string | undefined });
+              console.log(result.message);
+              if (!result.ok) process.exitCode = 1;
             },
           }),
         },
