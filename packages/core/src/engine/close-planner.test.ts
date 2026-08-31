@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { insertChunk } from "@/db/chunks.ts";
 import { insertConcept } from "@/db/concepts.ts";
 import { insertNarrative } from "@/db/narratives.ts";
-import { writeJournalChunk } from "@/storage/index.ts";
+import { writeJournalChunk, writeStateChunk } from "@/storage/index.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import type { Generator } from "./generator.ts";
 import type { NarrativeRow, NarrativeTarget } from "@/types/index.ts";
@@ -29,12 +29,13 @@ async function seedJournalEntry(
   narrativeName: string,
   conceptName: string,
   targets: NarrativeTarget[],
+  entry?: string,
 ): Promise<NarrativeRow> {
   const narrative = insertNarrative(db, narrativeName, "close a concept", null, targets);
   const chunk = await writeJournalChunk({
     lorePath,
     narrativeName,
-    content: `A journal entry about ${conceptName}.`,
+    content: entry ?? `A journal entry about ${conceptName}.`,
     conceptDesignations: [conceptName],
   });
   insertChunk(db, {
@@ -101,6 +102,117 @@ test("an update whose rewrite stays empty fails the plan and names the concept",
       code: "EMPTY_CONCEPT_BODY",
       message: expect.stringContaining("gamma"),
     });
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+/** Records what each strategy hands the generator. */
+function recordingGenerator(body: string, patchOps: string) {
+  const existingStateSeen: string[][] = [];
+  const generator = {
+    generateIntegration: async (_entries: string[], existingState: string[]): Promise<string> => {
+      existingStateSeen.push(existingState);
+      return body;
+    },
+    generate: async (): Promise<string> => patchOps,
+  };
+  return { generator: generator as unknown as Generator, existingStateSeen };
+}
+
+async function seedActiveConcept(
+  db: ReturnType<typeof createTestDb>,
+  lorePath: string,
+  conceptName: string,
+  body: string,
+): Promise<void> {
+  const concept = insertConcept(db, conceptName);
+  const chunk = await writeStateChunk({
+    lorePath,
+    concept: conceptName,
+    conceptId: concept.id,
+    narrativeOrigin: "seed",
+    version: 1,
+    content: body,
+  });
+  insertChunk(db, {
+    id: chunk.id,
+    filePath: chunk.filePath,
+    flType: "chunk",
+    conceptId: concept.id,
+    createdAt: new Date().toISOString(),
+  });
+  db.run("UPDATE concepts SET active_chunk_id = ? WHERE id = ?", [chunk.id, concept.id]);
+}
+
+const EXISTING_BODY = "The timeout is 10 seconds.\n\nRetries use exponential backoff.";
+
+test("replace writes a new body and never sees the prose it replaces", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-planner-");
+  try {
+    await seedActiveConcept(db, lorePath, "delta", EXISTING_BODY);
+    const narrative = await seedJournalEntry(db, lorePath, "redo-delta", "delta", [
+      { op: "update", concept: "delta" },
+    ]);
+    const { generator, existingStateSeen } = recordingGenerator("The timeout is 30 seconds.", "[]");
+
+    const plan = await buildExplicitClosePlan(db, narrative, generator, "replace");
+
+    expect(existingStateSeen).toEqual([[]]);
+    expect(plan.updates[0]!.strategy).toBe("rewrite");
+    expect(plan.updates[0]!.newContent).toBe("The timeout is 30 seconds.");
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+test("the default strategy keeps the paragraphs the entries do not touch", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-planner-");
+  try {
+    await seedActiveConcept(db, lorePath, "epsilon", EXISTING_BODY);
+    const narrative = await seedJournalEntry(
+      db,
+      lorePath,
+      "tune-epsilon",
+      "epsilon",
+      [{ op: "update", concept: "epsilon" }],
+      "The timeout is now 30 seconds, not 10 seconds.",
+    );
+    const { generator, existingStateSeen } = recordingGenerator(
+      "unused rewrite",
+      '[{"op":"replace","block_id":"b1","content":"The timeout is 30 seconds."}]',
+    );
+
+    const plan = await buildExplicitClosePlan(db, narrative, generator);
+
+    expect(existingStateSeen).toEqual([]);
+    expect(plan.updates[0]!.strategy).toBe("patch");
+    expect(plan.updates[0]!.newContent).toContain("Retries use exponential backoff.");
+    expect(plan.updates[0]!.newContent).toContain("The timeout is 30 seconds.");
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+test("correct rewrites from the existing prose", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-planner-");
+  try {
+    await seedActiveConcept(db, lorePath, "zeta", EXISTING_BODY);
+    const narrative = await seedJournalEntry(db, lorePath, "fix-zeta", "zeta", [
+      { op: "update", concept: "zeta" },
+    ]);
+    const { generator, existingStateSeen } = recordingGenerator("The timeout is 30 seconds.", "[]");
+
+    const plan = await buildExplicitClosePlan(db, narrative, generator, "correct");
+
+    expect(existingStateSeen).toEqual([[EXISTING_BODY]]);
+    expect(plan.updates[0]!.strategy).toBe("rewrite");
   } finally {
     db.close();
     removeDir(lorePath);

@@ -1,7 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { getActiveConceptByName, getChunk, getJournalChunksForNarrative } from "@/db/index.ts";
 import { readChunk } from "@/storage/index.ts";
-import { LoreError, type MergeStrategy, type NarrativeRow } from "@/types/index.ts";
+import {
+  DEFAULT_MERGE_STRATEGY,
+  LoreError,
+  type MergeStrategy,
+  type NarrativeRow,
+} from "@/types/index.ts";
 import type { Generator } from "./generator.ts";
 import { mapConcurrent } from "./async.ts";
 import { getCreateUpdateTargets, loadJournalConceptDesignations } from "./journal-routing.ts";
@@ -232,17 +237,19 @@ async function generatePatchUpdate(
   existingContent: string,
   mergeStrategy: MergeStrategy | undefined,
 ): Promise<{ content: string; strategy: "patch" | "rewrite" }> {
+  const strategy = mergeStrategy ?? DEFAULT_MERGE_STRATEGY;
+  // `replace` writes a new body from the journal entries, so the generator
+  // never sees the prose it replaces. Every other strategy keeps the prose the
+  // entries do not touch.
+  const existingState = strategy === "replace" ? [] : [existingContent];
   const rewrite = (): Promise<string> =>
     synthesizeConceptBody(conceptName, () =>
-      generator.generateIntegration(
-        [...journalEntries],
-        [existingContent],
-        conceptName,
-        mergeStrategy,
-      ),
+      generator.generateIntegration([...journalEntries], existingState, conceptName, strategy),
     );
 
-  if ((mergeStrategy ?? "replace") === "correct") {
+  // A block patch can only edit the blocks it is given, so it cannot drop a
+  // section. `replace` and `correct` must be able to, and they rewrite.
+  if (strategy === "replace" || strategy === "correct") {
     return {
       content: await rewrite(),
       strategy: "rewrite",
@@ -281,7 +288,7 @@ Rules:
 - Output valid JSON only.`;
   const prompt = [
     `Concept: ${conceptName}`,
-    `Merge strategy: ${mergeStrategy ?? "replace"}`,
+    `Merge strategy: ${strategy}`,
     "",
     "FULL OUTLINE",
     renderOutline(blocks),
