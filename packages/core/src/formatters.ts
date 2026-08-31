@@ -26,7 +26,14 @@ export interface DryRunCloseFormatInput {
   };
   unresolved_entries?: Array<{ chunk_id: string; created_at: string; reason: string }>;
 }
-import { formatBytes, timeAgo } from "@/format.ts";
+import {
+  compactCount,
+  formatBytes,
+  lakeFreshness,
+  stalePercent,
+  timeAgo,
+  type StaleSeverity,
+} from "@/format.ts";
 
 export function formatOpen(result: OpenResult): string {
   const lines: string[] = [];
@@ -57,27 +64,9 @@ function formatPct(value: number | null): string {
   return value == null ? "n/a" : `${(value * 100).toFixed(0)}%`;
 }
 
-function compactCount(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(value);
-}
-
-type StaleSeverity = "none" | "low" | "medium" | "high";
-
-function staleSeverity(stale: number, total: number): { level: StaleSeverity; ratio: number } {
-  if (stale <= 0) return { level: "none", ratio: 0 };
-  const ratio = total > 0 ? stale / total : 0;
-  if (ratio >= 0.2 || stale >= 20) return { level: "high", ratio };
-  if (ratio >= 0.05 || stale >= 5) return { level: "medium", ratio };
-  return { level: "low", ratio };
-}
-
-function staleLabel(stale: number, total: number): string {
-  const sev = staleSeverity(stale, total);
+function staleLabel(stale: number, sev: { level: StaleSeverity; ratio: number }): string {
   if (sev.level === "none") return " ✓ fresh";
-  const ratio = `${(sev.ratio * 100).toFixed(0)}%`;
+  const ratio = stalePercent(sev.ratio);
   if (sev.level === "low") return ` ~ ${compactCount(stale)} stale (${ratio})`;
   if (sev.level === "medium") return ` ⚠ ${compactCount(stale)} stale (${ratio})`;
   return ` ⚠ HIGH ${compactCount(stale)} stale (${ratio})`;
@@ -448,24 +437,20 @@ export function formatStatus(result: StatusResult): string {
     const l = result.lake;
     const codeAge = l.last_code_indexed_at ? timeAgo(l.last_code_indexed_at) : "never";
     const docAge = l.last_doc_indexed_at ? timeAgo(l.last_doc_indexed_at) : "never";
-    const codeSev = staleSeverity(l.stale_source_files, Math.max(1, l.source_files));
-    const docSev = staleSeverity(l.stale_doc_files, Math.max(1, l.doc_chunks));
-    const codeStale = staleLabel(l.stale_source_files, Math.max(1, l.source_files));
-    const docStale = staleLabel(l.stale_doc_files, Math.max(1, l.doc_chunks));
+    const fresh = lakeFreshness(l);
+    const codeStale = staleLabel(l.stale_source_files, fresh.code);
+    const docStale = staleLabel(l.stale_doc_files, fresh.doc);
     lines.push("\n## Lake\n");
     lines.push(
       `code:    ${compactCount(l.source_chunks)} symbols · ${compactCount(l.source_files)} files · ${codeAge}${codeStale}`,
     );
-    lines.push(`docs:    ${compactCount(l.doc_chunks)} files · ${docAge}${docStale}`);
+    lines.push(
+      `docs:    ${compactCount(l.doc_chunks)} chunks · ${compactCount(l.doc_files)} files · ${docAge}${docStale}`,
+    );
     lines.push(`journal: ${compactCount(l.journal_entries)} entries`);
-    if (
-      codeSev.level === "high" ||
-      codeSev.level === "medium" ||
-      docSev.level === "high" ||
-      docSev.level === "medium"
-    ) {
+    if (fresh.worst === "high" || fresh.worst === "medium") {
       lines.push(`\n⚠ Index is stale — run ingest() to refresh`);
-    } else if (codeSev.level === "low" || docSev.level === "low") {
+    } else if (fresh.worst === "low") {
       lines.push(`\nMinor index drift — ingest() when convenient`);
     }
   }

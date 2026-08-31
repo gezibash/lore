@@ -48,11 +48,15 @@ export interface AskDebtSnapshot {
   state_distance?: number;
 }
 
+/**
+ * Both counts of a lane come from the same disk walk, so a stale count is a
+ * subset of the file count and the ratio stays at or below 1.
+ */
 interface FreshnessSnapshot {
   stale_source_files: number;
   source_files: number;
   stale_doc_files: number;
-  doc_files_or_proxy: number;
+  doc_files: number;
 }
 
 export interface AskDebtSnapshotInput {
@@ -64,9 +68,9 @@ export interface AskDebtSnapshotInput {
   coverage?: { ratio: number } | null;
   lake?: {
     stale_source_files: number;
-    source_files: number;
+    discovered_source_files: number;
     stale_doc_files: number;
-    doc_chunks: number;
+    discovered_doc_files: number;
   } | null;
   embeddingStatus?: { total: number; stale: number } | null;
   now?: Date;
@@ -141,9 +145,9 @@ function computeFreshnessSnapshotFromLake(
 ): FreshnessSnapshot {
   return {
     stale_source_files: lake.stale_source_files,
-    source_files: lake.source_files,
+    source_files: lake.discovered_source_files,
     stale_doc_files: lake.stale_doc_files,
-    doc_files_or_proxy: Math.max(1, lake.doc_chunks),
+    doc_files: lake.discovered_doc_files,
   };
 }
 
@@ -170,7 +174,7 @@ function computeFreshnessSnapshotFromFs(db: Database, entry: RegistryEntry): Fre
   }
 
   try {
-    const docs = discoverTextFiles(entry.code_path, entry.lore_path);
+    const docs = discoverTextFiles(entry.code_path);
     docFiles = docs.length;
     const lastDocIngest = getLastDocIndexedAt(db);
     const lastDocMs = lastDocIngest ? new Date(lastDocIngest).getTime() : 0;
@@ -189,7 +193,7 @@ function computeFreshnessSnapshotFromFs(db: Database, entry: RegistryEntry): Fre
     stale_source_files: staleSourceFiles,
     source_files: sourceFiles,
     stale_doc_files: staleDocFiles,
-    doc_files_or_proxy: Math.max(1, docFiles),
+    doc_files: docFiles,
   };
 }
 
@@ -303,9 +307,7 @@ export function computeAskDebtSnapshot(input: AskDebtSnapshotInput): AskDebtSnap
   const codeFreshness =
     freshness.source_files > 0 ? clamp01(freshness.stale_source_files / freshness.source_files) : 0;
   const docFreshness =
-    freshness.doc_files_or_proxy > 0
-      ? clamp01(freshness.stale_doc_files / freshness.doc_files_or_proxy)
-      : 0;
+    freshness.doc_files > 0 ? clamp01(freshness.stale_doc_files / freshness.doc_files) : 0;
   const coverageGap = computeCoverageGap(input.db, input.coverage);
   const embeddingMismatch = computeEmbeddingMismatchRatio(
     input.db,

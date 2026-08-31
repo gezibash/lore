@@ -29,11 +29,16 @@ export {
   deleteOrphanedChunkRows,
   sumOrphanedChunkRows,
   getSourceChunkCount,
-  getDocChunkCount,
+  getDocLaneStats,
   getLastDocIndexedAt,
   getJournalEntryCount,
 } from "./chunks.ts";
-export type { InsertChunkOpts, OrphanedChunkRows, PruneOrphansResult } from "./chunks.ts";
+export type {
+  InsertChunkOpts,
+  OrphanedChunkRows,
+  PruneOrphansResult,
+  DocLaneStats,
+} from "./chunks.ts";
 export {
   insertConcept,
   insertConceptRaw,

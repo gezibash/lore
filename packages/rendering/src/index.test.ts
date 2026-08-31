@@ -31,15 +31,115 @@ function sampleStatus(): StatusResult {
       source_chunks: 10,
       source_files: 3,
       doc_chunks: 2,
+      doc_files: 1,
       journal_entries: 5,
       last_code_indexed_at: "2026-03-06T00:00:00.000Z",
       last_doc_indexed_at: "2026-03-06T00:00:00.000Z",
+      discovered_source_files: 3,
       stale_source_files: 0,
+      discovered_doc_files: 1,
       stale_doc_files: 0,
     },
     suggestions: [],
   };
 }
+
+function indexLabel(status: StatusResult): string {
+  // The FOCUS table renders first and can hold a concept named like a state
+  // row, so the label is read from under the STATE header.
+  const lines = stripAnsi(renderStatus(status, { route: "cli" })).split("\n");
+  const header = lines.findIndex((row) => row.trim().startsWith("STATE"));
+  if (header < 0) return "";
+  const row = lines.slice(header + 1).find((line) => /^\s*index\s{2,}/.test(line));
+  return row ? row.trim().replace(/^index\s+/, "") : "";
+}
+
+test("the index label grades the pair by its worst lane", () => {
+  const clean = sampleStatus();
+  expect(indexLabel(clean)).toBe("fresh");
+
+  // One lane drifts a little, the other lane is clean: drift, not stale.
+  const codeDrift = sampleStatus();
+  codeDrift.lake = { ...clean.lake!, discovered_source_files: 1022, stale_source_files: 3 };
+  expect(indexLabel(codeDrift)).toBe("drift");
+
+  const docDrift = sampleStatus();
+  docDrift.lake = { ...clean.lake!, discovered_doc_files: 179, stale_doc_files: 3 };
+  expect(indexLabel(docDrift)).toBe("drift");
+
+  // A lane above the drift ceiling still reads stale.
+  const codeStale = sampleStatus();
+  codeStale.lake = { ...clean.lake!, discovered_source_files: 1022, stale_source_files: 300 };
+  expect(indexLabel(codeStale)).toBe("stale");
+});
+
+test("a FOCUS row named like a state row does not shadow the index label", () => {
+  const status = sampleStatus();
+  status.priorities = [{ concept: "index-pipeline", action: "review", reason: "High pressure" }];
+  expect(indexLabel(status)).toBe("fresh");
+});
+
+test("the doc lane measures stale doc files against doc files, not chunks", () => {
+  const status = sampleStatus();
+  // 4 stale of 20 doc files is 20%: high, so the pair reads stale. Against the
+  // 578 chunks those files hold, the same 4 read 0.7% and the pair reads drift.
+  status.lake = {
+    ...status.lake!,
+    discovered_source_files: 1022,
+    stale_source_files: 3,
+    doc_chunks: 578,
+    doc_files: 20,
+    discovered_doc_files: 20,
+    stale_doc_files: 4,
+  };
+  expect(indexLabel(status)).toBe("stale");
+
+  const details = stripAnsi(renderStatus(status, { route: "cli", details: true }));
+  expect(details).toContain("578 chunks · 20 files");
+  expect(details).toContain("4 stale (20%)");
+});
+
+test("the lake block reports chunks and files as separate figures", () => {
+  const status = sampleStatus();
+  status.lake = { ...status.lake!, doc_chunks: 578, doc_files: 179, discovered_doc_files: 179 };
+
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("docs:    578 chunks · 179 files");
+  expect(markdown).toContain("✓ fresh");
+
+  const details = stripAnsi(renderStatus(status, { route: "cli", details: true }));
+  expect(details).toContain("578 chunks · 179 files");
+});
+
+test("the markdown lake block grades both lanes and names the fix", () => {
+  const drift = sampleStatus();
+  drift.lake = { ...drift.lake!, discovered_source_files: 1022, stale_source_files: 3 };
+  expect(renderStatus(drift, { format: "markdown" })).toContain("Minor index drift");
+
+  const stale = sampleStatus();
+  stale.lake = { ...stale.lake!, discovered_doc_files: 20, stale_doc_files: 4 };
+  const markdown = renderStatus(stale, { format: "markdown" });
+  expect(markdown).toContain("Index is stale");
+  expect(markdown).toContain("4 stale (20%)");
+});
+
+test("a stale count under one percent reads <1%, never 0%", () => {
+  const status = sampleStatus();
+  status.lake = { ...status.lake!, discovered_source_files: 1022, stale_source_files: 3 };
+  const details = stripAnsi(renderStatus(status, { route: "cli", details: true }));
+  expect(details).toContain("3 stale (<1%)");
+  expect(details).not.toContain("(0%)");
+});
+
+test("a stale count above the file count still reads at most 100%", () => {
+  const status = sampleStatus();
+  // A lake from an older producer can disagree with itself. The label must not
+  // print a ratio a reader cannot act on.
+  status.lake = { ...status.lake!, discovered_doc_files: 20, stale_doc_files: 25 };
+  const details = stripAnsi(renderStatus(status, { route: "cli", details: true }));
+  expect(details).toContain("25 stale (100%)");
+  expect(details).not.toContain("125%");
+});
 
 function sampleLs(): LsResult {
   return {

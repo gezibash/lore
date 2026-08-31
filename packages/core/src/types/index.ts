@@ -966,10 +966,15 @@ export interface StatusResult {
     source_chunks: number;
     source_files: number;
     doc_chunks: number;
+    doc_files: number;
     journal_entries: number;
     last_code_indexed_at: string | null;
     last_doc_indexed_at: string | null;
+    /** Source files on disk. The denominator of `stale_source_files`. */
+    discovered_source_files: number;
     stale_source_files: number;
+    /** Doc files on disk. The denominator of `stale_doc_files`. */
+    discovered_doc_files: number;
     stale_doc_files: number;
   };
   /** Formal epistemological gap S_dist(lore, codebase) ∈ [0,1]. Distinct from debt. */

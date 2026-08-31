@@ -90,7 +90,7 @@ function readIgnoreFile(filePath: string): string[] {
  *   - Lines starting with `!` = force-include (overrides gitignore exclusions)
  *   - Other lines = additional exclusions (on top of gitignore)
  */
-export function discoverTextFiles(codePath: string, _lorePath?: string): DiscoveredTextFile[] {
+export function discoverTextFiles(codePath: string): DiscoveredTextFile[] {
   // Skip negation lines (e.g. !vendor/...) — Bun.Glob interprets ! as negation,
   // which would incorrectly match most paths.
   const gitignorePatterns = readIgnoreFile(join(codePath, ".gitignore")).filter(
