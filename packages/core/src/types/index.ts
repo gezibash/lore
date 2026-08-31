@@ -952,6 +952,16 @@ export interface StatusResult {
     concepts_with_bindings: number;
     concepts_total: number;
   };
+  /**
+   * The Lance search index on disk. Lance keeps every version of a table it
+   * rewrites, so `superseded_bytes` is the part no reader can reach. `lore sys
+   * prune` returns it to the filesystem.
+   */
+  search_index?: {
+    on_disk_bytes: number;
+    live_bytes: number;
+    superseded_bytes: number;
+  };
   lake?: {
     source_chunks: number;
     source_files: number;

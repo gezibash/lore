@@ -1,3 +1,4 @@
+import { type Dirent, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import type { Database } from "bun:sqlite";
 import * as lancedb from "@lancedb/lancedb";
@@ -67,6 +68,11 @@ function modelSlug(model: string): string {
   return `vec_${model.replace(/[^a-zA-Z0-9]+/g, "_")}`;
 }
 
+/** The Lance store of a mind lives beside its SQLite file. */
+export function lanceDir(lorePath: string): string {
+  return join(lorePath, "lance");
+}
+
 function lanceDirForDb(db: Database): string {
   const file = db.filename;
   if (!file || file === ":memory:") {
@@ -75,7 +81,7 @@ function lanceDirForDb(db: Database): string {
       "Lance search index requires a file-backed lore database",
     );
   }
-  return join(dirname(file), "lance");
+  return lanceDir(dirname(file));
 }
 
 /** Chunk eligibility mirrors the legacy vector/FTS lane guards:
@@ -229,6 +235,161 @@ async function syncVecTables(db: Database, connection: lancedb.Connection): Prom
 }
 
 /**
+ * Disk the Lance store holds, split by what a reader can reach.
+ *
+ * Lance never overwrites a data file. A delete or a merge writes a new file and
+ * keeps the old one, so the directory holds every version until a caller prunes
+ * it. `live_bytes` is what the current manifest of each table points at, so the
+ * remainder is versions no reader can reach.
+ */
+export interface LanceSpace {
+  dir: string;
+  on_disk_bytes: number;
+  live_bytes: number;
+  superseded_bytes: number;
+  superseded_ratio: number;
+}
+
+/** What one compaction pass removed from the Lance store. */
+export interface LanceCompactResult {
+  tables: number;
+  bytes_before: number;
+  bytes_after: number;
+  reclaimed_bytes: number;
+}
+
+/**
+ * How long a superseded version stays on disk.
+ *
+ * SQLite is the system of record and the index rebuilds from it, so the history
+ * carries no value of its own. It only has to outlive a search that is reading
+ * an older manifest right now.
+ */
+const VERSION_RETENTION_MS = 5 * 60_000;
+
+// A compaction rewrites fragments and unlinks files, so it must return enough
+// to pay for the work. Under these limits the superseded files are cheaper to
+// leave in place. The same limits the SQLite file uses for its free pages, so
+// one rule covers both stores.
+export const RECLAIM_MIN_SUPERSEDED_BYTES = 16 * 1024 * 1024;
+export const RECLAIM_MIN_SUPERSEDED_RATIO = 0.1;
+
+// The gate reads the directory, so a run of ingests must not walk it each time.
+// One ingest in ten minutes pays for the walk; the rest read the timestamp and
+// stop.
+const RECLAIM_CHECK_INTERVAL_MS = 10 * 60_000;
+const lastReclaimCheckAt = new Map<string, number>();
+
+function directoryBytes(dir: string): number {
+  let total = 0;
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // No lance directory yet — the index is built on the first search.
+    return 0;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += directoryBytes(path);
+    } else if (entry.isFile()) {
+      try {
+        total += statSync(path).size;
+      } catch {
+        // A concurrent compaction unlinked it between the listing and the stat.
+      }
+    }
+  }
+  return total;
+}
+
+/** Measure the Lance store. Reads one manifest per table and walks the
+ *  directory, so it costs no scan of the data itself. */
+export async function getLanceSpace(dir: string): Promise<LanceSpace> {
+  const onDisk = directoryBytes(dir);
+  let live = 0;
+  if (onDisk > 0) {
+    const connection = await lancedb.connect(dir);
+    for (const name of await connection.tableNames()) {
+      const table = await connection.openTable(name);
+      live += (await table.stats()).totalBytes;
+    }
+  }
+  // The manifest total counts data, index and overlay files. Manifests and
+  // deletion files sit outside it, so the live figure is a floor. Clamp it to
+  // the directory, because a superseded figure must never fall below zero.
+  const liveBytes = Math.min(live, onDisk);
+  const superseded = onDisk - liveBytes;
+  return {
+    dir,
+    on_disk_bytes: onDisk,
+    live_bytes: liveBytes,
+    superseded_bytes: superseded,
+    superseded_ratio: onDisk > 0 ? superseded / onDisk : 0,
+  };
+}
+
+/**
+ * Compact the fragments of every table and delete the versions older than the
+ * retention window. This is the only path that returns superseded Lance files
+ * to the filesystem.
+ */
+export async function compactLanceIndex(
+  dir: string,
+  opts?: { retainMs?: number },
+): Promise<LanceCompactResult> {
+  const before = directoryBytes(dir);
+  if (before === 0) {
+    return { tables: 0, bytes_before: 0, bytes_after: 0, reclaimed_bytes: 0 };
+  }
+
+  const retainMs = opts?.retainMs ?? VERSION_RETENTION_MS;
+  const cleanupOlderThan = new Date(Date.now() - retainMs);
+  const connection = await lancedb.connect(dir);
+  const names = await connection.tableNames();
+  for (const name of names) {
+    const table = await connection.openTable(name);
+    // deleteUnverified stays off: a file no manifest names can belong to a
+    // write another process has in flight, and deleting it corrupts the table.
+    await table.optimize({ cleanupOlderThan });
+  }
+
+  lastReclaimCheckAt.set(dir, Date.now());
+  const after = directoryBytes(dir);
+  return {
+    tables: names.length,
+    bytes_before: before,
+    bytes_after: after,
+    reclaimed_bytes: Math.max(0, before - after),
+  };
+}
+
+/**
+ * Compact when the superseded files are large enough to pay for the work.
+ *
+ * This is the automatic path, and it runs on the write side — an ingest — never
+ * on a search. A search must not pay for a rewrite of the store. Returns null
+ * when the store is not worth compacting, when the check ran recently, or when
+ * the compaction failed: a failure here costs disk, not retrieval, and the next
+ * ingest tries again.
+ */
+export async function reclaimLanceSpace(dir: string): Promise<LanceCompactResult | null> {
+  const lastCheck = lastReclaimCheckAt.get(dir);
+  if (lastCheck !== undefined && Date.now() - lastCheck < RECLAIM_CHECK_INTERVAL_MS) return null;
+  lastReclaimCheckAt.set(dir, Date.now());
+
+  try {
+    const space = await getLanceSpace(dir);
+    if (space.superseded_bytes < RECLAIM_MIN_SUPERSEDED_BYTES) return null;
+    if (space.superseded_ratio < RECLAIM_MIN_SUPERSEDED_RATIO) return null;
+    return await compactLanceIndex(dir);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Open the mind's Lance index, healing any drift from SQLite first.
  * Cheap when in sync (id-set diff); throttled by a short TTL so the
  * two hybridSearch calls within one ask pay for at most one sync.
@@ -279,6 +440,7 @@ export async function rebuildLanceIndex(db: Database): Promise<void> {
     await connection.dropTable(name);
   }
   lastSyncedAt.delete(dir);
+  lastReclaimCheckAt.delete(dir);
   await syncTextTable(db, connection);
   await syncVecTables(db, connection);
   lastSyncedAt.set(dir, Date.now());

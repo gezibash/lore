@@ -1,6 +1,6 @@
 export { LoreEngine } from "./engine/index.ts";
 export { LoreError } from "./types/index.ts";
-export { timeAgo } from "./format.ts";
+export { timeAgo, formatBytes } from "./format.ts";
 export { getDeepValue } from "./config/index.ts";
 export { GENERATION_PROMPT_KEYS, normalizePromptKey } from "./config/prompts.ts";
 export { describeSchemaIssue } from "./db/index.ts";

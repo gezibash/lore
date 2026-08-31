@@ -7,6 +7,7 @@ import {
   normalizePromptKey as coreNormalizePromptKey,
   describeSchemaIssue as coreDescribeSchemaIssue,
   timeAgo,
+  formatBytes,
   formatClose as coreFormatClose,
   formatHistory as coreFormatHistory,
   formatLifecycleResult as coreFormatLifecycleResult,
@@ -108,7 +109,7 @@ import type {
 
 export type * from "./types.ts";
 export type { DiffHunk, DiffLine } from "@lore/core";
-export { LoreError, getDeepValue, timeAgo, ALL_PROVIDERS };
+export { LoreError, getDeepValue, timeAgo, formatBytes, ALL_PROVIDERS };
 export {
   renderNarrativeWithCitations,
   renderProvenance,
@@ -365,7 +366,7 @@ interface LoreClientEngine {
   migrate(opts?: { codePath?: string }): { applied: number };
   migrateStatus(opts?: { codePath?: string }): MigrationStatus;
   repair(opts?: { codePath?: string } & SchemaRepairOptions): SchemaRepairResult;
-  pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult;
+  pruneOrphans(opts?: { codePath?: string; check?: boolean }): Promise<PruneOrphansResult>;
   vacuum(opts?: { codePath?: string }): VacuumResult;
   commitLog(opts?: { codePath?: string; limit?: number; since?: string }): CommitLogEntry[];
   listLoreMinds(): Array<{ name: string } & RegistryEntry>;
@@ -824,7 +825,7 @@ export class LoreClient {
     return this.engine.repair(opts);
   }
 
-  pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult {
+  pruneOrphans(opts?: { codePath?: string; check?: boolean }): Promise<PruneOrphansResult> {
     return this.engine.pruneOrphans(opts);
   }
 

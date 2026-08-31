@@ -14,6 +14,7 @@ import {
   formatStatus as formatStatusMarkdown,
   renderNarrativeWithCitations,
   renderProvenance,
+  formatBytes,
   timeAgo,
 } from "@lore/sdk";
 
@@ -438,6 +439,7 @@ function compactPriorityConcept(concept: string): string {
   if (concept === "(symbol embeddings)") return "symbol embeddings";
   if (concept === "(maintenance)") return "maintenance";
   if (concept === "(database)") return "database";
+  if (concept === "(search index)") return "search index";
   return concept;
 }
 
@@ -468,6 +470,10 @@ function compactPriorityReason(priority: StatusResult["priorities"][number]): st
   if (priority.concept === "(database)") {
     const orphanMatch = priority.reason.match(/(\d+) row/);
     return orphanMatch ? `${orphanMatch[1]} orphaned` : "orphaned rows";
+  }
+  if (priority.concept === "(search index)") {
+    const wasteMatch = priority.reason.match(/^([\d.]+ [A-Z]+) of /);
+    return wasteMatch ? `${wasteMatch[1]} superseded` : "superseded versions";
   }
   if (priority.reason.startsWith("Referenced files changed:")) return "source changed";
   if (priority.reason.startsWith("Not updated in a long time")) return "stale";
@@ -529,6 +535,7 @@ function compactNextCommand(result: StatusResult): string | null {
     if (priority.concept === "(embeddings)") return "lore sys embeddings refresh";
     if (priority.concept === "(symbol embeddings)") return "lore sys embeddings refresh";
     if (priority.concept === "(database)") return "lore sys prune";
+    if (priority.concept === "(search index)") return "lore sys prune";
     // Brackets mark a priority the mind raises about itself, not a concept.
     // `lore show` takes a concept name, so it cannot open one of these.
     if (priority.concept.startsWith("(")) return "lore status --details";
@@ -648,6 +655,20 @@ function renderStatusVerbosePlain(result: StatusResult): string {
       lines.push(`  ${YELLOW}run lore ingest to refresh${RESET}`);
     } else if (codeSev.level === "low" || docSev.level === "low") {
       lines.push(`  ${DIM}minor index drift — ingest when convenient${RESET}`);
+    }
+  }
+
+  if (result.search_index) {
+    const index = result.search_index;
+    const wasteColor = index.superseded_bytes > 0 ? YELLOW : DIM;
+    lines.push(`\n${BOLD}SEARCH INDEX${RESET}`);
+    lines.push(`  ${DIM}on disk   ${RESET} ${formatBytes(index.on_disk_bytes)}`);
+    lines.push(`  ${DIM}live      ${RESET} ${formatBytes(index.live_bytes)}`);
+    lines.push(
+      `  ${DIM}superseded${RESET} ${wasteColor}${formatBytes(index.superseded_bytes)}${RESET}`,
+    );
+    if (index.superseded_bytes > 0) {
+      lines.push(`  ${DIM}run lore sys prune to reclaim it${RESET}`);
     }
   }
 

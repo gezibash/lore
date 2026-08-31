@@ -10,3 +10,17 @@ export function timeAgo(timestamp: string): string {
   if (abs < 31536000) return rtf.format(Math.trunc(seconds / 2592000), "month");
   return rtf.format(Math.trunc(seconds / 31536000), "year");
 }
+
+/** Render a byte count for a person. Disk figures reach the gigabytes, and a
+ *  raw byte count at that size is unreadable. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}

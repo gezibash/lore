@@ -58,6 +58,7 @@ import {
   seedGlobalConfigIfAbsent,
   type DeepPartial,
 } from "@/config/index.ts";
+import { formatBytes } from "@/format.ts";
 import { openDb, reclaimFreeSpace, runMigrations, vacuumDb } from "@/db/index.ts";
 import { migrate as runMigrate, getMigrationStatus, type MigrationStatus } from "@/db/migrator.ts";
 import {
@@ -162,7 +163,16 @@ import { computeLineDiff, isDiffTooLarge, type DiffHunk } from "./line-diff.ts";
 import { Embedder } from "./embedder.ts";
 import { Generator, buildGenerationSystemPrompt } from "./generator.ts";
 import { AskTracer } from "./tracer.ts";
-import { markLanceDirty, rebuildLanceIndex } from "./lance-index.ts";
+import {
+  RECLAIM_MIN_SUPERSEDED_BYTES,
+  RECLAIM_MIN_SUPERSEDED_RATIO,
+  compactLanceIndex,
+  getLanceSpace,
+  lanceDir,
+  markLanceDirty,
+  rebuildLanceIndex,
+  reclaimLanceSpace,
+} from "./lance-index.ts";
 import {
   openNarrative,
   logEntry,
@@ -1394,6 +1404,13 @@ export class LoreEngine {
       await sleep(Math.max(50, opts?.pollMs ?? 250));
     }
 
+    // A close maintenance job rescans files and rewrites chunks, so it feeds
+    // the Lance store the same superseded versions an ingest does. The worker
+    // holds nobody waiting, unlike the drain a `lore close` runs itself.
+    if (maintenanceJobsProcessed > 0) {
+      await reclaimLanceSpace(lanceDir(entry.lore_path));
+    }
+
     return {
       mode,
       close_jobs_processed: closeJobsProcessed,
@@ -1579,6 +1596,10 @@ export class LoreEngine {
     const symbolLane = countSymbolEmbeddingLane(db, currentCodeModel);
     const staleSymbolEmbeddings = symbolLane.embedded - symbolLane.currentModel;
     const orphanedRows = countAllOrphanedRows(db);
+    // The Lance store grows on its own account: every rewrite leaves the old
+    // data file behind. Reading it costs one manifest per table and a directory
+    // walk, and a store that has never been built reports zero.
+    const lanceSpace = await getLanceSpace(lanceDir(entry.lore_path));
 
     // Priorities: ranked by expected debt share p(c)·R(c) — the concepts whose
     // healing moves debt most — among those with R(c) or σ(c) worth acting on.
@@ -1723,6 +1744,23 @@ export class LoreEngine {
         concept: "(database)",
         action: "prune database",
         reason: `${orphanedRows} row(s) belong to chunks or symbols that are gone. Run lore sys prune.`,
+        last_narrative: undefined,
+        changed_at: undefined,
+      });
+    }
+
+    // The same disk a delete leaves behind, in the other store. Raised on the
+    // same limits the automatic compaction uses, so the operator sees it only
+    // when the store holds enough to pay for a compaction.
+    if (
+      lanceSpace.superseded_bytes >= RECLAIM_MIN_SUPERSEDED_BYTES &&
+      lanceSpace.superseded_ratio >= RECLAIM_MIN_SUPERSEDED_RATIO
+    ) {
+      const percent = (lanceSpace.superseded_ratio * 100).toFixed(0);
+      priorities.unshift({
+        concept: "(search index)",
+        action: "prune search index",
+        reason: `${formatBytes(lanceSpace.superseded_bytes)} of the ${formatBytes(lanceSpace.on_disk_bytes)} search index is superseded versions no reader can reach (${percent}%). Run lore sys prune.`,
         last_narrative: undefined,
         changed_at: undefined,
       });
@@ -1957,6 +1995,16 @@ export class LoreEngine {
         top_stale: conceptHealth.top_stale,
       },
       coverage,
+      // Reported whenever the store exists, so an operator can watch the waste
+      // grow instead of meeting it as a full disk.
+      search_index:
+        lanceSpace.on_disk_bytes > 0
+          ? {
+              on_disk_bytes: lanceSpace.on_disk_bytes,
+              live_bytes: lanceSpace.live_bytes,
+              superseded_bytes: lanceSpace.superseded_bytes,
+            }
+          : undefined,
       lake,
       state_distance: askDebtSnapshot.state_distance,
     };
@@ -3208,8 +3256,12 @@ export class LoreEngine {
    * symbol replacement cleared their own dependents. Retrieval does not change:
    * the read paths reach a row through its parent, so these rows were already
    * invisible.
+   *
+   * The prune covers the Lance search index too. Lance keeps every version of a
+   * table it rewrites, so the store grows with each sync that removes rows, and
+   * nothing else on the write path returns those files to the filesystem.
    */
-  pruneOrphans(opts?: { codePath?: string; check?: boolean }): PruneOrphansResult {
+  async pruneOrphans(opts?: { codePath?: string; check?: boolean }): Promise<PruneOrphansResult> {
     const { entry, db } = this.resolveLoreMind(opts?.codePath);
     const dbPath = join(entry.lore_path, "lore.db");
     const bytesBefore = statSync(dbPath).size;
@@ -3217,12 +3269,16 @@ export class LoreEngine {
     if (opts?.check) {
       const chunkRows = countOrphanedChunkRows(db);
       const symbolRows = countOrphanedSymbolRows(db);
+      const lanceSpace = await getLanceSpace(lanceDir(entry.lore_path));
       return {
         mode: "check",
         orphans: { ...chunkRows, ...symbolRows },
         total: sumOrphanedChunkRows(chunkRows) + sumOrphanedSymbolRows(symbolRows),
         db_bytes_before: bytesBefore,
         db_bytes_after: bytesBefore,
+        lance_bytes_before: lanceSpace.on_disk_bytes,
+        lance_bytes_after: lanceSpace.on_disk_bytes,
+        lance_superseded_bytes: lanceSpace.superseded_bytes,
       };
     }
 
@@ -3234,12 +3290,21 @@ export class LoreEngine {
     // old size. VACUUM rewrites the file without them.
     if (total > 0) vacuumDb(db);
 
+    // Compact whatever the retention window allows. The count of orphan rows
+    // does not gate this: superseded Lance versions come from every rewrite,
+    // not only from the rows this prune deleted.
+    const compacted = await compactLanceIndex(lanceDir(entry.lore_path));
+    const lanceSpaceAfter = await getLanceSpace(lanceDir(entry.lore_path));
+
     return {
       mode: "apply",
       orphans,
       total,
       db_bytes_before: bytesBefore,
       db_bytes_after: statSync(dbPath).size,
+      lance_bytes_before: compacted.bytes_before,
+      lance_bytes_after: compacted.bytes_after,
+      lance_superseded_bytes: lanceSpaceAfter.superseded_bytes,
     };
   }
 
@@ -4016,6 +4081,7 @@ export class LoreEngine {
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
     markLanceDirty(db);
+    await reclaimLanceSpace(lanceDir(entry.lore_path));
     return {
       files_ingested: result === "ingested" ? 1 : 0,
       files_skipped: result === "skipped" ? 1 : 0,
@@ -4037,6 +4103,10 @@ export class LoreEngine {
     });
     await this.embedMissingChunks(db, entry);
     markLanceDirty(db);
+    // The write side is where compaction belongs. The sync that supersedes a
+    // Lance data file runs on the next search, so this pass clears what the
+    // last ingest left; a search never pays for a rewrite of the store.
+    await reclaimLanceSpace(lanceDir(entry.lore_path));
     return { scan, ingest };
   }
 
