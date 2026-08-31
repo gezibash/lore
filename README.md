@@ -28,6 +28,18 @@ Lore turns a codebase into a queryable knowledge graph — named concepts, narra
 
 ## Install
 
+Download a release build. The script picks the build for your platform, checks
+it against the published checksum, and links it at `~/.local/bin/lore`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gezibash/lore/main/install.sh | sh
+```
+
+Builds exist for macOS and Linux, on x64 and arm64. Pin a version with
+`LORE_VERSION=v0.1.0`. Remove it with `install.sh --uninstall`.
+
+### Build from source
+
 Requires [Bun](https://bun.sh).
 
 ```bash

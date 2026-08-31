@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must exist)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14 }
+          - { target: darwin-x64, runner: macos-13 }
+          - { target: linux-x64, runner: ubuntu-latest }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install Homebrew SQLite
+        if: startsWith(matrix.target, 'darwin')
+        run: brew install sqlite
+
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: ./scripts/smoke.sh ./dist/lore
+      - run: ./scripts/package.sh ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lore-${{ matrix.target }}
+          path: dist-archive/lore-${{ matrix.target }}.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      # The install script reads this file to verify a download.
+      - name: Write SHA256SUMS
+        working-directory: assets
+        run: sha256sum lore-*.tar.gz | tee SHA256SUMS
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* \
+              --title "$TAG" \
+              --generate-notes
+          fi
