@@ -48,6 +48,10 @@ export async function ingestAllCommand(
     parts.push(
       `  ${BOLD}Docs:${RESET}  ${ingest.files_ingested} files ingested, ${ingest.files_skipped} skipped${ingest.files_failed ? `, ${ingest.files_failed} failed` : ""}${ingest.files_removed > 0 ? `, ${ingest.files_removed} removed` : ""}`,
     );
+    if (ingest.failed_paths?.length) {
+      // The count alone hides which document never reached the lake.
+      parts.push(`  ${BOLD}Failed:${RESET} ${ingest.failed_paths.join(", ")}`);
+    }
     spinner.succeed(parts.join("\n"));
   } catch (error) {
     spinner.clear();

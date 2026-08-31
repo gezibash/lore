@@ -3956,7 +3956,7 @@ export class LoreEngine {
 
   async ingestDoc(filePath: string, opts?: { codePath?: string }): Promise<IngestResult> {
     const { db, entry } = this.resolveLoreMind(opts?.codePath);
-    const { resolve } = await import("path");
+    const { resolve, relative } = await import("path");
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
     markLanceDirty(db);
@@ -3965,6 +3965,7 @@ export class LoreEngine {
       files_skipped: result === "skipped" ? 1 : 0,
       files_removed: 0,
       files_failed: result === "failed" ? 1 : 0,
+      failed_paths: result === "failed" ? [relative(entry.code_path, abs)] : [],
       duration_ms: 0,
     };
   }

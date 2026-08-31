@@ -1250,6 +1250,7 @@ export interface IngestResult {
   files_skipped: number; // unchanged hash
   files_removed: number; // deleted from disk
   files_failed?: number;
+  failed_paths?: string[]; // paths behind files_failed
   duration_ms: number;
 }
 

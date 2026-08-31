@@ -56,6 +56,30 @@ const XML_INLINE_TAGS =
 /** Elements whose content is never prose. */
 const DROP_TAGS = new Set(["script", "style", "head", "meta", "link", "noscript", "svg"]);
 
+/**
+ * HTML void elements. They have no closing tag, and HTML5 writes them without
+ * the closing slash. Read as open tags, `<meta charset>` and `<link rel>` each
+ * opened a drop region that `</head>` could not close: the scanner then dropped
+ * the whole body and every plain HTML document extracted to null. XML always
+ * writes the closing slash, so this list applies to HTML only.
+ */
+const HTML_VOID = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+]);
+
 function decodeEntities(value: string): string {
   return value
     .replace(/&lt;/g, "<")
@@ -82,11 +106,21 @@ function extractBlocks(markup: string, kind: "html" | "xml"): Block[] {
   const blocks: Block[] = [];
   let buffer: string[] = [];
   let headingLevel = 0;
-  let dropDepth = 0;
-  let dropTag = "";
+  // A stack, not a counter with one remembered name: `<style>` inside `<head>`
+  // made the two disagree, and the region never closed.
+  const dropStack: string[] = [];
+  /**
+   * HTML text nodes join the way a browser renders them: the source whitespace
+   * decides, and a dropped inline tag adds nothing. Joining with a space put
+   * one before every closing mark — `Last <strong>paragraph</strong>.` read as
+   * "Last paragraph .". XML keeps the space: its inline tags are labels that
+   * sit flush against their text, and `<NO.PARAG>1.</NO.PARAG>` must not fuse
+   * with the paragraph it numbers.
+   */
+  const glue = kind === "html" ? "" : " ";
 
   const flush = () => {
-    const text = decodeEntities(buffer.join(" ")).replace(/\s+/g, " ").trim();
+    const text = decodeEntities(buffer.join(glue)).replace(/\s+/g, " ").trim();
     buffer = [];
     if (text) blocks.push({ level: headingLevel, text });
     headingLevel = 0;
@@ -99,25 +133,31 @@ function extractBlocks(markup: string, kind: "html" | "xml"): Block[] {
   while ((match = tagRe.exec(markup)) !== null) {
     const between = markup.slice(cursor, match.index);
     cursor = tagRe.lastIndex;
-    if (dropDepth === 0 && between.trim()) buffer.push(between);
+    if (dropStack.length === 0 && between) buffer.push(between);
 
     const raw = match[0];
     const name = (match[1] ?? "").toLowerCase();
     if (!name) continue; // comment, doctype or processing instruction
     const isClose = raw.startsWith("</");
-    const selfClosing = match[2] === "/";
+    const selfClosing = match[2] === "/" || (kind === "html" && HTML_VOID.has(name));
 
     if (DROP_TAGS.has(name)) {
-      if (isClose && dropTag === name) {
-        dropDepth = Math.max(0, dropDepth - 1);
-        if (dropDepth === 0) dropTag = "";
-      } else if (!isClose && !selfClosing) {
-        dropDepth += 1;
-        dropTag = name;
+      if (isClose) {
+        // Close the innermost region with this name, and every region opened
+        // inside it. An unclosed inner tag then cannot hold the region open.
+        const opened = dropStack.lastIndexOf(name);
+        if (opened >= 0) dropStack.length = opened;
+      } else if (!selfClosing) {
+        dropStack.push(name);
       }
       continue;
     }
-    if (dropDepth > 0 || VOID_OR_INLINE.has(name)) continue;
+    if (dropStack.length > 0) continue;
+    if (VOID_OR_INLINE.has(name)) {
+      // A line break separates the words around it; the other inline tags do not.
+      if (kind === "html" && name === "br") buffer.push(" ");
+      continue;
+    }
     if (kind === "xml" && XML_INLINE_TAGS.test(name)) continue;
 
     // Block boundary: emit what we have, then note if the new block is a heading.
@@ -130,7 +170,7 @@ function extractBlocks(markup: string, kind: "html" | "xml"): Block[] {
   }
 
   const tail = markup.slice(cursor);
-  if (dropDepth === 0 && tail.trim()) buffer.push(tail);
+  if (dropStack.length === 0 && tail) buffer.push(tail);
   flush();
   return blocks;
 }
