@@ -163,6 +163,8 @@ lore suggest
 | `split:<name>[:<parts>]`    | Break a concept apart                   |
 | `restore:<name>`            | Bring an archived concept back          |
 
+`create:<name>` against an archived name restores that concept and writes the new body onto it. The close reports the restore. If the name belongs to a concept that was merged into another, the close stops and names that concept.
+
 `lore write` needs `--concept` unless the narrative has exactly one create/update target. Add `--symbol` for touched symbols and `--ref` for file or line references.
 
 ### Asking
