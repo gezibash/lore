@@ -120,11 +120,44 @@ test("compactLanceIndex accepts a store that does not exist", async () => {
 test("reclaimLanceSpace leaves a store below the size limit alone", async () => {
   const dir = await storeWithSupersededVersions(3);
   const before = await getLanceSpace(dir);
-  // The fixture is megabytes, and the limit is tens of megabytes.
+  // The fixture holds a few megabytes, under the limit the gate applies.
   expect(before.superseded_bytes).toBeLessThan(RECLAIM_MIN_SUPERSEDED_BYTES);
 
   expect(await reclaimLanceSpace(dir)).toBeNull();
   expect((await getLanceSpace(dir)).superseded_bytes).toBe(before.superseded_bytes);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("reclaimLanceSpace opens the gate above the limit, then waits out the interval", async () => {
+  // Four superseded versions of 8 MB, which clears both limits the gate applies.
+  const dir = mkdtempSync(join(tmpdir(), "lore-lance-"));
+  const connection = await lancedb.connect(dir);
+  const wide = (seed: number) =>
+    Array.from({ length: 4000 }, (_, i) => ({
+      id: `id-${i}`,
+      fl_type: "chunk",
+      vector: Array.from({ length: 512 }, (_, k) => ((i + k + seed) % 97) / 97),
+    }));
+  const table = await connection.createTable("vec_wide", wide(0));
+  for (let generation = 1; generation <= 4; generation++) {
+    await table
+      .mergeInsert("id")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute(wide(generation));
+  }
+  expect((await getLanceSpace(dir)).superseded_bytes).toBeGreaterThan(RECLAIM_MIN_SUPERSEDED_BYTES);
+
+  // The gate opens and the compaction runs. It frees nothing here, because the
+  // retention window holds versions written seconds ago; compactLanceIndex
+  // covers what an expired window releases.
+  const opened = await reclaimLanceSpace(dir);
+  expect(opened).not.toBeNull();
+  expect(opened?.tables).toBe(1);
+
+  // The second call stops at the timestamp, so it never walks the directory.
+  expect(await reclaimLanceSpace(dir)).toBeNull();
 
   rmSync(dir, { recursive: true, force: true });
 });

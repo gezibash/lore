@@ -120,16 +120,13 @@ async function openTableOrNull(
   return connection.openTable(name);
 }
 
-/** Reports whether the sync removed rows, because a removal is what leaves a
- *  superseded data file behind. See reclaimLanceSpace. */
-async function syncTextTable(db: Database, connection: lancedb.Connection): Promise<boolean> {
+async function syncTextTable(db: Database, connection: lancedb.Connection): Promise<void> {
   const rows = db.query<EligibleTextRow, []>(ELIGIBLE_TEXT_SQL).all();
   let table = await openTableOrNull(connection, "text_index");
 
   if (rows.length === 0) {
-    // dropTable deletes the whole dataset directory, so it leaves nothing to compact.
     if (table) await connection.dropTable("text_index");
-    return false;
+    return;
   }
 
   // Schema drift: a table created by an older lore lacks columns this version
@@ -177,7 +174,7 @@ async function syncTextTable(db: Database, connection: lancedb.Connection): Prom
         removeStopWords: false,
       }),
     });
-    return false;
+    return;
   }
 
   if (toRemove.length > 0) {
@@ -187,10 +184,9 @@ async function syncTextTable(db: Database, connection: lancedb.Connection): Prom
   if (toAdd.length > 0) {
     await table.mergeInsert("id").whenMatchedUpdateAll().whenNotMatchedInsertAll().execute(toAdd);
   }
-  return toRemove.length > 0;
 }
 
-async function syncVecTables(db: Database, connection: lancedb.Connection): Promise<boolean> {
+async function syncVecTables(db: Database, connection: lancedb.Connection): Promise<void> {
   const rows = db.query<EligibleVecRow, []>(ELIGIBLE_VEC_SQL).all();
   const byModel = new Map<string, EligibleVecRow[]>();
   for (const row of rows) {
@@ -207,7 +203,6 @@ async function syncVecTables(db: Database, connection: lancedb.Connection): Prom
     }
   }
 
-  let removed = false;
   for (const [model, group] of byModel) {
     const name = modelSlug(model);
     const table = await openTableOrNull(connection, name);
@@ -231,14 +226,12 @@ async function syncVecTables(db: Database, connection: lancedb.Connection): Prom
     if (toRemove.length > 0) {
       const list = toRemove.map((id) => `'${id.replace(/'/g, "''")}'`).join(",");
       await table.delete(`id IN (${list})`);
-      removed = true;
     }
     const toAdd = group.filter((r) => !existing.has(r.chunk_id)).map(toRow);
     if (toAdd.length > 0) {
       await table.mergeInsert("id").whenMatchedUpdateAll().whenNotMatchedInsertAll().execute(toAdd);
     }
   }
-  return removed;
 }
 
 /**
@@ -276,12 +269,14 @@ const VERSION_RETENTION_MS = 5 * 60_000;
 
 // A compaction rewrites fragments and unlinks files, so it must return enough
 // to pay for the work. Under these limits the superseded files are cheaper to
-// leave in place. Mirrors the free-page limits the SQLite file uses.
-export const RECLAIM_MIN_SUPERSEDED_BYTES = 64 * 1024 * 1024;
-export const RECLAIM_MIN_SUPERSEDED_RATIO = 0.25;
+// leave in place. The same limits the SQLite file uses for its free pages, so
+// one rule covers both stores.
+export const RECLAIM_MIN_SUPERSEDED_BYTES = 16 * 1024 * 1024;
+export const RECLAIM_MIN_SUPERSEDED_RATIO = 0.1;
 
-// The gate reads the directory, so it must not run on every sync. One search in
-// ten minutes pays for the walk; the rest read the timestamp and stop.
+// The gate reads the directory, so a run of ingests must not walk it each time.
+// One ingest in ten minutes pays for the walk; the rest read the timestamp and
+// stop.
 const RECLAIM_CHECK_INTERVAL_MS = 10 * 60_000;
 const lastReclaimCheckAt = new Map<string, number>();
 
@@ -370,18 +365,28 @@ export async function compactLanceIndex(
   };
 }
 
-/** Compact when the superseded files are large enough to pay for the work.
- *  Returns null when the store is not worth compacting, or when the check ran
- *  recently. */
+/**
+ * Compact when the superseded files are large enough to pay for the work.
+ *
+ * This is the automatic path, and it runs on the write side — an ingest — never
+ * on a search. A search must not pay for a rewrite of the store. Returns null
+ * when the store is not worth compacting, when the check ran recently, or when
+ * the compaction failed: a failure here costs disk, not retrieval, and the next
+ * ingest tries again.
+ */
 export async function reclaimLanceSpace(dir: string): Promise<LanceCompactResult | null> {
   const lastCheck = lastReclaimCheckAt.get(dir);
   if (lastCheck !== undefined && Date.now() - lastCheck < RECLAIM_CHECK_INTERVAL_MS) return null;
   lastReclaimCheckAt.set(dir, Date.now());
 
-  const space = await getLanceSpace(dir);
-  if (space.superseded_bytes < RECLAIM_MIN_SUPERSEDED_BYTES) return null;
-  if (space.superseded_ratio < RECLAIM_MIN_SUPERSEDED_RATIO) return null;
-  return compactLanceIndex(dir);
+  try {
+    const space = await getLanceSpace(dir);
+    if (space.superseded_bytes < RECLAIM_MIN_SUPERSEDED_BYTES) return null;
+    if (space.superseded_ratio < RECLAIM_MIN_SUPERSEDED_RATIO) return null;
+    return await compactLanceIndex(dir);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -403,19 +408,9 @@ export async function ensureLanceIndex(db: Database): Promise<LanceIndex> {
 
   const task = (async () => {
     const connection = await lancedb.connect(dir);
-    const textRemoved = await syncTextTable(db, connection);
-    const vecRemoved = await syncVecTables(db, connection);
+    await syncTextTable(db, connection);
+    await syncVecTables(db, connection);
     lastSyncedAt.set(dir, Date.now());
-    // A removal is what supersedes a data file. Compaction is gated on size, so
-    // most syncs stop at the timestamp check. A failure here costs disk, not
-    // search: swallow it and let the next sync try again.
-    if (textRemoved || vecRemoved) {
-      try {
-        await reclaimLanceSpace(dir);
-      } catch {
-        // The store keeps its superseded files until the next attempt.
-      }
-    }
     return { dir, connection };
   })();
   inflightSync.set(dir, task);

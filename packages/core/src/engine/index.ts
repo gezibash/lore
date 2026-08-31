@@ -171,6 +171,7 @@ import {
   lanceDir,
   markLanceDirty,
   rebuildLanceIndex,
+  reclaimLanceSpace,
 } from "./lance-index.ts";
 import {
   openNarrative,
@@ -4073,6 +4074,7 @@ export class LoreEngine {
     const abs = resolve(filePath);
     const result = await ingestDocFile(db, entry.code_path, entry.lore_path, abs);
     markLanceDirty(db);
+    await reclaimLanceSpace(lanceDir(entry.lore_path));
     return {
       files_ingested: result === "ingested" ? 1 : 0,
       files_skipped: result === "skipped" ? 1 : 0,
@@ -4094,6 +4096,10 @@ export class LoreEngine {
     });
     await this.embedMissingChunks(db, entry);
     markLanceDirty(db);
+    // The write side is where compaction belongs. The sync that supersedes a
+    // Lance data file runs on the next search, so this pass clears what the
+    // last ingest left; a search never pays for a rewrite of the store.
+    await reclaimLanceSpace(lanceDir(entry.lore_path));
     return { scan, ingest };
   }
 
