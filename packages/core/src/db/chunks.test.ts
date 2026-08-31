@@ -13,6 +13,7 @@ import {
   deleteDocChunksForFile,
   countOrphanedChunkRows,
   deleteOrphanedChunkRows,
+  getDocLaneStats,
 } from "./chunks.ts";
 import { insertEmbedding } from "./embeddings.ts";
 import { insertFtsContent } from "./fts.ts";
@@ -178,5 +179,54 @@ test("deleteOrphanedChunkRows clears rows a past chunk delete left behind", () =
   // The live chunk keeps its rows.
   expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM embeddings").get()?.n).toBe(1);
 
+  db.close();
+});
+
+test("getDocLaneStats counts doc files, not doc chunks", () => {
+  const db = createTestDb();
+
+  // Two doc files, four chunks between them.
+  const docPaths = ["README.md", "README.md", "docs/guide.md", "docs/guide.md"];
+  for (const [idx, docPath] of docPaths.entries()) {
+    insertChunk(db, {
+      id: makeChunkId("doc", idx + 1),
+      filePath: `./doc-${idx + 1}.md`,
+      flType: "doc",
+      createdAt: new Date(1000 + idx).toISOString(),
+      sourceFilePath: docPath,
+    });
+  }
+  // A chunk written before migration 018 carries no `source_file_path`. No
+  // delete path can reach such a row, so counting it would inflate the
+  // denominator of the doc lane for as long as the mind lives.
+  insertChunk(db, {
+    id: makeChunkId("doc", 5),
+    filePath: "./doc-5.md",
+    flType: "doc",
+    createdAt: new Date(500).toISOString(),
+  });
+  // Other lanes stay out of the count.
+  insertChunk(db, {
+    id: makeChunkId("src", 1),
+    filePath: "./src-1.md",
+    flType: "source",
+    createdAt: new Date(9000).toISOString(),
+    sourceFilePath: "src/index.ts",
+  });
+
+  const lane = getDocLaneStats(db);
+  expect(lane.chunks).toBe(5);
+  expect(lane.files).toBe(2);
+  expect(lane.last_indexed_at).toBe(new Date(1003).toISOString());
+
+  db.close();
+});
+
+test("getDocLaneStats reports an empty doc lane as zero, not null", () => {
+  const db = createTestDb();
+  const lane = getDocLaneStats(db);
+  expect(lane.chunks).toBe(0);
+  expect(lane.files).toBe(0);
+  expect(lane.last_indexed_at).toBeNull();
   db.close();
 });

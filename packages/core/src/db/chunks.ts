@@ -343,13 +343,33 @@ export function getSourceChunkCount(db: Database): number {
   );
 }
 
-/** Count all doc chunks (one per ingested doc/config file). */
-export function getDocChunkCount(db: Database): number {
-  return (
-    db
-      .query<{ count: number }, []>(`SELECT COUNT(*) as count FROM chunks WHERE fl_type = 'doc'`)
-      .get()?.count ?? 0
-  );
+export interface DocLaneStats {
+  /** Chunks in the doc lane. One doc file makes many chunks. */
+  chunks: number;
+  /** Doc files behind those chunks, counted the way `getDocChunkPaths` counts them. */
+  files: number;
+  last_indexed_at: string | null;
+}
+
+/**
+ * Measure the doc lane in one scan. A chunk count is not a file count: the
+ * ingester writes one chunk per section, so a status line that divides stale
+ * files by chunks reads several times small.
+ */
+export function getDocLaneStats(db: Database): DocLaneStats {
+  const row = db
+    .query<{ chunks: number; files: number; last_indexed_at: string | null }, []>(
+      `SELECT COUNT(*) as chunks,
+              COUNT(DISTINCT source_file_path) as files,
+              MAX(created_at) as last_indexed_at
+       FROM chunks WHERE fl_type = 'doc'`,
+    )
+    .get();
+  return {
+    chunks: row?.chunks ?? 0,
+    files: row?.files ?? 0,
+    last_indexed_at: row?.last_indexed_at ?? null,
+  };
 }
 
 /** Get the timestamp of the most recently ingested doc chunk. */

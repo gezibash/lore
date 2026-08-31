@@ -293,12 +293,7 @@ import {
 import { computeBootstrapPlan } from "./bootstrap.ts";
 import { ingestDocFile, ingestTextFiles } from "./ingester.ts";
 import { discoverTextFiles } from "./file-discovery-text.ts";
-import {
-  getSourceChunkCount,
-  getDocChunkCount,
-  getLastDocIndexedAt,
-  getJournalEntryCount,
-} from "@/db/chunks.ts";
+import { getSourceChunkCount, getDocLaneStats, getJournalEntryCount } from "@/db/chunks.ts";
 import {
   countEmbeddingsByModel,
   countSymbolEmbeddingLane,
@@ -1816,7 +1811,8 @@ export class LoreEngine {
     try {
       const lastCodeIndexedAt = getLastScannedAt(db);
       const lastCodeMs = lastCodeIndexedAt ? new Date(lastCodeIndexedAt).getTime() : 0;
-      const lastDocIndexedAt = getLastDocIndexedAt(db);
+      const docLane = getDocLaneStats(db);
+      const lastDocIndexedAt = docLane.last_indexed_at;
       const lastDocMs = lastDocIndexedAt ? new Date(lastDocIndexedAt).getTime() : 0;
 
       // Count stale source files (modified since last code scan)
@@ -1831,7 +1827,7 @@ export class LoreEngine {
       }
 
       // Count stale doc files (modified since last doc ingest)
-      const docFiles = discoverTextFiles(entry.code_path, entry.lore_path);
+      const docFiles = discoverTextFiles(entry.code_path);
       let staleDocFiles = 0;
       for (const file of docFiles) {
         try {
@@ -1841,14 +1837,20 @@ export class LoreEngine {
         }
       }
 
+      // The stale counts walk the disk, so the disk counts are their
+      // denominators. A lake count would make the ratio pass 100% as soon as
+      // the tree holds a file the last index run did not see.
       lake = {
         source_chunks: getSourceChunkCount(db),
         source_files: getSourceFileCount(db),
-        doc_chunks: getDocChunkCount(db),
+        doc_chunks: docLane.chunks,
+        doc_files: docLane.files,
         journal_entries: getJournalEntryCount(db),
         last_code_indexed_at: lastCodeIndexedAt,
         last_doc_indexed_at: lastDocIndexedAt,
+        discovered_source_files: sourceFiles.length,
         stale_source_files: staleSourceFiles,
+        discovered_doc_files: docFiles.length,
         stale_doc_files: staleDocFiles,
       };
     } catch {
@@ -1898,9 +1900,9 @@ export class LoreEngine {
       lake: lake
         ? {
             stale_source_files: lake.stale_source_files,
-            source_files: lake.source_files,
+            discovered_source_files: lake.discovered_source_files,
             stale_doc_files: lake.stale_doc_files,
-            doc_chunks: lake.doc_chunks,
+            discovered_doc_files: lake.discovered_doc_files,
           }
         : null,
       // Both lanes. The component is one figure for the embedding state, so a

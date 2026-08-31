@@ -1,6 +1,15 @@
 export { LoreEngine } from "./engine/index.ts";
 export { LoreError } from "./types/index.ts";
-export { timeAgo, formatBytes } from "./format.ts";
+export {
+  timeAgo,
+  formatBytes,
+  compactCount,
+  stalePercent,
+  staleSeverity,
+  worstSeverity,
+  lakeFreshness,
+} from "./format.ts";
+export type { StaleSeverity, LakeFreshness } from "./format.ts";
 export { getDeepValue } from "./config/index.ts";
 export { GENERATION_PROMPT_KEYS, normalizePromptKey } from "./config/prompts.ts";
 export { describeSchemaIssue } from "./db/index.ts";

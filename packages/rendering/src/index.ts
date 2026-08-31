@@ -10,12 +10,16 @@ import type {
   StatusResult,
 } from "@lore/sdk";
 import {
+  compactCount,
   formatLs as formatLsMarkdown,
   formatStatus as formatStatusMarkdown,
+  lakeFreshness,
   renderNarrativeWithCitations,
   renderProvenance,
   formatBytes,
+  stalePercent,
   timeAgo,
+  type StaleSeverity,
 } from "@lore/sdk";
 
 export type RenderRoute = "cli" | "http";
@@ -121,27 +125,9 @@ function residualLabel(normalized: number | null): string {
   return `${RED}${text}${RESET}`;
 }
 
-function compactCount(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(value);
-}
-
-type StaleSeverity = "none" | "low" | "medium" | "high";
-
-function staleSeverity(stale: number, total: number): { level: StaleSeverity; ratio: number } {
-  if (stale <= 0) return { level: "none", ratio: 0 };
-  const ratio = total > 0 ? stale / total : 0;
-  if (ratio >= 0.2 || stale >= 20) return { level: "high", ratio };
-  if (ratio >= 0.05 || stale >= 5) return { level: "medium", ratio };
-  return { level: "low", ratio };
-}
-
-function staleLabel(stale: number, total: number): string {
-  const sev = staleSeverity(stale, total);
+function staleLabel(stale: number, sev: { level: StaleSeverity; ratio: number }): string {
   if (sev.level === "none") return ` ${GREEN}✓${RESET}`;
-  const ratio = `${(sev.ratio * 100).toFixed(0)}%`;
+  const ratio = stalePercent(sev.ratio);
   if (sev.level === "low") return ` ${DIM}~ ${compactCount(stale)} stale (${ratio})${RESET}`;
   if (sev.level === "medium") return ` ${YELLOW}⚠ ${compactCount(stale)} stale (${ratio})${RESET}`;
   return ` ${RED}⚠ ${compactCount(stale)} stale (${ratio})${RESET}`;
@@ -483,13 +469,11 @@ function compactPriorityReason(priority: StatusResult["priorities"][number]): st
 
 function compactIndexStatus(result: StatusResult): string | null {
   if (!result.lake) return null;
-  const codeSev = staleSeverity(
-    result.lake.stale_source_files,
-    Math.max(1, result.lake.source_files),
-  );
-  const docSev = staleSeverity(result.lake.stale_doc_files, Math.max(1, result.lake.doc_chunks));
-  if (codeSev.level === "none" && docSev.level === "none") return `${GREEN}fresh${RESET}`;
-  if (codeSev.level === "low" && docSev.level === "low") return `${DIM}drift${RESET}`;
+  // The worst lane grades the index. A clean lane must not push the pair up a
+  // band: `low` beside `none` is drift, not stale.
+  const worst = lakeFreshness(result.lake).worst;
+  if (worst === "none") return `${GREEN}fresh${RESET}`;
+  if (worst === "low") return `${DIM}drift${RESET}`;
   return `${YELLOW}stale${RESET}`;
 }
 
@@ -634,26 +618,20 @@ function renderStatusVerbosePlain(result: StatusResult): string {
     const l = result.lake;
     const codeAge = l.last_code_indexed_at ? timeAgo(l.last_code_indexed_at) : "never";
     const docAge = l.last_doc_indexed_at ? timeAgo(l.last_doc_indexed_at) : "never";
-    const codeSev = staleSeverity(l.stale_source_files, Math.max(1, l.source_files));
-    const docSev = staleSeverity(l.stale_doc_files, Math.max(1, l.doc_chunks));
-    const codeStaleStr = staleLabel(l.stale_source_files, Math.max(1, l.source_files));
-    const docStaleStr = staleLabel(l.stale_doc_files, Math.max(1, l.doc_chunks));
+    const fresh = lakeFreshness(l);
+    const codeStaleStr = staleLabel(l.stale_source_files, fresh.code);
+    const docStaleStr = staleLabel(l.stale_doc_files, fresh.doc);
     lines.push(`\n${BOLD}LAKE${RESET}`);
     lines.push(
       `  ${DIM}code   ${RESET} ${compactCount(l.source_chunks)} symbols · ${compactCount(l.source_files)} files · ${codeAge}${codeStaleStr}`,
     );
     lines.push(
-      `  ${DIM}docs   ${RESET} ${compactCount(l.doc_chunks)} files · ${docAge}${docStaleStr}`,
+      `  ${DIM}docs   ${RESET} ${compactCount(l.doc_chunks)} chunks · ${compactCount(l.doc_files)} files · ${docAge}${docStaleStr}`,
     );
     lines.push(`  ${DIM}journal${RESET} ${compactCount(l.journal_entries)} entries`);
-    if (
-      codeSev.level === "high" ||
-      codeSev.level === "medium" ||
-      docSev.level === "high" ||
-      docSev.level === "medium"
-    ) {
+    if (fresh.worst === "high" || fresh.worst === "medium") {
       lines.push(`  ${YELLOW}run lore ingest to refresh${RESET}`);
-    } else if (codeSev.level === "low" || docSev.level === "low") {
+    } else if (fresh.worst === "low") {
       lines.push(`  ${DIM}minor index drift — ingest when convenient${RESET}`);
     }
   }

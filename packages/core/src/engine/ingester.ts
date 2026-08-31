@@ -223,7 +223,7 @@ export async function ingestTextFiles(
   opts?: { force?: boolean },
 ): Promise<IngestResult> {
   const start = performance.now();
-  const discovered = discoverTextFiles(codePath, lorePath);
+  const discovered = discoverTextFiles(codePath);
   const discoveredPaths = new Set(discovered.map((f) => f.relativePath));
 
   // Detect deleted files

@@ -8,6 +8,11 @@ import {
   describeSchemaIssue as coreDescribeSchemaIssue,
   timeAgo,
   formatBytes,
+  compactCount,
+  stalePercent,
+  staleSeverity,
+  worstSeverity,
+  lakeFreshness,
   formatClose as coreFormatClose,
   formatHistory as coreFormatHistory,
   formatLifecycleResult as coreFormatLifecycleResult,
@@ -110,6 +115,8 @@ import type {
 export type * from "./types.ts";
 export type { DiffHunk, DiffLine } from "@lore/core";
 export { LoreError, getDeepValue, timeAgo, formatBytes, ALL_PROVIDERS };
+export { compactCount, stalePercent, staleSeverity, worstSeverity, lakeFreshness };
+export type { StaleSeverity, LakeFreshness } from "@lore/core";
 export {
   renderNarrativeWithCitations,
   renderProvenance,

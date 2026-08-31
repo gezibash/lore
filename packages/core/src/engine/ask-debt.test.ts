@@ -87,7 +87,12 @@ test("snapshot debt IS the expected-error debt, banded by config", () => {
     concepts: [makeConcept()],
     debtSnapshot: makeDebtSnapshot({ debt: 0.42, persisted_debt: 0.42, live_debt: 0.42 }),
     coverage: { ratio: 1 },
-    lake: { stale_source_files: 0, source_files: 10, stale_doc_files: 0, doc_chunks: 5 },
+    lake: {
+      stale_source_files: 0,
+      discovered_source_files: 10,
+      stale_doc_files: 0,
+      discovered_doc_files: 5,
+    },
     embeddingStatus: { total: 10, stale: 0 },
   });
   // No second blend: the ask-time number is the one debt, passed through.
@@ -107,7 +112,12 @@ test("band cutoffs follow config.thresholds.debt_bands", () => {
       concepts: [makeConcept()],
       debtSnapshot: makeDebtSnapshot({ debt, persisted_debt: debt, live_debt: debt }),
       coverage: { ratio: 1 },
-      lake: { stale_source_files: 0, source_files: 1, stale_doc_files: 0, doc_chunks: 1 },
+      lake: {
+        stale_source_files: 0,
+        discovered_source_files: 1,
+        stale_doc_files: 0,
+        discovered_doc_files: 1,
+      },
       embeddingStatus: { total: 1, stale: 0 },
     }).band;
   expect(mk(0.1)).toBe("healthy");
@@ -126,7 +136,12 @@ test("a concept-less mind is unmeasured: null debt, caution band", () => {
     concepts: [],
     debtSnapshot: makeDebtSnapshot({ debt: 0 }),
     coverage: { ratio: 0 },
-    lake: { stale_source_files: 0, source_files: 0, stale_doc_files: 0, doc_chunks: 0 },
+    lake: {
+      stale_source_files: 0,
+      discovered_source_files: 0,
+      stale_doc_files: 0,
+      discovered_doc_files: 0,
+    },
     embeddingStatus: { total: 0, stale: 0 },
   });
   expect(snapshot.debt).toBeNull();
@@ -143,12 +158,20 @@ test("freshness and coverage are reported as axes, never blended into debt", () 
     concepts: [makeConcept()],
     debtSnapshot: makeDebtSnapshot({ debt: 0.1, persisted_debt: 0.1, live_debt: 0.1 }),
     coverage: { ratio: 0 }, // 100% coverage gap
-    lake: { stale_source_files: 9, source_files: 10, stale_doc_files: 5, doc_chunks: 5 },
+    lake: {
+      stale_source_files: 9,
+      discovered_source_files: 10,
+      stale_doc_files: 3,
+      discovered_doc_files: 12,
+    },
     embeddingStatus: { total: 10, stale: 10 },
   });
   // Axes report the degradation…
   expect(dirty.components.coverage_gap).toBeCloseTo(1);
   expect(dirty.components.code_freshness).toBeCloseTo(0.9);
+  // The doc lane divides stale doc files by doc files. Both counts come from
+  // the same disk walk, so the axis stays at or below 1.
+  expect(dirty.components.doc_freshness).toBeCloseTo(0.25);
   expect(dirty.components.embedding_mismatch).toBeCloseTo(1);
   // …but debt is untouched by them (it has its own definition).
   expect(dirty.debt).toBe(0.1);
