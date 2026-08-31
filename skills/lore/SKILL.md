@@ -1,6 +1,6 @@
 ---
 name: lore
-description: Use Lore's CLI-first workflow in any repo: set the project up, inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest/ask, KPIs, switching the model or provider, or wants the agent to keep Lore updated while doing coding work.
+description: "Use Lore's CLI-first workflow in any repo: set the project up, inspect concepts, open and journal narratives, close with async jobs, ingest code and docs, and bind symbols. Trigger when a user mentions `lore`, narratives, concepts, journaling, ingesting, binding, status/suggest/ask, KPIs, switching the model or provider, or wants the agent to keep Lore updated while doing coding work."
 ---
 
 # Lore
