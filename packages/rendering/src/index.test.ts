@@ -105,6 +105,24 @@ test("renderStatus names the symbol lane apart from the chunk lane", () => {
   expect(markdown).not.toContain("chunk embeddings use an outdated model");
 });
 
+test("renderStatus sends the database priority to the prune", () => {
+  const status = sampleStatus();
+  status.priorities = [
+    {
+      concept: "(database)",
+      action: "prune database",
+      reason: "412 row(s) belong to chunks or symbols that are gone. Run lore sys prune.",
+    },
+  ];
+
+  const cli = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(cli).toContain("database");
+  expect(cli).toContain("412 orphaned");
+  expect(cli).toContain("lore sys prune");
+  // `lore show` takes a concept name, so a bracketed priority must never reach it.
+  expect(cli).not.toContain("lore show (");
+});
+
 test("renderLs uses route defaults", () => {
   const ls = sampleLs();
 
