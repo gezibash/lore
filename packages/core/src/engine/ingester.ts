@@ -251,26 +251,29 @@ export async function ingestTextFiles(
 
   let filesIngested = 0;
   let filesSkipped = 0;
-  let filesFailed = 0;
+  // A count alone leaves the lost document unknown: the caller must re-run the
+  // extractor by hand to learn which file never reached the lake.
+  const failedPaths: string[] = [];
   for (const item of prepared) {
     if (item.kind === "skipped") {
       filesSkipped++;
       continue;
     }
     if (item.kind === "failed") {
-      filesFailed++;
+      failedPaths.push(item.relPath);
       continue;
     }
     const result = await applyPreparedDocIngest(db, item);
     if (result === "ingested") filesIngested++;
-    else filesFailed++;
+    else failedPaths.push(item.relPath);
   }
 
   return {
     files_ingested: filesIngested,
     files_skipped: filesSkipped,
     files_removed: filesRemoved,
-    files_failed: filesFailed,
+    files_failed: failedPaths.length,
+    failed_paths: failedPaths,
     duration_ms: Math.round(performance.now() - start),
   };
 }

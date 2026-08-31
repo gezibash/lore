@@ -96,3 +96,29 @@ test("a forced re-ingest leaves one embedding per chunk", async () => {
     removeDir(loreDir);
   }
 });
+
+test("ingestTextFiles names the documents it could not ingest", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    writeTextFile(`${codeDir}/README.md`, "# Title\n\nBody text.\n");
+    // No text to extract: the file fails, and the count alone would hide it.
+    writeTextFile(`${codeDir}/docs/empty.html`, "<html><body><div></div></body></html>\n");
+    writeTextFile(
+      `${codeDir}/docs/page.html`,
+      '<html><head><meta charset="UTF-8"><title>T</title></head><body><h1>Hello</h1><p>Body text here.</p></body></html>\n',
+    );
+
+    const result = await ingestTextFiles(db, codeDir, loreDir);
+
+    expect(result.failed_paths).toEqual(["docs/empty.html"]);
+    expect(result.files_failed).toBe(1);
+    expect(getDocChunkByPath(db, "docs/page.html")).not.toBeNull();
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});

@@ -1398,6 +1398,7 @@ export interface IngestResult {
   files_skipped: number;
   files_failed?: number;
   files_removed: number;
+  failed_paths?: string[]; // paths behind files_failed
   duration_ms: number;
 }
 
