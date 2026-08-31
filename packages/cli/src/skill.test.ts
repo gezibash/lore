@@ -118,6 +118,27 @@ test("a link whose target is gone reads as dangling", () => {
   }
 });
 
+test("a relative link that resolves is not dangling", () => {
+  // ~/.claude/skills/lore -> ../../.agents/skills/lore is a real layout.
+  const root = mkdtempSync(join(tmpdir(), "lore-skill-rel-"));
+  const source = join(root, "agents", "skills", "lore");
+  mkdirSync(join(source, "references"), { recursive: true });
+  writeFileSync(join(source, "SKILL.md"), "# Lore\n");
+  const holder = join(root, "claude", "skills");
+  mkdirSync(holder, { recursive: true });
+  const dir = join(holder, "lore");
+  try {
+    symlinkSync("../../agents/skills/lore", dir);
+    const state = skillState(dir, source);
+    expect(state.kind).toBe("linked");
+    expect(state.kind === "linked" && state.dangling).toBe(false);
+    expect(state.kind === "linked" && state.current).toBe(true);
+    expect(describeSkill({ dir, source }).join("\n")).not.toContain("no longer exists");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("uninstall removes a link and is safe to repeat", () => {
   const source = makeSource();
   const dir = target();
