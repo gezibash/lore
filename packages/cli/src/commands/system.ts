@@ -1,5 +1,5 @@
 import type { WorkerClient } from "@lore/worker";
-import { describeSchemaIssue } from "@lore/worker";
+import { describeSchemaIssue, formatBytes } from "@lore/worker";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -93,18 +93,6 @@ export async function systemRepairCommand(client: WorkerClient, check?: boolean)
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
-}
-
 export async function systemPruneCommand(client: WorkerClient, check?: boolean): Promise<void> {
   const result = await client.pruneOrphans({ check });
 
@@ -115,6 +103,23 @@ export async function systemPruneCommand(client: WorkerClient, check?: boolean):
     console.log(`  ${DIM}${pad(table, 20)}${RESET}${color}${count}${RESET}`);
   }
   console.log(`  ${DIM}${pad("total", 20)}${RESET}${result.total}`);
+
+  // The search index is the second store a delete leaves behind. Lance keeps
+  // every version of a table it rewrites, so it is reported beside the rows.
+  const lanceReclaimed = result.lance_bytes_before - result.lance_bytes_after;
+  console.log(`\n${BOLD}Search index${RESET}`);
+  console.log(`  ${DIM}${pad("on disk", 20)}${RESET}${formatBytes(result.lance_bytes_before)}`);
+  const supersededColor = result.lance_superseded_bytes > 0 ? YELLOW : DIM;
+  console.log(
+    `  ${DIM}${pad("superseded", 20)}${RESET}` +
+      `${supersededColor}${formatBytes(result.lance_superseded_bytes)}${RESET}`,
+  );
+
+  if (result.mode === "apply" && lanceReclaimed > 0) {
+    console.log(
+      `  ${DIM}${pad("reclaimed", 20)}${RESET}${GREEN}${formatBytes(lanceReclaimed)}${RESET}`,
+    );
+  }
 
   if (result.total === 0) {
     console.log(`\n${GREEN}No orphaned rows.${RESET}`);

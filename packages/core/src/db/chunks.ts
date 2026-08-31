@@ -263,13 +263,21 @@ export interface OrphanedChunkRows {
   content_fts: number;
 }
 
-/** What a prune found or deleted, and what it cost the database file. */
+/** What a prune found or deleted, and what it cost the two stores on disk.
+ *
+ *  The `lance_*` figures cover the Lance search index, which keeps every
+ *  version of a table it rewrites. In check mode both byte figures hold the
+ *  current size and `lance_superseded_bytes` is what a compaction would remove;
+ *  in apply mode `lance_superseded_bytes` is what the retention window kept. */
 export interface PruneOrphansResult {
   mode: "check" | "apply";
   orphans: OrphanedChunkRows & OrphanedSymbolRows;
   total: number;
   db_bytes_before: number;
   db_bytes_after: number;
+  lance_bytes_before: number;
+  lance_bytes_after: number;
+  lance_superseded_bytes: number;
 }
 
 // Every table keyed by chunks.id. NOT EXISTS, not NOT IN: SQLite lets a TEXT

@@ -26,7 +26,7 @@ export interface DryRunCloseFormatInput {
   };
   unresolved_entries?: Array<{ chunk_id: string; created_at: string; reason: string }>;
 }
-import { timeAgo } from "@/format.ts";
+import { formatBytes, timeAgo } from "@/format.ts";
 
 export function formatOpen(result: OpenResult): string {
   const lines: string[] = [];
@@ -552,6 +552,19 @@ export function formatStatus(result: StatusResult): string {
           `⚠ ${compactCount(result.coverage.drifted)} drifted binding(s) — run ingest() to refresh`,
         );
       }
+    }
+  }
+
+  if (result.search_index) {
+    const index = result.search_index;
+    lines.push(`\n## Search Index\n`);
+    lines.push(
+      `on disk: ${formatBytes(index.on_disk_bytes)} (live ${formatBytes(index.live_bytes)}, superseded ${formatBytes(index.superseded_bytes)})`,
+    );
+    if (index.superseded_bytes > 0) {
+      lines.push(
+        "Superseded versions are data files no reader can reach. Run `lore sys prune` to reclaim them.",
+      );
     }
   }
 

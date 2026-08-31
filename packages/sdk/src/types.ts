@@ -920,6 +920,16 @@ export interface StatusResult {
     concepts_with_bindings: number;
     concepts_total: number;
   };
+  /**
+   * The Lance search index on disk. Lance keeps every version of a table it
+   * rewrites, so `superseded_bytes` is the part no reader can reach. `lore sys
+   * prune` returns it to the filesystem.
+   */
+  search_index?: {
+    on_disk_bytes: number;
+    live_bytes: number;
+    superseded_bytes: number;
+  };
   lake?: {
     source_chunks: number;
     source_files: number;
@@ -1255,12 +1265,21 @@ export interface OrphanedSymbolRows {
   symbol_fts: number;
 }
 
+/** What a prune found or deleted, and what it cost the two stores on disk.
+ *
+ *  The `lance_*` figures cover the Lance search index, which keeps every
+ *  version of a table it rewrites. In check mode both byte figures hold the
+ *  current size and `lance_superseded_bytes` is what a compaction would remove;
+ *  in apply mode `lance_superseded_bytes` is what the retention window kept. */
 export interface PruneOrphansResult {
   mode: "check" | "apply";
   orphans: OrphanedChunkRows & OrphanedSymbolRows;
   total: number;
   db_bytes_before: number;
   db_bytes_after: number;
+  lance_bytes_before: number;
+  lance_bytes_after: number;
+  lance_superseded_bytes: number;
 }
 
 export interface VacuumResult {
