@@ -11,7 +11,9 @@ export async function mapConcurrent<T, U>(
 
   // Promise.all rejects on the first failure and the results are dropped, so
   // work started after that point is wasted — and a mapper with side effects
-  // leaves them behind. Stop handing out items once one has failed.
+  // leaves them behind. Stop handing out items once one has failed, and wait
+  // for the workers that are still in flight, so a caller that cleans up after
+  // a failure sees every side effect the mappers made.
   let failed = false;
   const workers = Array.from({ length: limit }, async () => {
     while (!failed) {
@@ -27,6 +29,8 @@ export async function mapConcurrent<T, U>(
     }
   });
 
-  await Promise.all(workers);
+  const settled = await Promise.allSettled(workers);
+  const rejected = settled.find((outcome) => outcome.status === "rejected");
+  if (rejected) throw rejected.reason;
   return results;
 }
