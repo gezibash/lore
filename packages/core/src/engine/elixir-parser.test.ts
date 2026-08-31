@@ -37,7 +37,9 @@ describe("Elixir parser", () => {
     expect(names).toContain("Arc.Storage.validate"); // defp with guard
     // Nested module (qualified with parent)
     expect(names).toContain("Arc.Storage.Helper");
-    expect(names).toContain("Helper.run");
+    // Nested modules carry the whole chain: Elixir's own name for this function
+    // is Arc.Storage.Helper.run, and `Helper.run` matches no module.
+    expect(names).toContain("Arc.Storage.Helper.run");
     // Protocol and its callback
     expect(names).toContain("Arc.Serializable");
     expect(names).toContain("Arc.Serializable.serialize");

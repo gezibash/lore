@@ -17,6 +17,13 @@ const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".exs": "elixir",
 };
 
+/** The language a file is indexed as, or null when lore does not parse it.
+ *  rescanFiles needs the same answer discoverFiles gives; when it carried its
+ *  own copy of this map the two disagreed and Elixir files were dropped. */
+export function languageForPath(filePath: string): SupportedLanguage | null {
+  return EXTENSION_MAP[extname(filePath).toLowerCase()] ?? null;
+}
+
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
@@ -151,6 +158,8 @@ export function discoverFiles(codePath: string): DiscoveredFile[] {
 }
 
 export function isTsxFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return ext === ".tsx" || ext === ".jsx";
+  // .jsx belongs to the javascript grammar, which already parses JSX. Loading
+  // the tsx grammar for it pairs a tsx tree with the javascript queries, and
+  // no pattern matches, so every .jsx file indexes with no symbols at all.
+  return extname(filePath).toLowerCase() === ".tsx";
 }

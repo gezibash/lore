@@ -11,9 +11,10 @@ import type {
   DiscoveredFile,
   SourceFileRow,
 } from "@/types/index.ts";
-import { discoverFiles, isTsxFile } from "./file-discovery.ts";
+import { discoverFiles, isTsxFile, languageForPath } from "./file-discovery.ts";
 import { mapConcurrent } from "./async.ts";
-import { TreeSitterPool } from "./tree-sitter.ts";
+import { GrammarLoadError, getTreeSitterPool } from "./tree-sitter.ts";
+import type { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import {
@@ -369,10 +370,16 @@ async function prepareSourceScanFile(
   let callSites: ExtractedCallSite[] = [];
   try {
     const { tree, lang } = await pool.parse(content, file.language, isTsx);
-    symbols = extractSymbols(tree, lang, file.language, content, pool);
-    callSites = extractCallSites(tree, lang, file.language, content, pool);
-    tree.delete();
-  } catch {
+    try {
+      symbols = extractSymbols(tree, lang, file.language, content, pool);
+      callSites = extractCallSites(tree, lang, file.language, content, pool);
+    } finally {
+      tree.delete();
+    }
+  } catch (error) {
+    // A missing grammar condemns every file of its language, so reporting it as
+    // one more failed file hides it behind a scan that simply found nothing.
+    if (error instanceof GrammarLoadError) throw error;
     return { kind: "failed", file };
   }
 
@@ -518,7 +525,6 @@ export async function scanProject(
 ): Promise<ScanResult> {
   const start = performance.now();
   const files = discoverFiles(codePath);
-  const currentPaths = new Set(files.map((file) => file.relativePath));
   // force: ignore the content-hash gate so every file re-chunks. Needed after a
   // change to how chunks are produced or indexed, which unchanged files would
   // otherwise never pick up. The existing rows must still be loaded — they are
@@ -526,9 +532,8 @@ export async function scanProject(
   // hiding them makes every file look new and the index duplicates every run.
   const existingByPath = new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
 
-  const pool = new TreeSitterPool();
-  await pool.init();
-
+  const pool = await getTreeSitterPool();
+  const currentPaths = new Set(files.map((file) => file.relativePath));
   let filesScanned = 0;
   let filesSkipped = 0;
   let symbolsFound = 0;
@@ -637,9 +642,7 @@ export async function rescanFiles(
 ): Promise<{ rescanned: number; symbolsFound: number; filesFailed: string[] }> {
   if (filePaths.length === 0) return { rescanned: 0, symbolsFound: 0, filesFailed: [] };
 
-  const pool = new TreeSitterPool();
-  await pool.init();
-
+  const pool = await getTreeSitterPool();
   let rescanned = 0;
   let symbolsFound = 0;
   // A dropped file keeps serving its previous chunks: indistinguishable from
@@ -669,42 +672,27 @@ export async function rescanFiles(
       continue;
     }
 
-    // Detect language from extension
-    const ext = relativePath.split(".").pop()?.toLowerCase();
-    let language: SupportedLanguage;
-    switch (ext) {
-      case "ts":
-      case "tsx":
-        language = "typescript";
-        break;
-      case "js":
-      case "jsx":
-      case "mjs":
-      case "cjs":
-        language = "javascript";
-        break;
-      case "py":
-        language = "python";
-        break;
-      case "go":
-        language = "go";
-        break;
-      case "rs":
-        language = "rust";
-        break;
-      default:
-        continue;
-    }
+    // The same mapping discoverFiles uses. A second copy here went stale when
+    // Elixir was added, and every .ex file was dropped without a word.
+    const language = languageForPath(relativePath);
+    // Not a failure: lore does not index this kind of file at all. filesFailed
+    // means lore tried and could not, which the caller reports to the user.
+    if (!language) continue;
 
     const isTsx = isTsxFile(relativePath);
     let symbols: ExtractedSymbol[];
     let callSites: ExtractedCallSite[] = [];
     try {
       const { tree, lang } = await pool.parse(content, language, isTsx);
-      symbols = extractSymbols(tree, lang, language, content, pool);
-      callSites = extractCallSites(tree, lang, language, content, pool);
-      tree.delete();
-    } catch {
+      try {
+        symbols = extractSymbols(tree, lang, language, content, pool);
+        callSites = extractCallSites(tree, lang, language, content, pool);
+      } finally {
+        tree.delete();
+      }
+    } catch (error) {
+      if (error instanceof GrammarLoadError) throw error;
+      filesFailed.push(relativePath);
       continue;
     }
 
