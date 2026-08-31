@@ -80,7 +80,9 @@ export function skillState(dir: string, source: string): SkillState {
 
   if (stat.isSymbolicLink()) {
     const target = readlinkSync(dir);
-    const dangling = !existsSync(target);
+    // A link target is relative to the directory that holds the link, not to
+    // the working directory. resolve() against dirname(dir) reads both forms.
+    const dangling = !existsSync(resolve(dirname(dir), target));
     let current = false;
     try {
       current = realpathSync(dir) === realpathSync(source);
