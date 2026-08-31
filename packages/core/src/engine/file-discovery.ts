@@ -3,13 +3,6 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join, extname, relative } from "path";
 import type { SupportedLanguage, DiscoveredFile } from "@/types/index.ts";
 
-/** The language a file is indexed as, or null when lore does not parse it.
- *  rescanFiles needs the same answer discoverFiles gives; when it carried its
- *  own copy of this map the two disagreed and Elixir files were dropped. */
-export function languageForPath(filePath: string): SupportedLanguage | null {
-  return EXTENSION_MAP[extname(filePath).toLowerCase()] ?? null;
-}
-
 const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".ts": "typescript",
   ".tsx": "typescript",
@@ -23,6 +16,13 @@ const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".ex": "elixir",
   ".exs": "elixir",
 };
+
+/** The language a file is indexed as, or null when lore does not parse it.
+ *  rescanFiles needs the same answer discoverFiles gives; when it carried its
+ *  own copy of this map the two disagreed and Elixir files were dropped. */
+export function languageForPath(filePath: string): SupportedLanguage | null {
+  return EXTENSION_MAP[extname(filePath).toLowerCase()] ?? null;
+}
 
 const SKIP_DIRS = new Set([
   "node_modules",

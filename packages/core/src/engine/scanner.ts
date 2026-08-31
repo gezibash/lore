@@ -13,7 +13,8 @@ import type {
 } from "@/types/index.ts";
 import { discoverFiles, isTsxFile, languageForPath } from "./file-discovery.ts";
 import { mapConcurrent } from "./async.ts";
-import { GrammarLoadError, TreeSitterPool } from "./tree-sitter.ts";
+import { GrammarLoadError, getTreeSitterPool } from "./tree-sitter.ts";
+import type { TreeSitterPool } from "./tree-sitter.ts";
 import { extractSymbols, extractCallSites } from "./symbol-queries.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import {
@@ -531,27 +532,7 @@ export async function scanProject(
   // hiding them makes every file look new and the index duplicates every run.
   const existingByPath = new Map(getAllSourceFiles(db).map((file) => [file.file_path, file]));
 
-  const pool = new TreeSitterPool();
-  await pool.init();
-  try {
-    return await scanWithPool(db, codePath, pool, files, existingByPath, start, lorePath, opts);
-  } finally {
-    // web-tree-sitter never collects a grammar. A pool per scan without this
-    // grows the wasm heap of a long-lived daemon on every close and every heal.
-    await pool.dispose();
-  }
-}
-
-async function scanWithPool(
-  db: Database,
-  codePath: string,
-  pool: TreeSitterPool,
-  files: DiscoveredFile[],
-  existingByPath: Map<string, SourceFileRow>,
-  start: number,
-  lorePath?: string,
-  opts?: { force?: boolean },
-): Promise<ScanResult> {
+  const pool = await getTreeSitterPool();
   const currentPaths = new Set(files.map((file) => file.relativePath));
   let filesScanned = 0;
   let filesSkipped = 0;
@@ -661,22 +642,7 @@ export async function rescanFiles(
 ): Promise<{ rescanned: number; symbolsFound: number; filesFailed: string[] }> {
   if (filePaths.length === 0) return { rescanned: 0, symbolsFound: 0, filesFailed: [] };
 
-  const pool = new TreeSitterPool();
-  await pool.init();
-  try {
-    return await rescanWithPool(db, codePath, pool, filePaths, lorePath);
-  } finally {
-    await pool.dispose();
-  }
-}
-
-async function rescanWithPool(
-  db: Database,
-  codePath: string,
-  pool: TreeSitterPool,
-  filePaths: string[],
-  lorePath?: string,
-): Promise<{ rescanned: number; symbolsFound: number; filesFailed: string[] }> {
+  const pool = await getTreeSitterPool();
   let rescanned = 0;
   let symbolsFound = 0;
   // A dropped file keeps serving its previous chunks: indistinguishable from
@@ -709,10 +675,9 @@ async function rescanWithPool(
     // The same mapping discoverFiles uses. A second copy here went stale when
     // Elixir was added, and every .ex file was dropped without a word.
     const language = languageForPath(relativePath);
-    if (!language) {
-      filesFailed.push(relativePath);
-      continue;
-    }
+    // Not a failure: lore does not index this kind of file at all. filesFailed
+    // means lore tried and could not, which the caller reports to the user.
+    if (!language) continue;
 
     const isTsx = isTsxFile(relativePath);
     let symbols: ExtractedSymbol[];

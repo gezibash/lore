@@ -9,12 +9,21 @@ export async function mapConcurrent<T, U>(
   const results = new Array<U>(items.length);
   let nextIndex = 0;
 
+  // Promise.all rejects on the first failure and the results are dropped, so
+  // work started after that point is wasted — and a mapper with side effects
+  // leaves them behind. Stop handing out items once one has failed.
+  let failed = false;
   const workers = Array.from({ length: limit }, async () => {
-    while (true) {
+    while (!failed) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= items.length) return;
-      results[index] = await mapper(items[index]!, index);
+      try {
+        results[index] = await mapper(items[index]!, index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
 

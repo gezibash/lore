@@ -14,7 +14,8 @@ export type TreeSitterParser = {
 export type TreeSitterLanguage = {
   // In v0.26, query() moved to the standalone Query class.
   // Language is opaque — used only to load grammars and construct queries.
-  delete(): void;
+  // It has no delete(): web-tree-sitter gives no way to free a grammar, which
+  // is why the pool below is shared instead of built per scan.
 };
 
 export type TreeSitterQuery = {
@@ -66,15 +67,15 @@ interface WTSModule {
 // ─── Constants ──────────────────────────────────────────────
 
 // A `type: "file"` import gives back a path. `bun build --compile` embeds the
-// file and rewrites the specifier, so a compiled binary reads its grammars from
-// itself; a source checkout gets the path in node_modules. Resolution through
-// require.resolve cannot do this — the bundler writes the build machine's
-// absolute path into the binary, and that path is gone on any other machine.
+// file and rewrites the path. The binary then reads its grammars from itself.
+// A source checkout gets the path in node_modules.
 //
-// The imports are dynamic and stay inside loadLanguage. A static import runs at
-// module evaluation of this file, which sits on the eager import path of
-// @lore/core, so one unresolvable grammar would stop every lore command instead
-// of the one language that needs it.
+// `require.resolve` cannot do this. `bun build --compile` writes the build
+// machine's absolute path into the binary. That path is gone on other machines.
+//
+// The imports are dynamic, and they stay inside loadLanguage. A static import
+// runs when this module loads, and @lore/core loads it for every command. One
+// unresolvable grammar would then stop commands that need no grammar at all.
 type GrammarLoader = () => Promise<{ default: string }>;
 
 /** A grammar could not be read or instantiated. Distinct from a parse failure:
@@ -129,8 +130,12 @@ export class TreeSitterPool {
     // its module with an assignment that runs after its own await, so two pools
     // that both pass a `this.wts` check build two wasm heaps, and grammars
     // loaded against the losing heap read foreign memory.
-    this.starting ??= this.start();
-    await this.starting;
+    const starting = (this.starting ??= this.start());
+    // Drop a rejected attempt. Keeping it makes one transient failure permanent.
+    starting.catch(() => {
+      if (this.starting === starting) this.starting = null;
+    });
+    await starting;
   }
 
   private async start(): Promise<void> {
@@ -155,6 +160,12 @@ export class TreeSitterPool {
 
     const pending = this.loadGrammar(loadWasm, cacheKey);
     this.languages.set(cacheKey, pending);
+    // Evict a rejected load so a transient failure is not permanent, but only
+    // while the entry is still this promise: a retry may already have replaced
+    // it. The handler also keeps the rejection from going unobserved.
+    pending.catch(() => {
+      if (this.languages.get(cacheKey) === pending) this.languages.delete(cacheKey);
+    });
     return pending;
   }
 
@@ -167,25 +178,7 @@ export class TreeSitterPool {
       const wasmBuf = readFileSync(wasmPath);
       return await this.wts!.Language.load(new Uint8Array(wasmBuf));
     } catch (error) {
-      // Drop the rejected promise. Keeping it makes one transient failure
-      // permanent for the life of the pool.
-      this.languages.delete(cacheKey);
       throw new GrammarLoadError(cacheKey, error);
-    }
-  }
-
-  /** Free every grammar this pool loaded. web-tree-sitter allocates them in the
-   *  wasm heap and does not collect them, so a caller that builds a pool per
-   *  scan grows that heap without bound until it calls this. */
-  async dispose(): Promise<void> {
-    const loaded = [...this.languages.values()];
-    this.languages.clear();
-    for (const pending of loaded) {
-      try {
-        (await pending).delete();
-      } catch {
-        // A grammar that never finished loading has nothing to free.
-      }
     }
   }
 
@@ -216,4 +209,20 @@ export class TreeSitterPool {
       parser.delete();
     }
   }
+}
+
+// ─── Shared pool ────────────────────────────────────────────
+
+/** The pool every scan uses. web-tree-sitter offers no way to free a grammar —
+ *  Language has no delete — so a pool per scan would load the same grammars
+ *  again on every close and every heal and grow the wasm heap without bound.
+ *  One pool loads each grammar once and holds at most seven for the process.
+ *  Parsers, trees and queries stay per-call, so concurrent scans do not share
+ *  mutable state. */
+let sharedPool: TreeSitterPool | null = null;
+
+export async function getTreeSitterPool(): Promise<TreeSitterPool> {
+  sharedPool ??= new TreeSitterPool();
+  await sharedPool.init();
+  return sharedPool;
 }

@@ -142,7 +142,11 @@ const RUST_CALL_QUERY = `
 // Elixir has no call syntax of its own: `def`, `defmodule`, `alias` and the
 // module attributes are all `call` nodes. Without the filter they become the
 // highest-degree callees in the graph, ahead of every real function.
-const ELIXIR_DECLARATION_KEYWORDS = [
+//
+// One list, read two ways. The query drops these names as callees, and
+// isElixirDeclarationSite reads the same set to recognise a definition head.
+// Two lists would drift, and the drift is silent: the graph just gains noise.
+const ELIXIR_DEFINITION_FORMS = [
   "def",
   "defp",
   "defmacro",
@@ -156,15 +160,27 @@ const ELIXIR_DECLARATION_KEYWORDS = [
   "defguard",
   "defguardp",
   "defoverridable",
-  "alias",
-  "import",
-  "require",
-  "use",
 ];
+
+/** Directives, not definitions: they take no head to skip, but they are calls
+ *  in the tree and are not calls in the program. */
+const ELIXIR_DIRECTIVES = ["alias", "import", "require", "use"];
+
+/** Escape a literal for use inside the query's regex. The names are word
+ *  characters today; a future entry with a metacharacter would otherwise build
+ *  a pattern that silently matches the wrong set, or one that fails to compile
+ *  and takes every Elixir call site with it. */
+function escapeForRegex(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const ELIXIR_NON_CALLS = [...ELIXIR_DEFINITION_FORMS, ...ELIXIR_DIRECTIVES]
+  .map(escapeForRegex)
+  .join("|");
 
 const ELIXIR_CALL_QUERY = `
 (call target: (identifier) @call.name
-  (#not-match? @call.name "^(${ELIXIR_DECLARATION_KEYWORDS.join("|")})$")) @call.site
+  (#not-match? @call.name "^(${ELIXIR_NON_CALLS})$")) @call.site
 (call target: (dot right: (identifier) @call.name)) @call.site
 `;
 
@@ -435,26 +451,33 @@ const ENCLOSING_FUNCTION_TYPES = new Set([
   "function_expression",
 ]);
 
-const ELIXIR_DEFINITION_TARGETS = new Set([
-  "def",
-  "defp",
-  "defmacro",
-  "defmacrop",
-  "defmodule",
-  "defprotocol",
-]);
+const ELIXIR_DEFINITION_TARGETS = new Set(ELIXIR_DEFINITION_FORMS);
+
+/** True when the node sits inside a module attribute: `@spec`, `@type`, `@doc`.
+ *  The attribute name itself parses as a call under `@`, and so does everything
+ *  written in its body — `@spec sign(t(), binary()) :: binary()` yields calls to
+ *  `sign`, `t` and `binary`, none of which the program performs. The walk stops
+ *  at a do_block, so calls in a function body are never mistaken for one. */
+function isInsideModuleAttribute(node: TreeSitterNode): boolean {
+  let current: TreeSitterNode | null = node;
+  while (current) {
+    if (current.type === "do_block") return false;
+    if (current.type === "unary_operator" && current.childForFieldName("operator")?.text === "@") {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
 
 /** True when an Elixir `call` node is part of a declaration rather than a call.
- *  Two shapes reach here: `@doc "..."`, where the attribute name parses as a
- *  call under `@`, and the head of a definition — `def greet(name)` holds
- *  `greet(name)` as a call inside its own arguments, so the function appears to
- *  call itself on its definition line. */
+ *  Two shapes reach here: a module attribute and everything inside it, and the
+ *  head of a definition — `def greet(name)` holds `greet(name)` as a call inside
+ *  its own arguments, so the function appears to call itself on its own line. */
 function isElixirDeclarationSite(site: TreeSitterNode): boolean {
   const parent = site.parent;
   if (!parent) return false;
-  if (parent.type === "unary_operator" && parent.childForFieldName("operator")?.text === "@") {
-    return true;
-  }
+  if (isInsideModuleAttribute(site)) return true;
   // A guard puts the head on the left of `when`: in
   // `def decode(str) when is_binary(str)` the head is `decode(str)` and the
   // guard `is_binary(str)` is a real call, so only the left side is skipped.
