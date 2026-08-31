@@ -566,7 +566,8 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           "poll-ms": { type: "number", description: "Polling interval for --wait in milliseconds" },
           "merge-strategy": {
             type: "string",
-            description: "replace (default), extend, or patch",
+            description:
+              "patch (default, keeps the text the entries do not touch), extend (adds only), correct (drops claims the entries do not support), replace (writes a new body from the entries)",
           },
           "from-result": {
             type: "string",

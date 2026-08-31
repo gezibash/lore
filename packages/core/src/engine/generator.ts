@@ -1,6 +1,7 @@
 import { generateText, streamText, type LanguageModel } from "ai";
 import pRetry, { AbortError } from "p-retry";
 import { LoreError } from "@/types/index.ts";
+import { DEFAULT_MERGE_STRATEGY } from "@/types/index.ts";
 import type { LoreConfig, MergeStrategy } from "@/types/index.ts";
 import { type GenerationPromptKey } from "@/config/prompts.ts";
 import { createGenerationModel } from "./provider.ts";
@@ -101,7 +102,7 @@ Rules:
     }
     case "generate_integration": {
       const conceptName = ctx?.conceptName ?? "<concept>";
-      const strategy = ctx?.mergeStrategy ?? "replace";
+      const strategy = ctx?.mergeStrategy ?? DEFAULT_MERGE_STRATEGY;
 
       let rules: string;
       if (strategy === "extend") {
@@ -111,14 +112,6 @@ Rules:
 - Update only the specific paragraphs directly addressed by journal entries
 - Add new sections at the end for wholly new topics introduced by journal entries
 - Remove or rewrite a claim ONLY if a journal entry explicitly corrects or retracts it
-- Be concise but complete`;
-      } else if (strategy === "patch") {
-        rules = `Rules:
-- Write clean, informative prose — no frontmatter, no metadata
-- Identify which paragraphs are semantically touched by journal entries; rewrite only those
-- Reproduce all other paragraphs verbatim — do not rephrase, summarise, or reorganise them
-- Add new paragraphs only for wholly new topics introduced by journal entries
-- Remove or rewrite a paragraph ONLY if a journal entry explicitly corrects or retracts it
 - Be concise but complete`;
       } else if (strategy === "correct") {
         rules = `Rules:
@@ -130,16 +123,25 @@ Rules:
 - Do not invent information beyond what the journal entries establish
 - Give each distinct subject its own section; never append an unrelated subject to an existing paragraph
 - Be concise but complete`;
-      } else {
-        // "replace" (default) — tightened: preserve sections not addressed by journal entries
+      } else if (strategy === "replace") {
+        // The caller asked for a new body. The existing prose is dropped, so
+        // the planner sends the journal entries alone.
         rules = `Rules:
 - Write clean, informative prose — no frontmatter, no metadata
-- If a journal entry CORRECTS or RETRACTS something in the existing state, REMOVE or REWRITE the wrong claim — do not preserve it
-- If a journal entry adds new information, integrate it
+- The journal entries are the only source — there is no existing state to keep
+- Write the whole concept body from the journal entries
+- Do not restore a claim the journal entries do not establish
 - Dead ends: note briefly as warnings only if they help future readers avoid the same mistake
-- The output replaces the existing state entirely — it must be self-contained and accurate
-- If the existing state covers topics NOT addressed by any journal entry, preserve those sections as-is
-- Add a new section for a wholly new topic introduced by journal entries; never append an unrelated subject to an existing paragraph
+- Give each distinct subject its own section; never append an unrelated subject to an existing paragraph
+- Be concise but complete`;
+      } else {
+        // "patch" (default) — the fallback when the block patch cannot run.
+        rules = `Rules:
+- Write clean, informative prose — no frontmatter, no metadata
+- Identify which paragraphs are semantically touched by journal entries; rewrite only those
+- Reproduce all other paragraphs verbatim — do not rephrase, summarise, or reorganise them
+- Add new paragraphs only for wholly new topics introduced by journal entries
+- Remove or rewrite a paragraph ONLY if a journal entry explicitly corrects or retracts it
 - Be concise but complete`;
       }
 

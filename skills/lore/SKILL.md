@@ -82,7 +82,8 @@ Lore is CLI-only. There is no MCP surface.
 - Inspect queued work with `lore jobs` and `lore job <id>`.
 - Wait for completion with `lore wait <id>`.
 - Drain jobs in automation with `lore sys worker --once` or `lore sys worker --watch`.
-- `lore close --merge-strategy` selects how the entry lands: `replace` (default), `extend`, or `patch`.
+- `lore close --merge-strategy` selects how the entries land. `patch` (default) rewrites only the paragraphs the entries touch. `extend` adds and keeps every section. `correct` drops a claim the entries do not support. `replace` writes a new body from the entries and the old prose is gone.
+- If you must remove text from a concept, use `--merge-strategy correct` or `--merge-strategy replace`. `patch` and `extend` never remove text.
 
 ## Report What A Project Spent
 

@@ -723,6 +723,13 @@ export type CloseMode = "merge" | "discard";
 
 export type MergeStrategy = "replace" | "extend" | "patch" | "correct";
 
+/**
+ * The strategy a close uses when the caller names none. `patch` keeps every
+ * paragraph the journal entries do not touch, so a close that names no
+ * strategy cannot remove text.
+ */
+export const DEFAULT_MERGE_STRATEGY: MergeStrategy = "patch";
+
 /** Semantic distance between incoming narrative content and existing concept. */
 export interface PhaseTransitionWarning {
   concept_name: string;
