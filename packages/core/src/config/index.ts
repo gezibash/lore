@@ -33,7 +33,11 @@ export const defaultConfig: LoreConfig = {
       timeouts: {
         embedding_ms: 30000,
         rerank_ms: 15000,
-        executive_summary_ms: 30000,
+        // The shipped generation model needs minutes on an architectural
+        // question about a medium repository. A cap it cannot meet threw away
+        // the whole retrieval, so the cap is generous and the failure is not
+        // fatal — see the executive-summary step in queryConcepts.
+        executive_summary_ms: 300000,
       },
       rerank: {
         enabled: false,

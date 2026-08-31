@@ -2,8 +2,17 @@ import { expect, test } from "bun:test";
 import {
   DEFAULT_EXECUTIVE_SUMMARY_SYSTEM_PROMPT,
   generateExecutiveSummary,
+  queryConcepts,
 } from "./narrative-lifecycle.ts";
 import type { ReasoningLevel, GenerationReasoningScope } from "@/types/index.ts";
+import { defaultConfig } from "@/config/index.ts";
+import { insertChunk } from "@/db/chunks.ts";
+import { insertConcept } from "@/db/concepts.ts";
+import { insertEmbedding } from "@/db/embeddings.ts";
+import { insertFtsContent } from "@/db/fts.ts";
+import { writeStateChunk } from "@/storage/index.ts";
+import type { Embedder } from "./embedder.ts";
+import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
 
 type GenerateOpts = {
   timeoutMs?: number;
@@ -400,4 +409,73 @@ test("generateExecutiveSummary includes journal trail and symbol results in user
   // Counts should include journal entries
   expect(summary.counts.journal_entries).toBe(2);
   expect(summary.counts.concepts).toBe(1);
+});
+
+/**
+ * The summary runs after the embedding, the vector search and the rerank. A
+ * throw here discarded all of that work and returned nothing, which is the
+ * worst outcome after five minutes of waiting.
+ */
+test("a failed executive summary keeps the retrieval and reports the failure", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-ask-");
+  try {
+    const concept = insertConcept(db, "auth-model");
+    const chunk = await writeStateChunk({
+      lorePath,
+      concept: concept.name,
+      conceptId: concept.id,
+      narrativeOrigin: "seed",
+      version: 1,
+      content: "Auth validates tokens before it issues sessions.",
+    });
+    insertChunk(db, {
+      id: chunk.id,
+      filePath: chunk.filePath,
+      flType: "chunk",
+      conceptId: concept.id,
+      createdAt: new Date().toISOString(),
+    });
+    db.run("UPDATE concepts SET active_chunk_id = ? WHERE id = ?", [chunk.id, concept.id]);
+    insertEmbedding(db, chunk.id, new Float32Array([1, 0, 0]), defaultConfig.ai.embedding.model);
+    insertFtsContent(db, "auth validates tokens before it issues sessions", chunk.id);
+
+    const embedder = {
+      embed: async () => new Float32Array([1, 0, 0]),
+      embedBatch: async (texts: string[]) => texts.map(() => new Float32Array([1, 0, 0])),
+    } as unknown as Embedder;
+    const timeoutGenerator = {
+      generate: async () => {
+        throw new Error("The operation timed out.");
+      },
+      generateWithMeta: async () => {
+        throw new Error("The operation timed out.");
+      },
+    };
+
+    const result = await queryConcepts(
+      db,
+      "how does auth validate tokens",
+      defaultConfig,
+      embedder,
+      {
+        summary_generator: timeoutGenerator,
+      },
+    );
+
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.executive_summary).toBeUndefined();
+    expect(result.meta.executive_summary.attempted).toBe(true);
+    expect(result.meta.executive_summary.generated).toBe(false);
+    expect(result.meta.executive_summary.reason).toBe("failed: The operation timed out.");
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+test("the shipped executive-summary timeout leaves the default model room to answer", () => {
+  // 30s could not finish an architectural question with the shipped model, and
+  // the failure threw the retrieval away.
+  expect(defaultConfig.ai.search?.timeouts?.executive_summary_ms).toBe(300000);
 });

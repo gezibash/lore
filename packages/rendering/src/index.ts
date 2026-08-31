@@ -150,6 +150,24 @@ function renderClaimBlock(summary: ExecutiveSummary | null | undefined): string[
   ];
 }
 
+/**
+ * The retrieval survives a failed summary, so the answer must say the summary
+ * is missing and name the setting that caps it. Silence would read as "this is
+ * the whole answer".
+ */
+function renderSummaryFailure(result: QueryResult): string[] {
+  const summary = result.meta.executive_summary;
+  if (!summary.attempted || summary.generated) return [];
+  const cause = summary.reason.startsWith("failed: ")
+    ? summary.reason.slice("failed: ".length)
+    : summary.reason;
+  return [
+    `⚠ The executive summary failed: ${cause}. What follows is the retrieval, without the summary.`,
+    "  Raise the cap with `lore sys config set ai.search.timeouts.executive_summary_ms <milliseconds>`.",
+    "",
+  ];
+}
+
 function renderSummaryNarrative(result: QueryResult): string {
   const summary = result.executive_summary;
   if (!summary) {
@@ -355,7 +373,8 @@ function renderResultFooter(result: QueryResult): string[] {
 }
 
 export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string {
-  const lines: string[] = [renderSummaryNarrative(result)];
+  const summaryFailure = renderSummaryFailure(result);
+  const lines: string[] = [...summaryFailure, renderSummaryNarrative(result)];
   const provenance = renderSummaryProvenance(result.executive_summary);
   if (provenance) {
     lines.push("", provenance);
@@ -363,7 +382,7 @@ export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string 
   lines.push(...renderClaimBlock(result.executive_summary));
   lines.push(...renderBindingNudge(result.executive_summary));
   lines.push(...renderNextActions(result));
-  if (opts?.includeSources) {
+  if (opts?.includeSources || summaryFailure.length > 0) {
     lines.push(...renderSources(result));
   }
   if (result.journal_results && result.journal_results.length > 0) {

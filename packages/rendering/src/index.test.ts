@@ -475,3 +475,25 @@ test("renderRecall renders requested sections", () => {
   expect(rendered).toContain("## Sources");
   expect(rendered).toContain("## Investigation Trail");
 });
+
+/**
+ * A summary that failed must say so. The retrieval survives it, and silence
+ * would read as "this is the whole answer".
+ */
+test("a failed executive summary is reported and the sources are shown", () => {
+  const result = sampleQueryResult();
+  delete result.executive_summary;
+  result.meta.executive_summary = {
+    ...result.meta.executive_summary,
+    attempted: true,
+    generated: false,
+    reason: "failed: The operation timed out.",
+  };
+
+  const rendered = renderAsk(result, { route: "cli" });
+
+  expect(rendered).toContain("The executive summary failed: The operation timed out.");
+  expect(rendered).toContain("ai.search.timeouts.executive_summary_ms");
+  // Sources are printed even though the caller did not ask for them.
+  expect(rendered).toContain("## Sources");
+});

@@ -1827,10 +1827,16 @@ export async function queryConcepts(
         elapsed_ms_local: Date.now() - summaryStartMs,
       });
     } catch (error) {
-      throw new LoreError(
-        "ASK_EXEC_SUMMARY_FAILED",
-        `Executive summary generation failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      // The retrieval already cost an embedding, a vector search and a rerank.
+      // Throwing here discarded all of it and returned nothing, so the summary
+      // failure is reported and the results stand on their own.
+      const cause = error instanceof Error ? error.message : String(error);
+      summaryReason = `failed: ${cause}`;
+      opts?.tracer?.log("summary.failed", {
+        cause,
+        timeout_ms: summaryTimeoutMs ?? null,
+        elapsed_ms_local: Date.now() - summaryStartMs,
+      });
     }
   }
 

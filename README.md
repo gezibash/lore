@@ -308,6 +308,12 @@ hardcoded defaults → ~/.lore/config.json → <project>/.lore/config.json → p
 
 On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Per-project config lives alongside your code and can be version-controlled. Inspect the resolved result with `lore sys config show`.
 
+`ai.search.timeouts.executive_summary_ms` caps the answer step of `lore ask`. It defaults to 300000, because a slow model needs minutes on an architectural question. A cap the model cannot meet no longer costs the answer: `lore ask` reports the failure and prints the retrieved sources.
+
+```bash
+lore sys config set ai.search.timeouts.executive_summary_ms 120000
+```
+
 ### Providers
 
 **Embedding providers:** `ollama` · `openai` · `openai-compatible` · `openrouter` · `voyage` · `gateway`
