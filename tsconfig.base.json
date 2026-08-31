@@ -1,4 +1,5 @@
 {
+  "files": ["./types/wasm.d.ts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",

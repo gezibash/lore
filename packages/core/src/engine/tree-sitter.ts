@@ -1,6 +1,21 @@
 import { readFileSync } from "fs";
-import { dirname, join } from "path";
 import type { SupportedLanguage } from "@/types/index.ts";
+
+// Every wasm travels inside the executable. `bun build --compile` bakes a
+// `type: "file"` import into the bundle and rewrites the specifier to the
+// embedded copy, so the binary reads its grammars from itself. Resolution
+// through node_modules cannot do this: the bundler writes the build machine's
+// absolute path into the binary, and that path is gone on any other machine.
+import runtimeWasm from "web-tree-sitter/web-tree-sitter.wasm" with { type: "file" };
+import typescriptWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-typescript.wasm" with { type: "file" };
+import tsxWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-tsx.wasm" with { type: "file" };
+import javascriptWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-javascript.wasm" with { type: "file" };
+import pythonWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-python.wasm" with { type: "file" };
+import goWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-go.wasm" with { type: "file" };
+import rustWasm from "@repomix/tree-sitter-wasms/out/tree-sitter-rust.wasm" with { type: "file" };
+// @repomix/tree-sitter-wasms ships 17 grammars, and Elixir is not one of them.
+// tree-sitter-elixir ships its own prebuilt wasm.
+import elixirWasm from "tree-sitter-elixir/tree-sitter-elixir.wasm" with { type: "file" };
 
 // ─── Minimal type shims for web-tree-sitter v0.26 ──────────
 // We define our own types instead of relying on the package's .d.ts
@@ -65,67 +80,44 @@ interface WTSModule {
 
 // ─── Constants ──────────────────────────────────────────────
 
-// Each grammar comes from the package that ships it. @repomix/tree-sitter-wasms
-// holds five of the six languages in one directory. It has no Elixir grammar,
-// so Elixir comes from tree-sitter-elixir, which ships its own prebuilt wasm.
-type GrammarPackage = "@repomix/tree-sitter-wasms" | "tree-sitter-elixir";
-
-type Grammar = { package: GrammarPackage; file: string };
-
-const REPOMIX = "@repomix/tree-sitter-wasms";
-
-const LANGUAGE_WASM_MAP: Record<SupportedLanguage, Grammar> = {
-  typescript: { package: REPOMIX, file: "tree-sitter-typescript.wasm" },
-  javascript: { package: REPOMIX, file: "tree-sitter-javascript.wasm" },
-  python: { package: REPOMIX, file: "tree-sitter-python.wasm" },
-  go: { package: REPOMIX, file: "tree-sitter-go.wasm" },
-  rust: { package: REPOMIX, file: "tree-sitter-rust.wasm" },
-  elixir: { package: "tree-sitter-elixir", file: "tree-sitter-elixir.wasm" },
+const LANGUAGE_WASM_MAP: Record<SupportedLanguage, string> = {
+  typescript: typescriptWasm,
+  javascript: javascriptWasm,
+  python: pythonWasm,
+  go: goWasm,
+  rust: rustWasm,
+  elixir: elixirWasm,
 };
 
-const TSX_WASM: Grammar = { package: REPOMIX, file: "tree-sitter-tsx.wasm" };
+const TSX_WASM = tsxWasm;
 
 // ─── Pool ───────────────────────────────────────────────────
 
 export class TreeSitterPool {
   private wts: WTSModule | null = null;
   private languages: Map<string, TreeSitterLanguage> = new Map();
-  private grammarDirs: Record<GrammarPackage, string> | null = null;
 
   async init(): Promise<void> {
     if (this.wts) return;
 
     const mod = (await import("web-tree-sitter")) as unknown as WTSModule;
-    const wtsDir = dirname(require.resolve("web-tree-sitter/package.json"));
-    // Keep the require.resolve arguments literal. `bun build --compile`
-    // rewrites these paths when it makes the binary, and it cannot rewrite a
-    // specifier that the code builds at runtime.
-    this.grammarDirs = {
-      "@repomix/tree-sitter-wasms": join(
-        dirname(require.resolve("@repomix/tree-sitter-wasms/package.json")),
-        "out",
-      ),
-      "tree-sitter-elixir": dirname(require.resolve("tree-sitter-elixir/package.json")),
-    };
     // Bun needs wasmBinary (file:// URLs don't work reliably)
-    const wasmBuf = readFileSync(join(wtsDir, "web-tree-sitter.wasm"));
+    const wasmBuf = readFileSync(runtimeWasm);
     await mod.Parser.init({ wasmBinary: new Uint8Array(wasmBuf) });
 
     this.wts = mod;
   }
 
   async loadLanguage(language: SupportedLanguage, isTsx?: boolean): Promise<TreeSitterLanguage> {
-    const grammar = isTsx ? TSX_WASM : LANGUAGE_WASM_MAP[language];
-    if (!grammar) throw new Error(`Unsupported language: ${language}`);
+    const wasmPath = isTsx ? TSX_WASM : LANGUAGE_WASM_MAP[language];
+    if (!wasmPath) throw new Error(`Unsupported language: ${language}`);
 
     const cacheKey = isTsx ? "tsx" : language;
     const cached = this.languages.get(cacheKey);
     if (cached) return cached;
 
-    if (!this.wts || !this.grammarDirs)
-      throw new Error("TreeSitterPool not initialized. Call init() first.");
+    if (!this.wts) throw new Error("TreeSitterPool not initialized. Call init() first.");
 
-    const wasmPath = join(this.grammarDirs[grammar.package], grammar.file);
     const wasmBuf = readFileSync(wasmPath);
     const lang = await this.wts.Language.load(new Uint8Array(wasmBuf));
     this.languages.set(cacheKey, lang);
