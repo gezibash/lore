@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { LoreEngine } from "./index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 
 test("kpi log/goal/status: creation needs a direction, deltas and gaps follow it", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
 
@@ -66,7 +66,7 @@ test("kpi log/goal/status: creation needs a direction, deltas and gaps follow it
 });
 
 test("kpi readings attach to the sole open narrative by default, or a named one", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
 

@@ -1,0 +1,5 @@
+[test]
+# Starts the stub embedding server. Without it the engine tests call whatever
+# the machine runs on localhost:11434, which makes them slow and machine
+# dependent. See test/support/stub-embedder.ts.
+preload = ["./test/support/stub-embedder.ts"]

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as lancedb from "@lancedb/lancedb";
 import { LoreEngine } from "./index.ts";
 import { getLanceSpace, lanceDir } from "./lance-index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 
 /** Register a mind whose Lance store holds three superseded versions. */
 async function mindWithSupersededIndex(name: string): Promise<{
@@ -11,7 +11,7 @@ async function mindWithSupersededIndex(name: string): Promise<{
   loreRoot: string;
   lancePath: string;
 }> {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
   const registered = await engine.register(codePath, name);
@@ -88,7 +88,7 @@ test("status reports the superseded bytes the search index holds", async () => {
 });
 
 test("status omits the search index for a mind that has never searched", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
   await engine.register(codePath, "status-lance-absent");

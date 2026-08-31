@@ -6,7 +6,7 @@ import { insertSymbolEmbedding } from "@/db/embeddings.ts";
 import { insertSymbol } from "@/db/symbols.ts";
 import { upsertSourceFile } from "@/db/source-files.ts";
 import { writeLocalConfig } from "@/config/index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 import type { Database } from "bun:sqlite";
 
 function addSymbol(db: Database, name: string): string {
@@ -36,7 +36,7 @@ async function mindWithSymbolLane(
   seed: (db: Database) => void,
   codeModel?: string,
 ): Promise<{ engine: LoreEngine; codePath: string; loreRoot: string }> {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
   const registered = await engine.register(codePath, name);

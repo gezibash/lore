@@ -4,10 +4,10 @@ import { LoreEngine } from "./index.ts";
 import { openDb } from "@/db/connection.ts";
 import { getChunk, getOpenNarrativeByName, insertChunk } from "@/db/index.ts";
 import { readChunk, writeJournalChunk } from "@/storage/index.ts";
-import { createTempDir, removeDir } from "../../test/support/db.ts";
+import { createTempDir, createTestLoreRoot, removeDir } from "../../test/support/db.ts";
 
 test("designateJournalEntry repairs an unresolved journal chunk by chunk id", async () => {
-  const loreRoot = createTempDir("lore-root-");
+  const loreRoot = createTestLoreRoot();
   const codePath = createTempDir("lore-code-");
   const engine = new LoreEngine({ lore_root: loreRoot });
 

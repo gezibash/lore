@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "bun ./src/index.ts",
     "typecheck": "bun x tsc --noEmit -p tsconfig.json",
-    "test": "bun test --timeout 20000"
+    "test": "bun test"
   },
   "dependencies": {
     "@lore/rendering": "workspace:*",
