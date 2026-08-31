@@ -875,6 +875,16 @@ export interface StatusResult {
     stale: number;
     model: string;
   };
+  /**
+   * The code lane's second table. `model` is the code model, and it is null
+   * when no code model is configured — every row is then unreadable.
+   */
+  symbol_embedding_status?: {
+    total: number;
+    current_model: number;
+    stale: number;
+    model: string | null;
+  };
   suggestions: Array<{
     action: string;
     concepts: string[];

@@ -502,12 +502,26 @@ export function formatStatus(result: StatusResult): string {
     }
   }
 
-  if (result.embedding_status && result.embedding_status.stale > 0) {
+  // Two lanes, two figures. The chunk lane and the symbol lane hold their own
+  // model, and a refresh that repairs both must still say which one went stale.
+  const staleChunkEmbeddings = result.embedding_status?.stale ?? 0;
+  const staleSymbolEmbeddings = result.symbol_embedding_status?.stale ?? 0;
+  if (staleChunkEmbeddings > 0 || staleSymbolEmbeddings > 0) {
     lines.push("\n## Embedding Mismatch\n");
-    lines.push(
-      `${compactCount(result.embedding_status.stale)}/${compactCount(result.embedding_status.total)} embeddings use an outdated model (current: **${result.embedding_status.model}**).`,
-    );
-    lines.push("Run `lore mind embeddings refresh` to recompute all embeddings.");
+    if (result.embedding_status && staleChunkEmbeddings > 0) {
+      lines.push(
+        `${compactCount(result.embedding_status.stale)}/${compactCount(result.embedding_status.total)} chunk embeddings use an outdated model (current: **${result.embedding_status.model}**).`,
+      );
+    }
+    if (result.symbol_embedding_status && staleSymbolEmbeddings > 0) {
+      const symbols = result.symbol_embedding_status;
+      lines.push(
+        symbols.model
+          ? `${compactCount(symbols.stale)}/${compactCount(symbols.total)} symbol embeddings use an outdated model (current: **${symbols.model}**). Symbol search and automatic binding return nothing.`
+          : `${compactCount(symbols.stale)}/${compactCount(symbols.total)} symbol embeddings remain and no code model is configured. Set **ai.embedding.code.model** first.`,
+      );
+    }
+    lines.push("Run `lore sys embeddings refresh` to recompute all embeddings.");
   }
 
   if (result.coverage) {

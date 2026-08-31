@@ -289,7 +289,7 @@ import {
   getLastDocIndexedAt,
   getJournalEntryCount,
 } from "@/db/chunks.ts";
-import { countEmbeddingsByModel } from "@/db/embeddings.ts";
+import { countEmbeddingsByModel, countSymbolEmbeddingsByModel } from "@/db/embeddings.ts";
 import { countAllOrphanedRows } from "@/db/chunks.ts";
 
 interface CloseJobPayload {
@@ -1564,6 +1564,21 @@ export class LoreEngine {
       .filter((r) => validModels.has(r.model))
       .reduce((s, r) => s + r.cnt, 0);
     const staleEmbeddings = totalEmbeddings - matchingEmbeddings;
+
+    // The code lane writes two tables, and the count above reads one of them.
+    // The symbol lane keeps its own figure: the two lanes go stale apart, they
+    // cost different amounts to rebuild, and one combined number names neither.
+    // Only the code model is ever written here, so it alone is the valid model.
+    // With no code model configured, every row is stale: binding extraction
+    // needs that model to read the table at all.
+    const symbolEmbeddingModels = countSymbolEmbeddingsByModel(db);
+    const totalSymbolEmbeddings = symbolEmbeddingModels.reduce((s, r) => s + r.cnt, 0);
+    const matchingSymbolEmbeddings = currentCodeModel
+      ? symbolEmbeddingModels
+          .filter((r) => r.model === currentCodeModel)
+          .reduce((s, r) => s + r.cnt, 0)
+      : 0;
+    const staleSymbolEmbeddings = totalSymbolEmbeddings - matchingSymbolEmbeddings;
     const orphanedRows = countAllOrphanedRows(db);
 
     // Priorities: ranked by expected debt share p(c)·R(c) — the concepts whose
@@ -1673,7 +1688,27 @@ export class LoreEngine {
       priorities.push({
         concept: "(embeddings)",
         action: "refresh embeddings",
-        reason: `${staleEmbeddings} embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore embeddings refresh.`,
+        reason: `${staleEmbeddings} embeddings use outdated model ${staleModels.join(", ")} (current: ${currentModel}). Run lore sys embeddings refresh.`,
+        last_narrative: undefined,
+        changed_at: undefined,
+      });
+    }
+
+    // The symbol lane raises its own priority. `lore sys embeddings refresh`
+    // repairs both lanes, but the reason must name the lane and its model, or
+    // the operator cannot tell which count moved. The failure it reports is
+    // silent otherwise: symbol search and automatic binding both return zero
+    // rows, which reads as a repository with no matches.
+    if (staleSymbolEmbeddings > 0) {
+      const staleSymbolModels = symbolEmbeddingModels
+        .filter((r) => r.model !== currentCodeModel)
+        .map((r) => r.model);
+      priorities.push({
+        concept: "(symbol embeddings)",
+        action: "refresh embeddings",
+        reason: currentCodeModel
+          ? `${staleSymbolEmbeddings} symbol embedding(s) use outdated model ${staleSymbolModels.join(", ")} (current code model: ${currentCodeModel}). Symbol search and automatic binding return nothing. Run lore sys embeddings refresh.`
+          : `${staleSymbolEmbeddings} symbol embedding(s) use model ${staleSymbolModels.join(", ")} and no code model is configured. Set ai.embedding.code.model, then run lore sys embeddings refresh.`,
         last_narrative: undefined,
         changed_at: undefined,
       });
@@ -1715,6 +1750,19 @@ export class LoreEngine {
             current_model: matchingEmbeddings,
             stale: staleEmbeddings,
             model: currentModel,
+          }
+        : undefined;
+
+    // Reported whenever the symbol lane holds a reachable row. Orphans stay out
+    // of this figure; the prune priority above already names them, and it
+    // counts every symbol-keyed table, not this one alone.
+    const symbolEmbeddingStatus =
+      totalSymbolEmbeddings > 0
+        ? {
+            total: totalSymbolEmbeddings,
+            current_model: matchingSymbolEmbeddings,
+            stale: staleSymbolEmbeddings,
+            model: currentCodeModel,
           }
         : undefined;
 
@@ -1887,6 +1935,7 @@ export class LoreEngine {
         action: "close or abandon",
       })),
       embedding_status: embeddingStatus,
+      symbol_embedding_status: symbolEmbeddingStatus,
       maintenance: this.computeMaintenance(
         db,
         entry.lore_path,

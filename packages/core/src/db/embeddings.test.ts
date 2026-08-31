@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { createTestDb } from "../../test/support/db.ts";
 import {
   insertEmbedding,
@@ -6,9 +7,13 @@ import {
   vectorSearch,
   getAllEmbeddings,
   countEmbeddingsByModel,
+  countSymbolEmbeddingsByModel,
+  insertSymbolEmbedding,
 } from "./embeddings.ts";
 import { insertConcept, insertConceptVersion } from "./concepts.ts";
 import { insertChunk } from "./chunks.ts";
+import { insertSymbol } from "./symbols.ts";
+import { upsertSourceFile } from "./source-files.ts";
 
 test("insertEmbedding and getEmbeddingForChunk roundtrip", () => {
   const db = createTestDb();
@@ -223,6 +228,82 @@ test("countEmbeddingsByModel keeps source and journal rows, which carry no lifec
     "code-model": 1,
     "text-model": 1,
   });
+
+  db.close();
+});
+
+function addSymbol(db: Database, name: string): string {
+  const sourceFileId = upsertSourceFile(db, {
+    filePath: `src/${name}.ts`,
+    language: "typescript",
+    contentHash: `hash-${name}`,
+    sizeBytes: 100,
+    symbolCount: 1,
+  }).id;
+  return insertSymbol(db, {
+    sourceFileId,
+    name,
+    qualifiedName: name,
+    kind: "function",
+    parentId: null,
+    lineStart: 1,
+    lineEnd: 5,
+    signature: null,
+    bodyHash: `body-${name}`,
+    exportStatus: "exported",
+  }).id;
+}
+
+test("countSymbolEmbeddingsByModel counts the code lane's second table", () => {
+  const db = createTestDb();
+
+  // The lane the chunk count never reads. A code model change strands every row
+  // here, and both readers filter on the model, so they return nothing.
+  insertSymbolEmbedding(db, addSymbol(db, "alpha"), new Float32Array([0.1]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "beta"), new Float32Array([0.2]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "gamma"), new Float32Array([0.3]), "code-old");
+
+  expect(Object.fromEntries(countSymbolEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual(
+    { "code-new": 2, "code-old": 1 },
+  );
+
+  db.close();
+});
+
+test("countSymbolEmbeddingsByModel ignores embeddings whose symbol is gone", () => {
+  const db = createTestDb();
+
+  insertSymbolEmbedding(db, addSymbol(db, "live"), new Float32Array([0.1]), "code-new");
+  // What a replaced symbol left behind. Binding extraction reads its cache
+  // against the live symbol list, so this row reaches no reader. On an outdated
+  // model it would otherwise raise a refresh the mind does not need.
+  insertSymbolEmbedding(db, "symbol-gone", new Float32Array([0.2]), "code-old");
+
+  expect(db.query<{ c: number }, []>("SELECT COUNT(*) c FROM symbol_embeddings").get()?.c).toBe(2);
+
+  const counts = countSymbolEmbeddingsByModel(db);
+  expect(Object.fromEntries(counts.map((r) => [r.model, r.cnt]))).toEqual({ "code-new": 1 });
+  expect(counts.reduce((sum, r) => sum + r.cnt, 0)).toBe(1);
+
+  db.close();
+});
+
+test("countSymbolEmbeddingsByModel and countEmbeddingsByModel report separate lanes", () => {
+  const db = createTestDb();
+  const now = new Date().toISOString();
+
+  // One code model change, two tables. The source chunk moves with the refresh;
+  // the symbol row does not, unless status counts it.
+  insertChunk(db, { id: "src", filePath: "./s.ts", flType: "source", createdAt: now });
+  insertEmbedding(db, "src", new Float32Array([0.1]), "code-new");
+  insertSymbolEmbedding(db, addSymbol(db, "stale"), new Float32Array([0.2]), "code-old");
+
+  expect(Object.fromEntries(countEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual({
+    "code-new": 1,
+  });
+  expect(Object.fromEntries(countSymbolEmbeddingsByModel(db).map((r) => [r.model, r.cnt]))).toEqual(
+    { "code-old": 1 },
+  );
 
   db.close();
 });

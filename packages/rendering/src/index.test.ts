@@ -79,6 +79,32 @@ test("renderStatus uses route defaults", () => {
   expect(parsed.debt).toBe(0.12);
 });
 
+test("renderStatus names the symbol lane apart from the chunk lane", () => {
+  const status = sampleStatus();
+  status.priorities = [
+    {
+      concept: "(symbol embeddings)",
+      action: "refresh embeddings",
+      reason:
+        "7 symbol embedding(s) use outdated model code-old (current code model: code-new). Symbol search and automatic binding return nothing. Run lore sys embeddings refresh.",
+    },
+  ];
+  status.embedding_status = { total: 40, current_model: 40, stale: 0, model: "text-new" };
+  status.symbol_embedding_status = { total: 7, current_model: 0, stale: 7, model: "code-new" };
+
+  const cli = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(cli).toContain("symbol embeddings");
+  expect(cli).toContain("refresh");
+  expect(cli).toContain("7 stale");
+  expect(cli).toContain("lore sys embeddings refresh");
+
+  // The chunk lane is current, so the mismatch section names the symbol lane
+  // alone. One combined figure would name neither.
+  const markdown = renderStatus(status, { format: "markdown" });
+  expect(markdown).toContain("7/7 symbol embeddings use an outdated model");
+  expect(markdown).not.toContain("chunk embeddings use an outdated model");
+});
+
 test("renderLs uses route defaults", () => {
   const ls = sampleLs();
 

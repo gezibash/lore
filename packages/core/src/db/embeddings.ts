@@ -239,6 +239,32 @@ export function symbolVectorSearch(
     .all(queryBlob, model, limit);
 }
 
+/**
+ * Count the reachable symbol embeddings of each model.
+ *
+ * The code lane writes two tables. countEmbeddingsByModel reads the source
+ * chunks in `embeddings`; the symbols live here, under the same code model. A
+ * model change leaves every row here on the old model, and both readers filter
+ * on the model — symbolVectorSearch, and the cache that binding extraction
+ * loads — so an old-model row returns nothing rather than a wrong answer.
+ *
+ * The join drops orphans, which is the test the prune applies (see
+ * SYMBOL_KEYED_TABLES in db/symbols.ts). Binding extraction reads its cache
+ * against the live symbol list, so an orphan reaches no reader. An orphan on an
+ * outdated model would otherwise raise a refresh the mind does not need.
+ */
+export function countSymbolEmbeddingsByModel(db: Database): Array<{ model: string; cnt: number }> {
+  return db
+    .query<{ model: string; cnt: number }, []>(
+      `SELECT se.model, COUNT(*) AS cnt
+       FROM symbol_embeddings se
+       JOIN symbols s ON s.id = se.symbol_id
+       GROUP BY se.model
+       ORDER BY se.model`,
+    )
+    .all();
+}
+
 export function deleteAllSymbolEmbeddings(db: Database): void {
   db.run("DELETE FROM symbol_embeddings");
 }

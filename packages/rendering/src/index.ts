@@ -435,6 +435,7 @@ function compactStatusBand(result: StatusResult): { label: string; color: string
 
 function compactPriorityConcept(concept: string): string {
   if (concept === "(embeddings)") return "embeddings";
+  if (concept === "(symbol embeddings)") return "symbol embeddings";
   if (concept === "(maintenance)") return "maintenance";
   return concept;
 }
@@ -451,6 +452,10 @@ function compactPriorityAction(action: string): string {
 function compactPriorityReason(priority: StatusResult["priorities"][number]): string {
   if (priority.concept === "(embeddings)") {
     const staleMatch = priority.reason.match(/(\d+) embeddings?/);
+    return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
+  }
+  if (priority.concept === "(symbol embeddings)") {
+    const staleMatch = priority.reason.match(/(\d+) symbol embedding/);
     return staleMatch ? `${staleMatch[1]} stale` : "outdated model";
   }
   if (priority.concept === "(maintenance)") {
@@ -517,6 +522,7 @@ function compactNextCommand(result: StatusResult): string | null {
   if (priority) {
     if (priority.concept === "(maintenance)") return "lore ingest";
     if (priority.concept === "(embeddings)") return "lore sys embeddings refresh";
+    if (priority.concept === "(symbol embeddings)") return "lore sys embeddings refresh";
     return `lore show ${priority.concept}`;
   }
   if (result.suggestions.length > 0) return "lore suggest";
