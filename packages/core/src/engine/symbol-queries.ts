@@ -108,6 +108,26 @@ const ELIXIR_QUERY = `
   (#eq? @_kw "defprotocol")) @definition.interface
 `;
 
+// Lean wraps every declaration in a `declaration` node that holds the modifiers
+// and one form node. The form node carries the name, so the query captures the
+// form and detectExportStatus reads the modifiers off its parent.
+//
+// `lemma` parses as `theorem`, and `class` parses as `structure`, so neither
+// needs a pattern. `example` has no name and defines nothing a reader can bind
+// to, so it is left out. An anonymous `instance` has no name field and drops
+// out on its own, because the pattern requires one.
+const LEAN_QUERY = `
+(theorem name: (identifier) @name) @definition.theorem
+(def name: (identifier) @name) @definition.function
+(abbrev name: (identifier) @name) @definition.type
+(structure name: (identifier) @name) @definition.struct
+(inductive name: (identifier) @name) @definition.enum
+(instance name: (identifier) @name) @definition.impl
+(axiom name: (identifier) @name) @definition.constant
+(opaque name: (identifier) @name) @definition.constant
+(constant name: (identifier) @name) @definition.constant
+`;
+
 const QUERY_MAP: Record<SupportedLanguage, string> = {
   typescript: TYPESCRIPT_QUERY,
   javascript: JAVASCRIPT_QUERY,
@@ -115,6 +135,7 @@ const QUERY_MAP: Record<SupportedLanguage, string> = {
   go: GO_QUERY,
   rust: RUST_QUERY,
   elixir: ELIXIR_QUERY,
+  lean: LEAN_QUERY,
 };
 
 // ─── Per-Language Call-Site Queries ───────────────────────
@@ -184,6 +205,18 @@ const ELIXIR_CALL_QUERY = `
 (call target: (dot right: (identifier) @call.name)) @call.site
 `;
 
+// Lean applies functions by juxtaposition, so `f a b` is a left-nested `app`
+// and only the innermost `fn` is the identifier. One pattern therefore reports
+// each application once.
+//
+// This matches applications in a type as well as in a body, and that is
+// deliberate. `theorem refresh_sound : valid (refresh t)` states a fact about
+// `valid` and `refresh`. In Lean the statement is the knowledge, so an edge
+// from the type is the edge worth having.
+const LEAN_CALL_QUERY = `
+(app fn: (identifier) @call.name) @call.site
+`;
+
 const CALL_QUERY_MAP: Record<SupportedLanguage, string> = {
   typescript: TS_CALL_QUERY,
   javascript: TS_CALL_QUERY,
@@ -191,6 +224,7 @@ const CALL_QUERY_MAP: Record<SupportedLanguage, string> = {
   go: GO_CALL_QUERY,
   rust: RUST_CALL_QUERY,
   elixir: ELIXIR_CALL_QUERY,
+  lean: LEAN_CALL_QUERY,
 };
 
 function nodeKindFromCapture(captureName: string): SymbolKind | null {
@@ -208,8 +242,122 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
     "trait",
     "impl",
     "constant",
+    "theorem",
   ];
   return valid.includes(kind as SymbolKind) ? (kind as SymbolKind) : null;
+}
+
+// ─── Lean Namespace Scopes ────────────────────────────────
+
+/** Lean's escape to the top level. A name written with it ignores every open
+ *  namespace, so it is the whole name. */
+const LEAN_ROOT_PREFIX = "_root_.";
+
+/** Every Lean command that opens a scope an `end` closes.
+ *
+ *  The grammar models all of these flat: the declarations between the opener
+ *  and its `end` are siblings of both, not children. `mutual` groups
+ *  recursive definitions and `public section` sets visibility, so neither
+ *  names anything, but each still consumes an `end`. */
+const LEAN_SCOPE_OPENERS = new Set(["namespace", "section", "mutual", "public_section"]);
+
+/** One open `namespace` and the rows it covers. */
+interface LeanScope {
+  name: string;
+  startRow: number;
+  endRow: number;
+}
+
+/** The namespaces covering each row of a Lean file.
+ *
+ *  Every other language here nests a definition inside its container, so
+ *  findParentClass reaches the container by walking up from the definition.
+ *  Lean does not nest: `namespace`, `end` and `declaration` are all siblings of
+ *  `module`, and the declarations between an open and its `end` are not its
+ *  children. Walking up from a declaration therefore reaches `module` and finds
+ *  nothing, which would store `Auth.Token.refresh` as a bare `refresh` and
+ *  collide it with every other `refresh` in the project.
+ *
+ *  So the scopes are read in source order instead, and `end` closes the
+ *  innermost open scope. `section` opens a scope too, and must be tracked to
+ *  keep `end` aligned, but it never contributes to a name: a section bounds
+ *  variables, and a namespace bounds names. */
+function collectLeanScopes(root: TreeSitterNode): LeanScope[] {
+  const closed: LeanScope[] = [];
+  const open: { name: string | null; startRow: number }[] = [];
+
+  for (const child of root.namedChildren) {
+    if (LEAN_SCOPE_OPENERS.has(child.type)) {
+      // Only a namespace contributes to a name. A section, a mutual block and
+      // a public section each bound something else, but all four close with
+      // the same `end`, so all four must be tracked. Miss one and its `end`
+      // closes the namespace around it, and every declaration after it in the
+      // file loses its namespace.
+      const nameNode = child.childForFieldName("name");
+      open.push({
+        name: child.type === "namespace" ? (nameNode?.text ?? null) : null,
+        startRow: child.startPosition.row,
+      });
+      continue;
+    }
+    if (child.type === "end") {
+      const scope = open.pop();
+      // `end` with nothing open is invalid Lean. Ignore it rather than throw:
+      // a half-written file must still yield the symbols it already has.
+      if (!scope) continue;
+      if (scope.name !== null) {
+        closed.push({ name: scope.name, startRow: scope.startRow, endRow: child.endPosition.row });
+      }
+    }
+  }
+
+  // A file that opens a namespace and never closes it is normal Lean: the
+  // namespace runs to the end of the file.
+  for (const scope of open) {
+    if (scope.name === null) continue;
+    closed.push({ name: scope.name, startRow: scope.startRow, endRow: root.endPosition.row });
+  }
+
+  return closed;
+}
+
+/** The last row a Lean declaration really occupies. Rows are 0-indexed, as
+ *  tree-sitter reports them.
+ *
+ *  A Lean tactic block closes on indentation, not on a token, so a `:= by`
+ *  body runs to the row where the next declaration starts. Tree-sitter reports
+ *  that boundary as an exclusive end at column 0, which means the reported end
+ *  row belongs to the *next* declaration and not to this one. It also leaves
+ *  the blank rows between the two inside the reported range.
+ *
+ *  Counting those rows makes the scanner claim them for this symbol. The doc
+ *  comment above the next declaration then lands in this chunk, and a comment
+ *  reading "never moves its expiry backwards" is retrieved as a claim about
+ *  the theorem above it — the wrong claim about the wrong symbol, which is
+ *  worse than not retrieving it at all. It also moves body_hash whenever the
+ *  next declaration's comment changes, reporting drift in untouched code. */
+function trimLeanEndRow(
+  sourceLines: string[],
+  startRow: number,
+  endRow: number,
+  endColumn: number,
+): number {
+  let end = endRow;
+  // An end at column 0 stops before that row, so the row is not part of the
+  // declaration. Comments are siblings of the declaration in this grammar, so
+  // dropping the row is enough and no comment needs to be recognised here.
+  if (endColumn === 0 && end > startRow) end--;
+  while (end > startRow && (sourceLines[end]?.trim() ?? "") === "") end--;
+  return end;
+}
+
+/** The dotted namespace prefix for a row, outermost first. */
+function leanNamespacePrefix(scopes: LeanScope[], row: number): string | null {
+  const names = scopes
+    .filter((scope) => scope.startRow < row && row <= scope.endRow)
+    .sort((a, b) => a.startRow - b.startRow)
+    .map((scope) => scope.name);
+  return names.length > 0 ? names.join(".") : null;
 }
 
 function extractSignature(
@@ -226,6 +374,36 @@ function extractSignature(
     }
   }
   let sig = lines.join("\n").trim();
+
+  // Lean marks the body in the tree, so the text before it is the whole
+  // signature. Searching the text for `:=` instead would stop at the first
+  // one, and `:=` also gives a parameter its default value:
+  // `def greet (name : String := "world") : String` would cut after
+  // `(name : String` and lose the return type. For a theorem the type is the
+  // statement being proved, so that loses the claim itself.
+  if (language === "lean") {
+    const body = node.childForFieldName("body") ?? node.childForFieldName("value");
+    if (body && body.startPosition.row === startLine) {
+      const head = sourceLines[startLine]?.slice(0, body.startPosition.column) ?? "";
+      // `:=` is not part of the body node, so drop the separator it leaves.
+      sig = head.trim().replace(/:=$/, "").trim();
+    } else if (body) {
+      const head: string[] = [];
+      for (let i = startLine; i < body.startPosition.row && i < sourceLines.length; i++) {
+        head.push(sourceLines[i]!);
+      }
+      head.push(sourceLines[body.startPosition.row]?.slice(0, body.startPosition.column) ?? "");
+      sig = head.join("\n").trim().replace(/:=$/, "").trim();
+    } else {
+      // A structure, an inductive or a class has no body field. It opens with
+      // `where`, which never appears inside a binder.
+      const whereStart = sig.search(/\bwhere\b/);
+      if (whereStart > 0) sig = sig.slice(0, whereStart).trim();
+    }
+    if (sig.length > 500) sig = sig.slice(0, 500) + "...";
+    return sig || null;
+  }
+
   // Truncate at the start of the body. Elixir bodies open with `do`, and its
   // heads are full of `%Struct{}`, `%{}` and `{}` patterns, so cutting at `{`
   // there truncates the head mid-pattern: `def sign(%__MODULE__`.
@@ -245,6 +423,13 @@ function computeBodyHash(node: TreeSitterNode): string | null {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** Hash an inclusive row range. Rows are 0-indexed. */
+function hashLines(sourceLines: string[], startRow: number, endRow: number): string | null {
+  const text = sourceLines.slice(startRow, endRow + 1).join("\n");
+  if (text.length === 0) return null;
+  return createHash("sha256").update(text).digest("hex");
+}
+
 function detectExportStatus(
   node: TreeSitterNode,
   language: SupportedLanguage,
@@ -254,6 +439,13 @@ function detectExportStatus(
     const target = node.childForFieldName("target");
     if (target?.text === "defp" || target?.text === "defmacrop") return "local";
     return "exported";
+  }
+  if (language === "lean") {
+    // The modifiers sit on the enclosing `declaration`, beside the form node.
+    // `protected` is not private: it only forces callers to write the full
+    // name, so the symbol still leaves the file.
+    const modifiers = node.parent?.namedChildren.find((c) => c.type === "decl_modifiers");
+    return modifiers?.text.includes("private") ? "local" : "exported";
   }
   if (language === "python" || language === "go" || language === "rust") {
     // Python: all top-level are "exported" by convention
@@ -370,9 +562,10 @@ export function extractSymbols(
   // more specific kind: a constant capture never carries what the function
   // capture does.
   const byPosition = new Map<string, ExtractedSymbol>();
+  const leanScopes = language === "lean" ? collectLeanScopes(tree.rootNode) : [];
 
   try {
-    collectSymbols(query, tree, language, sourceLines, byPosition);
+    collectSymbols(query, tree, language, sourceLines, byPosition, leanScopes);
   } finally {
     // A throw from matches() or a node accessor would otherwise leak the
     // compiled query, once per failing file.
@@ -388,6 +581,7 @@ function collectSymbols(
   language: SupportedLanguage,
   sourceLines: string[],
   byPosition: Map<string, ExtractedSymbol>,
+  leanScopes: LeanScope[],
 ): void {
   const matches = query.matches(tree.rootNode);
 
@@ -418,22 +612,53 @@ function collectSymbols(
     // from a top-level `__lt__`, and 66 different `__init__`s indistinguishable from each
     // other. findParentClass returns null at file scope, so top-level definitions are
     // unaffected in every language.
-    const parentClass = findParentClass(definitionNode, language);
-    const qualifiedName = parentClass ? `${parentClass}.${nameText}` : nameText;
+    // Lean writes `_root_.` in front of a name to leave the open namespace and
+    // declare at the top level. `theorem _root_.RBTree.RBNode.Ordered.zoom`
+    // inside `namespace RBTree.RBNode.Path` names
+    // RBTree.RBNode.Ordered.zoom, so applying the namespace here would store
+    // RBTree.RBNode.Path._root_.RBTree.RBNode.Ordered.zoom — a name no Lean
+    // project holds, bound to a symbol nobody can look up.
+    const isLeanRoot = language === "lean" && nameText.startsWith(LEAN_ROOT_PREFIX);
+    const symbolName = isLeanRoot ? nameText.slice(LEAN_ROOT_PREFIX.length) : nameText;
 
-    const positionKey = `${qualifiedName}:${definitionNode.startPosition.row}`;
+    const parentClass = isLeanRoot
+      ? null
+      : language === "lean"
+        ? leanNamespacePrefix(leanScopes, definitionNode.startPosition.row)
+        : findParentClass(definitionNode, language);
+    const qualifiedName = parentClass ? `${parentClass}.${symbolName}` : symbolName;
+
+    const startRow = definitionNode.startPosition.row;
+    const positionKey = `${qualifiedName}:${startRow}`;
     const existing = byPosition.get(positionKey);
     if (existing && existing.kind !== "constant") continue;
 
+    // Only Lean needs the trim: every other grammar here closes a body on a
+    // token, so its end row is already the last row of the declaration.
+    const endRow =
+      language === "lean"
+        ? trimLeanEndRow(
+            sourceLines,
+            startRow,
+            definitionNode.endPosition.row,
+            definitionNode.endPosition.column,
+          )
+        : definitionNode.endPosition.row;
+
     byPosition.set(positionKey, {
-      name: nameText,
+      name: symbolName,
       qualified_name: qualifiedName,
       kind,
       parent_name: parentClass,
-      line_start: definitionNode.startPosition.row + 1, // 1-indexed
-      line_end: definitionNode.endPosition.row + 1,
+      line_start: startRow + 1, // 1-indexed
+      line_end: endRow + 1,
       signature: extractSignature(definitionNode, sourceLines, language),
-      body_hash: computeBodyHash(definitionNode),
+      // Hash the rows the symbol actually claims. Hashing the node text would
+      // fold a trimmed-away comment back in and report drift for it.
+      body_hash:
+        endRow === definitionNode.endPosition.row
+          ? computeBodyHash(definitionNode)
+          : hashLines(sourceLines, startRow, endRow),
       export_status: detectExportStatus(definitionNode, language),
     });
   }
@@ -495,9 +720,31 @@ function isElixirDeclarationSite(site: TreeSitterNode): boolean {
   return target ? ELIXIR_DEFINITION_TARGETS.has(target.text) : false;
 }
 
-function findEnclosingFunction(node: TreeSitterNode): string {
+/** The Lean declaration forms that bound a body, and so name a call's caller. */
+const LEAN_DECLARATION_TYPES = new Set([
+  "theorem",
+  "def",
+  "abbrev",
+  "structure",
+  "inductive",
+  "instance",
+  "axiom",
+  "opaque",
+  "constant",
+]);
+
+function findEnclosingFunction(node: TreeSitterNode, language: SupportedLanguage): string {
   let current = node.parent;
   while (current) {
+    // Checked before the shared types, and only for Lean: these node names are
+    // ordinary words, and matching them in another grammar would rename that
+    // language's callers.
+    if (language === "lean" && LEAN_DECLARATION_TYPES.has(current.type)) {
+      const nameNode = current.childForFieldName("name");
+      // An anonymous instance has no name. Keep walking: there is nothing
+      // useful to report, and <module> is the honest answer.
+      if (nameNode?.text) return nameNode.text;
+    }
     if (ENCLOSING_FUNCTION_TYPES.has(current.type)) {
       const nameNode =
         current.childForFieldName("name") ??
@@ -602,7 +849,7 @@ function collectCallSites(
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
 
-    const callerContext = findEnclosingFunction(siteNode);
+    const callerContext = findEnclosingFunction(siteNode, language);
     let snippet = siteNode.text;
     if (snippet.length > 200) {
       snippet = snippet.slice(0, 200) + "...";

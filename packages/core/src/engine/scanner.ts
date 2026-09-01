@@ -131,18 +131,51 @@ async function cleanupChunkFiles(filePaths: string[]): Promise<void> {
   await Promise.all(filePaths.map((filePath) => deleteSourceChunkFile(filePath)));
 }
 
-/** A line that carries only a comment. One predicate covers every supported
- *  language: `//`, `///`, `//!` (ts/js/go/rust), `#` (python/elixir), and the
- *  `/* ... *\/` block forms including continuation lines starting with `*`. */
-function isCommentLine(line: string): boolean {
+/** A line that carries only a comment: `//`, `///`, `//!` (ts/js/go/rust), `#`
+ *  (python/elixir), and the `/* ... *\/` block forms including continuation
+ *  lines starting with `*`.
+ *
+ *  Lean is asked separately, because its markers are code in the others. `--`
+ *  opens a Lean comment and decrements a TypeScript variable, so one shared
+ *  predicate would read `--count;` as documentation and attach it to whatever
+ *  declaration follows. */
+function isCommentLine(line: string, language: SupportedLanguage): boolean {
   const trimmed = line.trim();
   if (trimmed.length === 0) return false;
+  if (language === "lean") {
+    // A `--` row, or a `/- ... -/` block written on one row. A block spread
+    // over several rows cannot be judged one row at a time, because only its
+    // first row carries a marker. leadingCommentStart handles that case.
+    return trimmed.startsWith("--") || trimmed.startsWith("/-");
+  }
   return (
     trimmed.startsWith("//") ||
     trimmed.startsWith("#") ||
     trimmed.startsWith("/*") ||
     trimmed.startsWith("*")
   );
+}
+
+/** The first row of a Lean `/- ... -/` block that ends at `closingLine`, or 0
+ *  when no unclaimed opening row is above it.
+ *
+ *  `/-- ... -/` is the standard Lean docstring for anything longer than one
+ *  sentence, and its middle and closing rows begin with ordinary words. A test
+ *  applied one row at a time therefore stops at the closing row and leaves the
+ *  text of the comment behind, which is the whole reason the comment is being
+ *  claimed. */
+function leanBlockCommentStart(
+  contentLines: string[],
+  closingLine: number,
+  claimed: Uint8Array,
+): number {
+  for (let line = closingLine; line >= 1; line--) {
+    if (claimed[line] === 1) return 0;
+    if ((contentLines[line - 1]?.trim() ?? "").startsWith("/-")) return line;
+  }
+  // No opener above: the `-/` closes a block that began inside another
+  // symbol's body. Claiming rows here would take code that is not a comment.
+  return 0;
 }
 
 /** First line of the comment block documenting the symbol that starts at
@@ -158,12 +191,25 @@ function leadingCommentStart(
   contentLines: string[],
   symbolStart: number,
   claimed: Uint8Array,
+  language: SupportedLanguage,
 ): number {
   let start = symbolStart;
   for (let line = symbolStart - 1; line >= 1; line--) {
     if (claimed[line] === 1) break;
     const text = contentLines[line - 1];
-    if (text === undefined || !isCommentLine(text)) break;
+    if (text === undefined) break;
+    const trimmed = text.trim();
+    // The closing row of a Lean block spread over several rows. Jump to the
+    // opening row and keep walking above it, so the whole block travels with
+    // the declaration.
+    if (language === "lean" && trimmed.endsWith("-/") && !trimmed.startsWith("/-")) {
+      const open = leanBlockCommentStart(contentLines, line, claimed);
+      if (open === 0) break;
+      start = open;
+      line = open;
+      continue;
+    }
+    if (!isCommentLine(text, language)) break;
     start = line;
   }
   return start;
@@ -218,7 +264,7 @@ async function writeSourceChunkFilesForSymbols(
   }
   const chunkRanges = symbols.map((sym) => ({
     sym,
-    start: leadingCommentStart(contentLines, sym.line_start, claimed),
+    start: leadingCommentStart(contentLines, sym.line_start, claimed, language),
     end: sym.line_end,
   }));
   for (const range of chunkRanges) {
