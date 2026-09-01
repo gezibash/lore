@@ -712,6 +712,8 @@ export async function queryConcepts(
     max_file_siblings?: number;
     /** Ask-pipeline trace logger — logs all queryConcepts stages when provided */
     tracer?: AskTracer;
+    /** Repo-relative directories the answer may draw on. Empty means the whole mind. */
+    scopes?: string[];
     ask_debt?: {
       score: number | null;
       band: AskDebtBand;
@@ -794,6 +796,7 @@ export async function queryConcepts(
         codePath: opts?.codePath,
         mode: opts?.mode,
         tracer: opts?.tracer,
+        scopes: opts?.scopes,
       }),
       opts?.search ? webSearch(text, config) : Promise.resolve([]),
       hybridSearch(db, embedder, text, config, {

@@ -108,7 +108,18 @@ Two failures make it necessary. Test files carry ground-truth answers that conta
 
 `lore init <dir>` registers that exact directory and never returns a parent. Every other command resolves the current directory to its nearest registered ancestor, so subdirectories share the mind at the root.
 
-For a multi-repo workspace, register one mind at the workspace root. Sub-repos then share concepts. If cross-repo answers get worse, near-duplicate code is crowding the retrieved set — split the workspace into separate minds instead.
+For a multi-repo workspace, register one mind at the workspace root. Sub-repos then share concepts. If cross-repo answers get worse, near-duplicate code is crowding the retrieved set — scope the question with `lore ask --scope <dir>`, and split the workspace into separate minds only if that is not enough.
+
+```bash
+lore ask "how does the job queue lease work?" --scope packages/worker
+```
+
+A scope reads a repo-relative directory and is repeatable. A source chunk is
+judged by its own path. Concept prose carries no path, so its symbol bindings
+place it: a concept bound inside the scope stays. A concept with no bindings
+stays too, because nothing places it and nothing proves it is outside. A
+journal entry belongs to a session rather than a directory, so a scope does not
+touch it.
 
 List every registration with `lore sys ls`. Remove one with `lore sys remove <name>`.
 
@@ -293,15 +304,16 @@ note that matches no target the narrative declared. Both name the fix.
 
 ### Asking
 
-| Flag          | Effect                                                                   |
-| ------------- | ------------------------------------------------------------------------ |
-| `--mode arch` | Architectural answer. This is the default                                |
-| `--mode code` | Injects the bodies of bound symbols. Use it for implementation questions |
-| `--sources`   | Show which chunks produced the answer                                    |
-| `--brief`     | Targeted excerpts instead of full dumps                                  |
-| `--concise`   | A 1-2 sentence answer                                                    |
-| `--search`    | Include external web search results                                      |
-| `--debug`     | Trace the retrieval pipeline and explain the selection                   |
+| Flag            | Effect                                                                   |
+| --------------- | ------------------------------------------------------------------------ |
+| `--mode arch`   | Architectural answer. This is the default                                |
+| `--mode code`   | Injects the bodies of bound symbols. Use it for implementation questions |
+| `--sources`     | Show which chunks produced the answer                                    |
+| `--brief`       | Targeted excerpts instead of full dumps                                  |
+| `--concise`     | A 1-2 sentence answer                                                    |
+| `--search`      | Include external web search results                                      |
+| `--debug`       | Trace the retrieval pipeline and explain the selection                   |
+| `--scope <dir>` | Answer from one directory only (repeatable)                              |
 
 Every ask returns a result ID. Chain follow-up work to it:
 

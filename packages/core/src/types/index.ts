@@ -494,6 +494,8 @@ export interface QueryOptions {
   mode?: "arch" | "code";
   /** Trace the retrieval pipeline for this ask and return the trace path in the result. */
   debug?: boolean;
+  /** Repo-relative directories the answer may draw on. Empty means the whole mind. */
+  scopes?: string[];
 }
 
 export interface OrchestrationQueryOptions extends QueryOptions {

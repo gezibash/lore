@@ -380,6 +380,12 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             type: "string",
             description: "Retrieval mode: 'arch' (default) or 'code' (injects bound symbol bodies)",
           },
+          scope: {
+            type: "string",
+            repeatable: true,
+            description:
+              "Limit the answer to a directory (repeatable). Repo-relative, e.g. packages/core",
+          },
           debug: {
             type: "boolean",
             description: "Trace the retrieval pipeline and print why this answer was selected",
@@ -393,6 +399,14 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             sources: options.sources,
             mode: options.mode as "arch" | "code" | undefined,
             debug: options.debug,
+            scopes: options.scope
+              ? (Array.isArray(options.scope)
+                  ? (options.scope as string[])
+                  : [options.scope as string]
+                )
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+              : undefined,
           });
         },
       }),
