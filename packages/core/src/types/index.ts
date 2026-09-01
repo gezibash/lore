@@ -1182,6 +1182,59 @@ export interface KpiGoalResult {
   created_kpi: boolean;
 }
 
+// ─── Runs ─────────────────────────────────────────────────
+
+/** A failed run is knowledge: it records a configuration that does not work,
+ *  which is the thing most often repeated by accident. */
+export type RunOutcome = "success" | "failure" | "aborted";
+
+export interface RunRow {
+  id: string;
+  name: string;
+  outcome: RunOutcome;
+  params_json: string | null;
+  metrics_json: string | null;
+  artifacts_json: string | null;
+  note: string | null;
+  narrative_id: string | null;
+  git_head: string | null;
+  lore_commit_id: string | null;
+  created_at: string;
+}
+
+/** A run with its JSON columns read back, which is what every caller wants. */
+export interface RunSummary {
+  id: string;
+  name: string;
+  outcome: RunOutcome;
+  params: Record<string, string>;
+  metrics: Record<string, number>;
+  artifacts: string[];
+  note: string | null;
+  narrative: string | null;
+  git_head: string | null;
+  lore_commit_id: string | null;
+  created_at: string;
+}
+
+export interface RunLogOptions {
+  codePath?: string;
+  params?: Record<string, string>;
+  metrics?: Record<string, number>;
+  artifacts?: string[];
+  note?: string;
+  outcome?: RunOutcome;
+  narrative?: string;
+}
+
+export interface RunListOptions {
+  codePath?: string;
+  name?: string;
+  /** ISO timestamp. Readings at or after it. */
+  since?: string;
+  limit?: number;
+}
+
 export interface HealConceptsResult {
   run_id: string;
   dry: boolean;

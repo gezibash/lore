@@ -30,7 +30,7 @@ function usd(value: number | undefined): string {
  * Turn "2w", "3d" or "12h" into a timestamp. Anything else is passed through,
  * so an ISO date works as well.
  */
-function parseSince(since: string | undefined): string | undefined {
+export function parseSince(since: string | undefined): string | undefined {
   if (!since) return undefined;
   const match = /^(\d+)\s*([hdw])$/i.exec(since.trim());
   if (!match) return since;

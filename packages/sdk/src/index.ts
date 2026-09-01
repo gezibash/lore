@@ -60,6 +60,9 @@ import type {
   JournalDesignationResult,
   LifecycleResult,
   LogResult,
+  RunLogOptions,
+  RunListOptions,
+  RunSummary,
   NoteOptions,
   NoteResult,
   LsResult,
@@ -473,6 +476,9 @@ interface LoreClientEngine {
     score: number,
     opts?: { codePath?: string; scoredBy?: string },
   ): void;
+  runLog(name: string, opts?: RunLogOptions): Promise<RunSummary>;
+  runList(opts?: RunListOptions): RunSummary[];
+  runShow(id: string, opts?: { codePath?: string }): RunSummary;
   kpiLog(name: string, value: number, opts?: KpiLogOptions): Promise<KpiLogResult>;
   kpiGoal(name: string, target: number, opts?: KpiGoalOptions): KpiGoalResult;
   kpiStatus(opts?: { codePath?: string; name?: string; limit?: number }): KpiStatus[];
@@ -1060,6 +1066,18 @@ export class LoreClient {
     opts?: { codePath?: string; scoredBy?: string },
   ): void {
     return this.engine.scoreResult(resultId, score, opts);
+  }
+
+  runLog(name: string, opts?: RunLogOptions): Promise<RunSummary> {
+    return this.engine.runLog(name, opts);
+  }
+
+  runList(opts?: RunListOptions): RunSummary[] {
+    return this.engine.runList(opts);
+  }
+
+  runShow(id: string, opts?: { codePath?: string }): RunSummary {
+    return this.engine.runShow(id, opts);
   }
 
   kpiLog(name: string, value: number, opts?: KpiLogOptions): Promise<KpiLogResult> {

@@ -1079,6 +1079,40 @@ export interface KpiLogResult {
   created_kpi: boolean;
 }
 
+export type RunOutcome = "success" | "failure" | "aborted";
+
+export interface RunSummary {
+  id: string;
+  name: string;
+  outcome: RunOutcome;
+  params: Record<string, string>;
+  metrics: Record<string, number>;
+  artifacts: string[];
+  note: string | null;
+  narrative: string | null;
+  git_head: string | null;
+  lore_commit_id: string | null;
+  created_at: string;
+}
+
+export interface RunLogOptions {
+  codePath?: string;
+  params?: Record<string, string>;
+  metrics?: Record<string, number>;
+  artifacts?: string[];
+  note?: string;
+  outcome?: RunOutcome;
+  narrative?: string;
+}
+
+export interface RunListOptions {
+  codePath?: string;
+  name?: string;
+  /** ISO timestamp. Runs at or after it. */
+  since?: string;
+  limit?: number;
+}
+
 export interface KpiGoalResult {
   kpi: KpiStatus;
   created_kpi: boolean;

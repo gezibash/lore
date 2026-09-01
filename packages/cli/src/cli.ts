@@ -16,6 +16,8 @@ import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
 import { logCommand } from "./commands/log.ts";
 import { noteCommand } from "./commands/note.ts";
+import { runListCommand, runLogCommand, runShowCommand } from "./commands/run.ts";
+import { parseSince } from "./commands/usage.ts";
 import { queryCommand } from "./commands/query.ts";
 import { recallCommand } from "./commands/recall.ts";
 import { scoreCommand } from "./commands/score.ts";
@@ -452,6 +454,87 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             throw new Error(`Invalid score '${args.score}'. Use an integer from 1 to 5.`);
           }
           await scoreCommand(getWorker(), args["result-id"], args.score);
+        },
+      }),
+      run: defineCommand({
+        name: "run",
+        description: "Record what a run was given and what it produced",
+        subcommands: {
+          log: defineCommand({
+            name: "log",
+            description: "Record a run",
+            arguments: {
+              name: { type: "string", required: true, description: "Run name, e.g. sweep-42" },
+            },
+            options: {
+              param: {
+                type: "string",
+                repeatable: true,
+                description: "An input, as key=value (repeatable)",
+              },
+              metric: {
+                type: "string",
+                repeatable: true,
+                description: "A number the run produced, as key=value (repeatable)",
+              },
+              artifact: {
+                type: "string",
+                repeatable: true,
+                description: "A file or URL the run left behind (repeatable)",
+              },
+              outcome: {
+                type: "string",
+                description: "success (default), failure, or aborted",
+              },
+              note: { type: "string", description: "What this run was for" },
+              narrative: {
+                type: "string",
+                description: "Attach to this narrative instead of the sole open one",
+              },
+            },
+            async action({ args, options }) {
+              const list = (raw: unknown): string[] =>
+                raw
+                  ? (Array.isArray(raw) ? (raw as string[]) : [raw as string])
+                      .map((value) => value.trim())
+                      .filter(Boolean)
+                  : [];
+              await runLogCommand(getWorker(), args.name, {
+                params: list(options.param),
+                metrics: list(options.metric),
+                artifacts: list(options.artifact),
+                note: options.note as string | undefined,
+                outcome: options.outcome as string | undefined,
+                narrative: options.narrative as string | undefined,
+              });
+            },
+          }),
+          ls: defineCommand({
+            name: "ls",
+            description: "List recorded runs, newest first",
+            options: {
+              name: { type: "string", description: "Only runs with this name" },
+              since: { type: "string", description: "Window: 2w, 3d, 12h, or an ISO date" },
+              limit: { type: "number", description: "Maximum runs to show (default 50)" },
+            },
+            async action({ options }) {
+              await runListCommand(getWorker(), {
+                name: options.name as string | undefined,
+                since: parseSince(options.since as string | undefined),
+                limit: options.limit as number | undefined,
+              });
+            },
+          }),
+          show: defineCommand({
+            name: "show",
+            description: "Show one run with its provenance",
+            arguments: {
+              id: { type: "string", required: true, description: "Run ID" },
+            },
+            async action({ args }) {
+              await runShowCommand(getWorker(), args.id);
+            },
+          }),
         },
       }),
       kpi: defineCommand({
