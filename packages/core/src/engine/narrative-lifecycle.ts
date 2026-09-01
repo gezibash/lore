@@ -1585,7 +1585,7 @@ export async function queryConcepts(
           .query<{ name: string }, [string]>(
             `SELECT DISTINCT s.name FROM symbols s
              JOIN source_files sf ON s.source_file_id = sf.id
-             WHERE sf.file_path = ? AND s.kind IN ('function', 'method', 'constant')
+             WHERE sf.file_path = ? AND s.kind IN ('function', 'method', 'constant', 'theorem', 'syntax')
              LIMIT 4`,
           )
           .all(filePath)

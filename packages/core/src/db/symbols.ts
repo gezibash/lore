@@ -260,7 +260,36 @@ export function searchSymbols(
   sql += ` ORDER BY rank LIMIT ?`;
   params.push(limit);
 
-  return db.query<SymbolSearchResult, (string | number)[]>(sql).all(...params);
+  const hits = db.query<SymbolSearchResult, (string | number)[]>(sql).all(...params);
+  if (hits.length > 0) return hits;
+
+  // FTS tokenizes a name built only from operator or bracket characters down
+  // to nothing, so a Lean notation such as `⟦`, `+++` or `⊕'` matches nothing
+  // and the caller gets an empty result with no error. Fall back to the name
+  // itself, which is what the reader typed.
+  let exactSql = `
+    SELECT
+      s.id AS symbol_id,
+      sf.file_path,
+      s.name,
+      s.qualified_name,
+      s.kind,
+      s.signature,
+      s.line_start,
+      s.line_end
+    FROM symbols s
+    JOIN source_files sf ON s.source_file_id = sf.id
+    WHERE (s.name = ? OR s.qualified_name = ?)
+  `;
+  const exactParams: (string | number)[] = [query, query];
+  if (opts?.kind) {
+    exactSql += ` AND s.kind = ?`;
+    exactParams.push(opts.kind);
+  }
+  exactSql += ` LIMIT ?`;
+  exactParams.push(limit);
+
+  return db.query<SymbolSearchResult, (string | number)[]>(exactSql).all(...exactParams);
 }
 
 export function getSymbolByQualifiedName(

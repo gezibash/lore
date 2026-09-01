@@ -469,9 +469,13 @@ export function getCoverageStats(db: Database): CoverageStats {
       },
       []
     >(
+      // `syntax` is out of both counts. A tactic token is surface syntax, not
+      // a value a narrative explains, so counting it as unbound drops the
+      // coverage of every Lean mind on the re-ingest that first reads it.
       `SELECT
-         (SELECT COUNT(*) FROM symbols) AS total_symbols,
-         (SELECT COUNT(*) FROM symbols WHERE export_status IN ('exported', 'default_export')) AS total_exported,
+         (SELECT COUNT(*) FROM symbols WHERE kind != 'syntax') AS total_symbols,
+         (SELECT COUNT(*) FROM symbols
+          WHERE kind != 'syntax' AND export_status IN ('exported', 'default_export')) AS total_exported,
          (SELECT COUNT(DISTINCT cs.symbol_id) FROM concept_symbols cs JOIN symbols s ON cs.symbol_id = s.id) AS bound_symbols,
          (SELECT COUNT(DISTINCT cs.symbol_id) FROM concept_symbols cs JOIN symbols s ON cs.symbol_id = s.id
           WHERE s.export_status IN ('exported', 'default_export')) AS bound_exported`,

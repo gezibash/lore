@@ -82,4 +82,13 @@ register_error_explanation authFailed { }
 macro_rules
   | `(tactic| expiry_tac) => `(tactic| simp)
 
+elab "audit_tac" : tactic => pure ()
+
+elab (name := auditWith) "audit_with " t:term : tactic => pure ()
+
+elab "audit_do" : tactic => do
+  pure ()
+
+def afterElab : Nat := 0
+
 end Auth.Syntax

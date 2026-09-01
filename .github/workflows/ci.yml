@@ -25,6 +25,22 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
+      # The Lean wasm is committed and built from patches/tree-sitter-lean.
+      # Rebuilding it here is not possible (12 minutes and 60 GB of RAM), so
+      # compare it against the hash the build script recorded. An edited patch
+      # that was never rebuilt fails here instead of passing against a stale
+      # binary.
+      - name: Lean grammar artifact matches its patches
+        run: |
+          expected="$(cat patches/tree-sitter-lean/wasm.sha256)"
+          actual="$(sha256sum packages/core/grammars/tree-sitter-lean.wasm | cut -d' ' -f1)"
+          if [ "$expected" != "$actual" ]; then
+            echo "tree-sitter-lean.wasm does not match patches/tree-sitter-lean."
+            echo "  expected $expected"
+            echo "  actual   $actual"
+            echo "Run scripts/build-lean-grammar.sh and commit the result."
+            exit 1
+          fi
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test
