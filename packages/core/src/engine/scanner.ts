@@ -143,15 +143,10 @@ function isCommentLine(line: string, language: SupportedLanguage): boolean {
   const trimmed = line.trim();
   if (trimmed.length === 0) return false;
   if (language === "lean") {
-    // `/-- ... -/` above a theorem says in words what the statement means. A
-    // reader who gets the statement without it reconstructs the intent from
-    // the type, which is the work the comment already did.
-    return (
-      trimmed.startsWith("--") ||
-      trimmed.startsWith("/-") ||
-      trimmed.startsWith("-/") ||
-      trimmed.startsWith("*")
-    );
+    // A `--` row, or a `/- ... -/` block written on one row. A block spread
+    // over several rows cannot be judged one row at a time, because only its
+    // first row carries a marker. leadingCommentStart handles that case.
+    return trimmed.startsWith("--") || trimmed.startsWith("/-");
   }
   return (
     trimmed.startsWith("//") ||
@@ -159,6 +154,28 @@ function isCommentLine(line: string, language: SupportedLanguage): boolean {
     trimmed.startsWith("/*") ||
     trimmed.startsWith("*")
   );
+}
+
+/** The first row of a Lean `/- ... -/` block that ends at `closingLine`, or 0
+ *  when no unclaimed opening row is above it.
+ *
+ *  `/-- ... -/` is the standard Lean docstring for anything longer than one
+ *  sentence, and its middle and closing rows begin with ordinary words. A test
+ *  applied one row at a time therefore stops at the closing row and leaves the
+ *  text of the comment behind, which is the whole reason the comment is being
+ *  claimed. */
+function leanBlockCommentStart(
+  contentLines: string[],
+  closingLine: number,
+  claimed: Uint8Array,
+): number {
+  for (let line = closingLine; line >= 1; line--) {
+    if (claimed[line] === 1) return 0;
+    if ((contentLines[line - 1]?.trim() ?? "").startsWith("/-")) return line;
+  }
+  // No opener above: the `-/` closes a block that began inside another
+  // symbol's body. Claiming rows here would take code that is not a comment.
+  return 0;
 }
 
 /** First line of the comment block documenting the symbol that starts at
@@ -180,7 +197,19 @@ function leadingCommentStart(
   for (let line = symbolStart - 1; line >= 1; line--) {
     if (claimed[line] === 1) break;
     const text = contentLines[line - 1];
-    if (text === undefined || !isCommentLine(text, language)) break;
+    if (text === undefined) break;
+    const trimmed = text.trim();
+    // The closing row of a Lean block spread over several rows. Jump to the
+    // opening row and keep walking above it, so the whole block travels with
+    // the declaration.
+    if (language === "lean" && trimmed.endsWith("-/") && !trimmed.startsWith("/-")) {
+      const open = leanBlockCommentStart(contentLines, line, claimed);
+      if (open === 0) break;
+      start = open;
+      line = open;
+      continue;
+    }
+    if (!isCommentLine(text, language)) break;
     start = line;
   }
   return start;

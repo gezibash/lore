@@ -116,15 +116,15 @@ List every registration with `lore sys ls`. Remove one with `lore sys remove <na
 
 Lore extracts symbols from these languages:
 
-| Language   | Extensions                 | Symbols                                                     |
-| ---------- | -------------------------- | ----------------------------------------------------------- |
-| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant    |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                           |
-| Python     | `.py`                      | function, class, constant                                   |
-| Go         | `.go`                      | function, method, struct, interface                         |
-| Rust       | `.rs`                      | function, struct, enum, trait, impl                         |
-| Elixir     | `.ex` `.exs`               | function, module, protocol                                  |
-| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom |
+| Language   | Extensions                 | Symbols                                                                       |
+| ---------- | -------------------------- | ----------------------------------------------------------------------------- |
+| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant                      |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                                             |
+| Python     | `.py`                      | function, class, constant                                                     |
+| Go         | `.go`                      | function, method, struct, interface                                           |
+| Rust       | `.rs`                      | function, struct, enum, trait, impl                                           |
+| Elixir     | `.ex` `.exs`               | function, module, protocol                                                    |
+| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom, opaque, constant |
 
 A file in another language is still indexed and still answers a `lore ask`.
 Lore reads it as text, so it has no symbols. Three features need symbols:

@@ -174,6 +174,65 @@ describe("Lean parser", () => {
     expect(inside?.qualified_name).toBe("RBTree.RBNode.Path.inside");
   });
 
+  test("a `mutual` block does not close the namespace around it", async () => {
+    const source = [
+      "namespace Auth",
+      "mutual",
+      "  def foo : Nat := 0",
+      "  def bar : Nat := 0",
+      "end",
+      "def baz : Nat := 0",
+      "end Auth",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // `mutual` is flat in the tree and consumes an `end`. Ignoring it makes
+    // that `end` close Auth, and every declaration below it loses the
+    // namespace it is written inside.
+    expect(symbols.find((s) => s.name === "baz")?.qualified_name).toBe("Auth.baz");
+    expect(symbols.find((s) => s.name === "foo")?.qualified_name).toBe("Auth.foo");
+  });
+
+  test("a `public section` does not close the namespace around it", async () => {
+    const source = [
+      "namespace Auth",
+      "@[expose] public section",
+      "def foo : Nat := 0",
+      "end",
+      "def bar : Nat := 0",
+      "end Auth",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    expect(symbols.find((s) => s.name === "bar")?.qualified_name).toBe("Auth.bar");
+  });
+
+  test("a default parameter does not truncate the signature", async () => {
+    const source = [
+      'def greet (name : String := "world") : String := name',
+      "def add (n : Nat) (m : Nat := 0) : Nat := n + m",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // `:=` gives a parameter its default as well as opening the body. Cutting
+    // at the first one drops the return type, and for a theorem that is the
+    // statement being proved.
+    const greet = symbols.find((s) => s.name === "greet");
+    expect(greet?.signature).toBe('def greet (name : String := "world") : String');
+    expect(symbols.find((s) => s.name === "add")?.signature).toBe(
+      "def add (n : Nat) (m : Nat := 0) : Nat",
+    );
+  });
+
   test("a proof body stops before the next declaration's comment", async () => {
     const source = [
       "theorem first : True := by",

@@ -402,3 +402,46 @@ test("scanProject indexes a .lean file and keeps each doc comment with its theor
     removeDir(loreDir);
   }
 });
+
+test("a multi-line Lean doc comment stays with its declaration", async () => {
+  const db = createTestDb();
+  const codeDir = createTempDir("lore-code-");
+  const loreDir = createTempDir("lore-lore-");
+
+  try {
+    writeTextFile(
+      `${codeDir}/src/Doc.lean`,
+      [
+        "/-- Doc for foo,",
+        "    continued on this row. -/",
+        "def foo : Nat := 0",
+        "",
+        "/--",
+        "The doc for bar sits on its own rows.",
+        "-/",
+        "def bar : Nat := 1",
+        "",
+      ].join("\n"),
+    );
+
+    await scanProject(db, codeDir, loreDir);
+
+    const chunkPaths = getSourceChunkPathsForFile(db, "src/Doc.lean");
+    const bodies = await Promise.all(chunkPaths.map((path) => Bun.file(path).text()));
+
+    // A `/-- ... -/` block is the standard Lean docstring for anything longer
+    // than one sentence. Only its first row starts with a comment marker, so a
+    // per-row test drops the rest and the block lands in a gap chunk.
+    const withFoo = bodies.filter((body) => body.includes("def foo"));
+    expect(withFoo.length).toBe(1);
+    expect(withFoo[0]).toContain("continued on this row.");
+
+    const withBar = bodies.filter((body) => body.includes("def bar"));
+    expect(withBar.length).toBe(1);
+    expect(withBar[0]).toContain("The doc for bar sits on its own rows.");
+  } finally {
+    db.close();
+    removeDir(codeDir);
+    removeDir(loreDir);
+  }
+});

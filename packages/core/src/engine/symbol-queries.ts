@@ -253,6 +253,14 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
  *  namespace, so it is the whole name. */
 const LEAN_ROOT_PREFIX = "_root_.";
 
+/** Every Lean command that opens a scope an `end` closes.
+ *
+ *  The grammar models all of these flat: the declarations between the opener
+ *  and its `end` are siblings of both, not children. `mutual` groups
+ *  recursive definitions and `public section` sets visibility, so neither
+ *  names anything, but each still consumes an `end`. */
+const LEAN_SCOPE_OPENERS = new Set(["namespace", "section", "mutual", "public_section"]);
+
 /** One open `namespace` and the rows it covers. */
 interface LeanScope {
   name: string;
@@ -279,9 +287,12 @@ function collectLeanScopes(root: TreeSitterNode): LeanScope[] {
   const open: { name: string | null; startRow: number }[] = [];
 
   for (const child of root.namedChildren) {
-    if (child.type === "namespace" || child.type === "section") {
-      // A section may be anonymous. A namespace always names itself, and the
-      // name may be dotted: `namespace Nat.Basic` opens one scope, not two.
+    if (LEAN_SCOPE_OPENERS.has(child.type)) {
+      // Only a namespace contributes to a name. A section, a mutual block and
+      // a public section each bound something else, but all four close with
+      // the same `end`, so all four must be tracked. Miss one and its `end`
+      // closes the namespace around it, and every declaration after it in the
+      // file loses its namespace.
       const nameNode = child.childForFieldName("name");
       open.push({
         name: child.type === "namespace" ? (nameNode?.text ?? null) : null,
@@ -363,19 +374,40 @@ function extractSignature(
     }
   }
   let sig = lines.join("\n").trim();
+
+  // Lean marks the body in the tree, so the text before it is the whole
+  // signature. Searching the text for `:=` instead would stop at the first
+  // one, and `:=` also gives a parameter its default value:
+  // `def greet (name : String := "world") : String` would cut after
+  // `(name : String` and lose the return type. For a theorem the type is the
+  // statement being proved, so that loses the claim itself.
+  if (language === "lean") {
+    const body = node.childForFieldName("body") ?? node.childForFieldName("value");
+    if (body && body.startPosition.row === startLine) {
+      const head = sourceLines[startLine]?.slice(0, body.startPosition.column) ?? "";
+      // `:=` is not part of the body node, so drop the separator it leaves.
+      sig = head.trim().replace(/:=$/, "").trim();
+    } else if (body) {
+      const head: string[] = [];
+      for (let i = startLine; i < body.startPosition.row && i < sourceLines.length; i++) {
+        head.push(sourceLines[i]!);
+      }
+      head.push(sourceLines[body.startPosition.row]?.slice(0, body.startPosition.column) ?? "");
+      sig = head.join("\n").trim().replace(/:=$/, "").trim();
+    } else {
+      // A structure, an inductive or a class has no body field. It opens with
+      // `where`, which never appears inside a binder.
+      const whereStart = sig.search(/\bwhere\b/);
+      if (whereStart > 0) sig = sig.slice(0, whereStart).trim();
+    }
+    if (sig.length > 500) sig = sig.slice(0, 500) + "...";
+    return sig || null;
+  }
+
   // Truncate at the start of the body. Elixir bodies open with `do`, and its
   // heads are full of `%Struct{}`, `%{}` and `{}` patterns, so cutting at `{`
   // there truncates the head mid-pattern: `def sign(%__MODULE__`.
-  //
-  // A Lean body opens with `:=`, or with `where` for a structure. Cutting there
-  // keeps the whole type, which for a theorem is the entire statement being
-  // proved — the part a reader wants and the proof script is not.
-  const bodyStart =
-    language === "elixir"
-      ? sig.search(/\bdo\b/)
-      : language === "lean"
-        ? sig.search(/:=|\bwhere\b/)
-        : sig.search(/\{|\bdo\b/);
+  const bodyStart = language === "elixir" ? sig.search(/\bdo\b/) : sig.search(/\{|\bdo\b/);
   if (bodyStart > 0) {
     sig = sig.slice(0, bodyStart).trim();
   }
