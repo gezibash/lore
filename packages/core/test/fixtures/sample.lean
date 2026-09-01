@@ -51,3 +51,35 @@ axiom choice_ax : ∀ (α : Type), Nonempty α
 opaque secret : Nat
 
 example : 1 = 1 := rfl
+
+namespace Auth.Syntax
+
+declare_syntax_cat authRule
+
+/-- A tactic that discharges an expiry side goal. -/
+syntax "expiry_tac" : tactic
+
+syntax (name := refreshTac) "refresh_tac" (ppSpace colGt term)? : tactic
+
+syntax (priority := high) "priority_tac" : tactic
+
+macro "bump_tac" : tactic => `(tactic| simp [bump])
+
+local syntax "file_only_tac" : tactic
+
+scoped syntax "namespace_tac" : tactic
+
+infixl:65 " ⊕' " => Sum
+
+notation "⟦" a "⟧" => Quot.mk _ a
+
+initialize authRef : IO.Ref Nat ← IO.mkRef 0
+
+register_option auth.verbose : Bool := false
+
+register_error_explanation authFailed { }
+
+macro_rules
+  | `(tactic| expiry_tac) => `(tactic| simp)
+
+end Auth.Syntax

@@ -1290,22 +1290,35 @@ export type SupportedLanguage =
   | "elixir"
   | "lean";
 
-export type SymbolKind =
-  | "function"
-  | "class"
-  | "method"
-  | "interface"
-  | "type"
-  | "enum"
-  | "struct"
-  | "trait"
-  | "impl"
-  | "module"
-  | "constant"
+/** Every symbol kind, and the source of the `SymbolKind` type.
+ *
+ *  This is an array rather than a bare union because the scanner needs the
+ *  values at run time, to tell a `definition.<kind>` capture apart from a
+ *  capture that names nothing. A second list written by hand would typecheck
+ *  while holding a subset, so it could drop a kind without failing a build. */
+export const SYMBOL_KINDS = [
+  "function",
+  "class",
+  "method",
+  "interface",
+  "type",
+  "enum",
+  "struct",
+  "trait",
+  "impl",
+  "module",
+  "constant",
   // Lean. A theorem is a proof, and the proof body is not the knowledge: the
   // statement is. Kept apart from "function" so a reader can ask for the
   // proofs about a concept without getting every definition too.
-  | "theorem";
+  "theorem",
+  // Lean. `syntax`, `macro`, `notation` and `declare_syntax_cat` introduce
+  // surface syntax, not a value. A tactic is called by the token it declares,
+  // so the token is the name a reader looks for.
+  "syntax",
+] as const;
+
+export type SymbolKind = (typeof SYMBOL_KINDS)[number];
 
 export interface SourceFileRow {
   id: string;
