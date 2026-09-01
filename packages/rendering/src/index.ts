@@ -487,14 +487,24 @@ function compactPriorityReason(priority: StatusResult["priorities"][number]): st
   return priority.reason.length > 28 ? `${priority.reason.slice(0, 25)}...` : priority.reason;
 }
 
+/** Files written since the ingest that read them. */
+function staleFileCount(result: StatusResult): number {
+  if (!result.lake) return 0;
+  return result.lake.stale_source_files + result.lake.stale_doc_files;
+}
+
 function compactIndexStatus(result: StatusResult): string | null {
   if (!result.lake) return null;
   // The worst lane grades the index. A clean lane must not push the pair up a
   // band: `low` beside `none` is drift, not stale.
   const worst = lakeFreshness(result.lake).worst;
   if (worst === "none") return `${GREEN}fresh${RESET}`;
-  if (worst === "low") return `${DIM}drift${RESET}`;
-  return `${YELLOW}stale${RESET}`;
+  // The count is the point of the row. `drift` alone reads the same whether one
+  // file moved or four hundred did, and the reader cannot tell whether the next
+  // answer is worth trusting. The narrative row already names its number.
+  const count = compactCount(staleFileCount(result));
+  if (worst === "low") return `${DIM}drift (${count})${RESET}`;
+  return `${YELLOW}stale (${count})${RESET}`;
 }
 
 function compactNarrativeStatus(result: StatusResult): string {
@@ -533,6 +543,12 @@ function compactNextCommand(result: StatusResult): string | null {
     if (active.status === "close_failed") return `lore close ${active.name}`;
     return `lore trail ${active.name}`;
   }
+  // A stale index outranks a concept priority, because every priority below
+  // was computed from the index. Reading files the index has not seen makes
+  // that advice describe code that has already changed. Drift is too small to
+  // reorder anything, so only the worse band jumps the queue.
+  const indexFreshness = result.lake ? lakeFreshness(result.lake).worst : "none";
+  if (indexFreshness !== "none" && indexFreshness !== "low") return "lore ingest";
   const priority = result.priorities[0];
   if (priority) {
     if (priority.concept === "(maintenance)") return "lore ingest";
