@@ -11,6 +11,7 @@ import { readChunk } from "@/storage/index.ts";
 import { readSymbolContent } from "./git.ts";
 import type { AskTracer } from "./tracer.ts";
 import { mapConcurrent } from "./async.ts";
+import { filterChunkIdsByScope } from "./scope.ts";
 
 export interface EmbedderLike {
   embed: (text: string) => Promise<Float32Array>;
@@ -120,6 +121,8 @@ export async function hybridSearch(
     mode?: "arch" | "code";
     /** Ask-pipeline trace logger — logs lane/fusion/hydration events when provided */
     tracer?: AskTracer;
+    /** Repo-relative directories the answer may draw on. Empty means the whole mind. */
+    scopes?: string[];
   },
 ): Promise<HybridSearchRun> {
   const sourceType = opts?.sourceType ?? "chunk";
@@ -309,12 +312,33 @@ export async function hybridSearch(
     vectorResultsDoc,
     bm25DocResults,
   );
+  // A scope removes candidates rather than penalising them. The point is to
+  // answer about one part of the workspace, so a chunk from elsewhere is not a
+  // weaker answer to the question — it is an answer to a different one.
+  const scopedRaw =
+    opts?.scopes && opts.scopes.length > 0
+      ? (() => {
+          const kept = filterChunkIdsByScope(
+            db,
+            fusedRaw.map((r) => r.chunkId),
+            opts.scopes,
+          );
+          return fusedRaw.filter((r) => kept.has(r.chunkId));
+        })()
+      : fusedRaw;
+  if (opts?.scopes && opts.scopes.length > 0) {
+    opts?.tracer?.log("scope", {
+      scopes: opts.scopes,
+      before: fusedRaw.length,
+      after: scopedRaw.length,
+    });
+  }
   // Test-file tie-break: a small score penalty so an implementation chunk beats
   // a test chunk at equal relevance (BM25 rank-ties are common), while a test
   // that genuinely matches better still wins. 0.02 is well under real gaps.
   const fused = (() => {
-    const ids = fusedRaw.map((r) => r.chunkId);
-    if (ids.length === 0) return fusedRaw;
+    const ids = scopedRaw.map((r) => r.chunkId);
+    if (ids.length === 0) return scopedRaw;
     const placeholders = ids.map(() => "?").join(", ");
     const pathRows = db
       .query<{ id: string; source_file_path: string | null }, string[]>(
@@ -326,8 +350,8 @@ export async function hybridSearch(
         .filter((row) => row.source_file_path && isTestFilePath(row.source_file_path))
         .map((row) => row.id),
     );
-    if (testIds.size === 0) return fusedRaw;
-    return fusedRaw
+    if (testIds.size === 0) return scopedRaw;
+    return scopedRaw
       .map((r) => (testIds.has(r.chunkId) ? { ...r, score: r.score - 0.02 } : r))
       .sort((a, b) => b.score - a.score);
   })();

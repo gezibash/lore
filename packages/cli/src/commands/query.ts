@@ -14,6 +14,7 @@ export async function queryCommand(
     sources?: boolean;
     mode?: "arch" | "code";
     debug?: boolean;
+    scopes?: string[];
   },
 ): Promise<void> {
   const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -68,6 +69,7 @@ export async function queryCommand(
       concise: opts?.concise,
       mode: opts?.mode,
       debug: opts?.debug,
+      scopes: opts?.scopes,
       onProgress: updateSpinner,
     });
     stopSpinner();

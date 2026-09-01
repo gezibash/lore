@@ -1083,6 +1083,7 @@ export class LoreEngine {
       concise: opts?.concise,
       codePath: entry.code_path,
       mode: opts?.mode,
+      scopes: opts?.scopes,
       summary_generator: summaryGenerator,
       executive_summary: {
         enabled: summaryEnabled,
