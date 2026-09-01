@@ -179,9 +179,9 @@ Lean gets its own symbol kind for a theorem, separate from a function. A
 theorem states a fact, and the proof is only the body, so `lore show` marks
 which bindings of a concept are claims and which are definitions.
 
-Lean also gets a symbol kind for syntax. `syntax`, `macro`, `notation` and
-`declare_syntax_cat` add a way to write something, not a value to compute, so
-a search for a tactic does not return every definition beside it.
+Lean also gets a symbol kind for syntax. `syntax`, `macro`, `elab`, `notation`
+and `declare_syntax_cat` add a way to write something, not a value to compute,
+so a search for a tactic does not return every definition beside it.
 
 A tactic is named by the token that calls it. `syntax "ring_nf" : tactic`
 declares no identifier, and Lean generates one, but a proof writes `ring_nf`,
@@ -199,38 +199,47 @@ declared. Neither introduces a name, so neither becomes a symbol.
 
 No package publishes a Lean grammar, so lore carries the built parser at
 `packages/core/grammars/tree-sitter-lean.wasm`. To rebuild it, run
-`scripts/build-lean-grammar.sh`. The script pins the grammar commit and needs
-Docker or Emscripten.
+`scripts/build-lean-grammar.sh`. The script pins the upstream commit, applies
+the patches in `patches/tree-sitter-lean`, and needs Docker or Emscripten.
+
+The patch is lore's, not upstream's. Upstream models `elab_rules` and has no
+`elab` rule, so an `elab` block became a parse error that also swallowed the
+declarations after it.
 
 The Lean grammar is experimental, and it reads mathematics better than it
-reads metaprogramming. A declaration counts as found when a symbol covers the
-row that opens it. An anonymous instance is out of the count, because lore
-skips it by design.
+reads metaprogramming.
+
+The tables below count a declaration as found when a symbol covers the row
+that opens it, and no other declaration opens between that symbol's first row
+and this one. An anonymous instance is out of the count, because lore skips it
+by design. This rule is stricter than the one lore used before it: it does not
+credit a declaration to the symbol above it, so its numbers are lower for the
+same parser and are not comparable to any earlier figure.
 
 On the `batteries` library, 258 files:
 
 | Content                        | Declarations found |
 | ------------------------------ | ------------------ |
 | Theorems                       | 98%                |
-| Mathematical definitions       | 79%                |
-| Tactics, elaborators, notation | 26%                |
+| Mathematical definitions       | 84%                |
+| Tactics, elaborators, notation | 46%                |
 
 On `Mathlib/Tactic`, 366 files that exist to extend Lean:
 
 | Content                        | Declarations found |
 | ------------------------------ | ------------------ |
-| Theorems                       | 79%                |
-| Mathematical definitions       | 53%                |
-| Tactics, elaborators, notation | 22%                |
+| Theorems                       | 83%                |
+| Mathematical definitions       | 49%                |
+| Tactics, elaborators, notation | 28%                |
 
 A tactic file uses `do` notation and syntax quotations, and the parser stops
 early in them. Three quarters of the rows in `Mathlib/Tactic` sit inside a
-parse error, and no query reaches a declaration in one. The grammar has no
-rule for the `elab` command at all, and an `elab` block takes the declarations
-next to it into the same error.
+parse error, and no query reaches a declaration in one. `do` notation is the
+part the grammar reads least well. `return`, `for`, `unless` and a `let` that
+binds by matching have no rule, and each one ends the command it sits in.
 
 Lore never fails a file: it returns the declarations it read and skips the
-rest. Across all 8456 files of Mathlib, no file crashed the parser. Expect
+rest. Across all 9021 files of Mathlib, no file crashed the parser. Expect
 full results for a file of theorems and definitions, and gaps in a file that
 extends Lean itself.
 

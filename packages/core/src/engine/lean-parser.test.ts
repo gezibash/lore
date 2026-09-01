@@ -439,6 +439,159 @@ describe("Lean parser", () => {
     expect(symbols.find((s) => s.name === "expiry_tac")?.signature).toStartWith("syntax");
   });
 
+  // ─── The `elab` command ─────────────────────────────────
+
+  test("an elaborator is named the same three ways a macro is", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.name);
+
+    // `elab` declares the syntax and the elaborator in one command, so the
+    // token names it exactly as it names a `syntax` command.
+    expect(names).toContain("audit_tac");
+    expect(names).toContain("audit_do");
+    expect(symbols.find((s) => s.name === "audit_tac")?.kind).toBe("syntax");
+
+    // `(name := X)` declares the identifier, and the namespace qualifies it.
+    expect(symbols.map((s) => s.qualified_name)).toContain("Auth.Syntax.auditWith");
+
+    // The `do` body of `audit_do` ends where the block ends. A body that ran
+    // on would take this declaration with it.
+    expect(symbols.map((s) => s.qualified_name)).toContain("Auth.Syntax.afterElab");
+  });
+
+  test("an `elab` block leaves the declarations after it alone", async () => {
+    const source = [
+      'elab "my_elab" : tactic => pure ()',
+      "",
+      'elab (name := namedElab) "other_elab" : tactic => pure ()',
+      "",
+      'elab "with_do" : tactic => do',
+      "  pure ()",
+      "",
+      'macro (name := namedMacro) "mac" : tactic => `(tactic| skip)',
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // Without an `elab` rule the first three declarations collapsed into one
+    // ERROR node spanning rows 1-6, and the macro below them was the only
+    // symbol the file produced.
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain("my_elab");
+    expect(names).toContain("namedElab");
+    expect(names).toContain("with_do");
+    expect(names).toContain("namedMacro");
+
+    // Each one claims its own row, not the span of the block above it.
+    expect(symbols.find((s) => s.name === "my_elab")?.line_start).toBe(1);
+    expect(symbols.find((s) => s.name === "namedElab")?.line_start).toBe(3);
+    expect(symbols.find((s) => s.name === "with_do")?.line_start).toBe(5);
+  });
+
+  test("a `meta section` is a section, so it does not qualify a name", async () => {
+    const source = [
+      "namespace Auth",
+      "meta section",
+      "def foo : Nat := 0",
+      "end",
+      "def bar : Nat := 0",
+      "end Auth",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // Lean writes `meta section` without `public` when the section is
+    // meta-only. Reading it as anything else made the whole file one ERROR.
+    expect(symbols.find((s) => s.name === "bar")?.qualified_name).toBe("Auth.bar");
+    expect(symbols.find((s) => s.name === "foo")?.qualified_name).toBe("Auth.foo");
+  });
+
+  test("an assert command with several targets does not break the file", async () => {
+    const source = ["assert_not_exists Alpha Beta Gamma", "", "def after : Nat := 0", ""].join(
+      "\n",
+    );
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    expect(symbols.map((s) => s.name)).toContain("after");
+  });
+
+  test("the token is found through the wrapper the parser DSL puts it in", async () => {
+    const source = [
+      'syntax &"nonreserved" : tactic',
+      'elab &"elab_nonres" : tactic => pure ()',
+      'syntax "opt"? "second" : tactic',
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.name);
+    // `&"kw"` is a nonreserved_atom and `"kw"?` a syntax_postfix, so the token
+    // is a grandchild. Stopping at the wrapper dropped the first two commands
+    // and named the third after its second token.
+    expect(names).toContain("nonreserved");
+    expect(names).toContain("elab_nonres");
+    expect(names).toContain("opt");
+    expect(names).not.toContain("second");
+  });
+
+  test("an escaped character in a token is resolved", async () => {
+    const source = 'syntax "esc\\"q" : tactic\n';
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // A proof writes `esc"q`. Storing the source spelling keeps the backslash,
+    // and the token can never be looked up.
+    expect(symbols.map((s) => s.name)).toContain('esc"q');
+  });
+
+  test("one token names one tactic, however many commands declare it", async () => {
+    const source = ['syntax "trans" : tactic', 'syntax "trans" term : tactic', ""].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // Lean declares one tactic through several commands with different
+    // argument shapes. Two rows with one qualified_name make every lookup
+    // pick one of them at random.
+    expect(symbols.filter((s) => s.qualified_name === "trans").length).toBe(1);
+  });
+
+  test("a signature drops the arrow that opens a macro or elab body", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    // A declaration writes `:=` and these write `=>`. Stripping only `:=`
+    // stored every tactic signature with a dangling arrow.
+    expect(symbols.find((s) => s.name === "bump_tac")?.signature).toBe('macro "bump_tac" : tactic');
+    expect(symbols.find((s) => s.name === "audit_tac")?.signature).toBe(
+      'elab "audit_tac" : tactic',
+    );
+  });
+
+  test("`local` stops a declaration at the file, as it stops a command", async () => {
+    const source = "local instance myInst : Inhabited Nat := \u27e80\u27e9\n";
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // The keyword sits in decl_modifiers on the parent, so testing only for
+    // `private` reported a file-local instance as public API.
+    expect(symbols.find((s) => s.name === "myInst")?.export_status).toBe("local");
+  });
+
   test("a command with no token and no name yields nothing", async () => {
     const source = [
       // No string token and no `(name := ...)`: the head is an identifier, so

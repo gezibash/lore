@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lore <lore@example.invalid>
+Date: Tue, 1 Sep 2026 18:52:21 +0200
+Subject: [PATCH] Parse the elab command
+
+The grammar models elab_rules but has no elab rule, so every elab block
+became an ERROR node that also swallowed the declarations after it.
+
+Two smaller command fixes ride along. A meta section is a section, and
+Lean writes it without public. The assert commands that name a target
+accept more than one on a line, while #exit and its siblings still take
+at most one, so the dead code written under #exit stays an error.
+---
+ grammar.js | 55 ++++++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 49 insertions(+), 6 deletions(-)
+
+diff --git a/grammar.js b/grammar.js
+index 9c7b0c2..449cbe0 100644
+--- a/grammar.js
++++ b/grammar.js
+@@ -125,6 +125,7 @@ export default grammar({
+       $.syntax_cmd,
+       $.macro_cmd,
+       $.macro_rules_cmd,
++      $.elab_cmd,
+       $.elab_rules_cmd,
+       $.register_cmd,
+       $.unif_hint_cmd,
+@@ -183,11 +184,19 @@ export default grammar({
+        Lean's lightweight assertion commands taking a single ident. */
+     assert_cmd: $ => seq(
+       choice(
+-        'assert_not_exists', 'assert_not_imported',
+-        'assert_exists', 'check_assertions',
+-        '#exit', '#synth', '#version',
++        /* `assert_not_exists A B C` names several targets on one line. */
++        seq(
++          choice('assert_not_exists', 'assert_not_imported', 'assert_exists'),
++          repeat1(field('target', $._term_atom)),
++        ),
++        /* The rest take at most one. `#exit` takes none, and the dead code
++           written under it must stay an error rather than be absorbed as
++           extra targets. */
++        seq(
++          choice('check_assertions', '#exit', '#synth', '#version'),
++          optional(field('target', $._term_atom)),
++        ),
+       ),
+-      optional(field('target', $._term_atom)),
+     ),
+ 
+     /* Lean/Mathlib commands that attach a doc/spelling/grind note or
+@@ -274,6 +283,35 @@ export default grammar({
+       repeat1($.match_alt),
+     ),
+ 
++    /* `elab [prec]? [(name := X)]? arg* : category [<= expected]? => body`
++       — declares an elaborator together with the syntax that runs it.
++       Upstream models `elab_rules` but has no `elab` rule, so every
++       `elab` block became an ERROR that also swallowed the
++       declarations after it.
++
++       Arguments are `_syntax_atom`s, not the `_term_atom`s `macro`
++       takes: an `elab` header carries the same parser DSL as `syntax`
++       (`x:term`, `d:(&" approx")?`, `tgts:(p,+)`).
++
++       `: term <= expectedType` is the term-elaborator form, where the
++       category is followed by the type the elaborator runs against. */
++    elab_cmd: $ => prec.right(seq(
++      optional($.attributes),
++      optional(choice('scoped', 'local')),
++      'elab',
++      optional(seq(
++        token.immediate(':'),
++        field('prec', choice($.num_lit, $.identifier)),
++      )),
++      optional($._named_attr),
++      repeat($._syntax_atom),
++      ':',
++      field('category', $.identifier),
++      optional(seq('<=', field('expected', $._term_atom))),
++      '=>',
++      field('body', $._term),
++    )),
++
+     /* `macro [prec]? [(name := X)]? "kw" arg* : category => body` —
+        coarse parse of Lean's macro-declaration command. The macro's
+        body after `=>` is a single term (typically a `(…)` quotation).
+@@ -399,8 +437,13 @@ export default grammar({
+        (e.g. `@[expose] public section`). */
+     public_section: $ => seq(
+       optional($.attributes),
+-      $.public,
+-      optional($.meta),
++      /* `meta section` is a section too. Lean writes it without
++         `public` when the section is meta-only, and requiring
++         `public` turned every such file into one top-level ERROR. */
++      choice(
++        seq($.public, optional($.meta)),
++        $.meta,
++      ),
+       'section',
+     ),
+ 

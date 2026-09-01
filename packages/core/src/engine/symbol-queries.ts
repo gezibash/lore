@@ -118,11 +118,15 @@ const ELIXIR_QUERY = `
 // to, so it is left out. An anonymous `instance` has no name field and drops
 // out on its own, because the pattern requires one.
 //
-// The six command patterns below carry no `@name` capture. A declaration names
+// The seven command patterns below carry no `@name` capture. A declaration names
 // itself in one field, but a Lean command has three ways to do it — an explicit
 // `(name := X)`, a `name` field, or the token it declares — and only the first
 // match wins. leanCommandName picks between them, and collectSymbols calls it
 // when a Lean match arrives without a name.
+//
+// `elab` declares an elaborator together with the syntax that runs it, so it
+// names a tactic the same way `macro` does. The vendored grammar carries a
+// patch that adds the rule: upstream has `elab_rules` and no `elab`.
 //
 // `macro_rules` and `elab_rules` are absent on purpose. Both add cases to a
 // syntax another command already declared, so neither introduces a name to bind
@@ -139,6 +143,7 @@ const LEAN_QUERY = `
 (constant name: (identifier) @name) @definition.constant
 (syntax_cmd) @definition.syntax
 (macro_cmd) @definition.syntax
+(elab_cmd) @definition.syntax
 (notation_decl_cmd) @definition.syntax
 (declare_syntax_cat_cmd) @definition.syntax
 (initialize) @definition.constant
@@ -474,13 +479,27 @@ const LEAN_STRING_ESCAPES: Record<string, string> = {
   "'": "'",
 };
 
+const LEAN_TOKEN_WRAPPERS = new Set([
+  "ERROR",
+  "nonreserved_atom",
+  "syntax_postfix",
+  "syntax_alt",
+  "paren",
+]);
+
 /** The first string token a Lean command declares, in source order, from the
  *  rows before `body` starts.
  *
- *  The search enters an ERROR node and nothing else. A token the grammar could
- *  not place stays in the tree inside one — `notation "[[" a "]]" => f a` leaves
- *  the opening `[[` under an ERROR and lifts only the closing `]]` — so
- *  skipping ERROR nodes names that notation after its closing bracket.
+ *  The search enters the nodes that wrap a token without being one, and
+ *  nothing else. A header writes its token through the parser DSL, so the
+ *  `str_lit` is often a grandchild: `&"kw"` is a `nonreserved_atom`, `"kw"?` a
+ *  `syntax_postfix`, `"a" <|> "b"` a `syntax_alt`, and a parenthesised group a
+ *  `paren`. Stopping at the wrapper skips the real token and names the command
+ *  after the next one, or after nothing at all.
+ *
+ *  An ERROR holds a token the grammar could not place. `notation "[[" a "]]"
+ *  => f a` leaves the opening `[[` under an ERROR and lifts only the closing
+ *  `]]`, so skipping ERROR nodes names that notation after its closing bracket.
  *
  *  `body` bounds the search, and a command that declares no token must return
  *  null rather than a string taken from its expansion. A macro body is usually
@@ -492,7 +511,7 @@ function firstLeanToken(node: TreeSitterNode, body: TreeSitterNode | null): Tree
   for (const child of node.namedChildren) {
     if (body && startsAtOrAfter(child, body)) break;
     if (child.type === "str_lit") return child;
-    if (child.type !== "ERROR") continue;
+    if (!LEAN_TOKEN_WRAPPERS.has(child.type)) continue;
     const recovered = firstLeanToken(child, body);
     if (recovered) return recovered;
   }
@@ -546,15 +565,23 @@ function extractSignature(
       node.childForFieldName("body") ?? (isNamedAttr ? null : node.childForFieldName("value"));
     if (body && body.startPosition.row === startLine) {
       const head = sourceLines[startLine]?.slice(0, body.startPosition.column) ?? "";
-      // `:=` is not part of the body node, so drop the separator it leaves.
-      sig = head.trim().replace(/:=$/, "").trim();
+      // The separator is not part of the body node, so drop what it leaves.
+      // A declaration writes `:=`; `macro` and `elab` write `=>`.
+      sig = head
+        .trim()
+        .replace(/(:=|=>)$/, "")
+        .trim();
     } else if (body) {
       const head: string[] = [];
       for (let i = startLine; i < body.startPosition.row && i < sourceLines.length; i++) {
         head.push(sourceLines[i]!);
       }
       head.push(sourceLines[body.startPosition.row]?.slice(0, body.startPosition.column) ?? "");
-      sig = head.join("\n").trim().replace(/:=$/, "").trim();
+      sig = head
+        .join("\n")
+        .trim()
+        .replace(/(:=|=>)$/, "")
+        .trim();
     } else {
       // A structure, an inductive or a class has no body field. It opens with
       // `where`, which never appears inside a binder.
@@ -609,10 +636,12 @@ function detectExportStatus(
     // brings it back, so a scoped command still leaves the file.
     if (node.children.some((c) => c.type === "local")) return "local";
     // The modifiers sit on the enclosing `declaration`, beside the form node.
-    // `protected` is not private: it only forces callers to write the full
-    // name, so the symbol still leaves the file.
+    // `private` and `local` both stop the symbol at the end of the file.
+    // `protected` does not: it only forces callers to write the full name, so
+    // the symbol still leaves the file.
     const modifiers = node.parent?.namedChildren.find((c) => c.type === "decl_modifiers");
-    return modifiers?.text.includes("private") ? "local" : "exported";
+    const text = modifiers?.text ?? "";
+    return text.includes("private") || text.includes("local") ? "local" : "exported";
   }
   if (language === "python" || language === "go" || language === "rust") {
     // Python: all top-level are "exported" by convention
@@ -808,7 +837,12 @@ function collectSymbols(
     const qualifiedName = parentClass ? `${parentClass}.${symbolName}` : symbolName;
 
     const startRow = definitionNode.startPosition.row;
-    const positionKey = `${qualifiedName}:${startRow}`;
+    // A token names a tactic, and Lean lets one tactic be declared by several
+    // commands with different argument shapes. Keying those by row stores the
+    // same qualified_name twice, and every lookup then picks one of them at
+    // random. Key a token-named command by the name alone, so the command that
+    // declares it first is the one row that claims it.
+    const positionKey = leanGlobalName ? qualifiedName : `${qualifiedName}:${startRow}`;
     const existing = byPosition.get(positionKey);
     if (existing && existing.kind !== "constant") continue;
 
