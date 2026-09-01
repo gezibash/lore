@@ -58,19 +58,61 @@ test("the index label grades the pair by its worst lane", () => {
   const clean = sampleStatus();
   expect(indexLabel(clean)).toBe("fresh");
 
-  // One lane drifts a little, the other lane is clean: drift, not stale.
+  // One lane drifts a little, the other lane is clean: drift, not stale. The
+  // count says how far behind, because `drift` alone reads the same whether
+  // one file moved or four hundred did.
   const codeDrift = sampleStatus();
   codeDrift.lake = { ...clean.lake!, discovered_source_files: 1022, stale_source_files: 3 };
-  expect(indexLabel(codeDrift)).toBe("drift");
+  expect(indexLabel(codeDrift)).toBe("drift (3)");
 
   const docDrift = sampleStatus();
   docDrift.lake = { ...clean.lake!, discovered_doc_files: 179, stale_doc_files: 3 };
-  expect(indexLabel(docDrift)).toBe("drift");
+  expect(indexLabel(docDrift)).toBe("drift (3)");
 
   // A lane above the drift ceiling still reads stale.
   const codeStale = sampleStatus();
   codeStale.lake = { ...clean.lake!, discovered_source_files: 1022, stale_source_files: 300 };
-  expect(indexLabel(codeStale)).toBe("stale");
+  expect(indexLabel(codeStale)).toBe("stale (300)");
+
+  // Both lanes count: the row is about files the index has not read.
+  const bothStale = sampleStatus();
+  bothStale.lake = {
+    ...clean.lake!,
+    discovered_source_files: 1022,
+    stale_source_files: 300,
+    discovered_doc_files: 179,
+    stale_doc_files: 7,
+  };
+  expect(indexLabel(bothStale)).toBe("stale (307)");
+});
+
+test("a stale index is the next command, ahead of a concept priority", () => {
+  const status = sampleStatus();
+  status.dangling_narratives = [];
+  status.active_narratives = [];
+  status.priorities = [{ concept: "auth-model", action: "review", reason: "High pressure" }];
+  status.lake = {
+    ...status.lake!,
+    discovered_source_files: 1022,
+    stale_source_files: 300,
+  };
+
+  // Every priority was computed from the index, so advice drawn from an index
+  // that has not read 300 files describes code that already changed.
+  const plain = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(plain).toContain("lore ingest");
+  expect(plain).not.toContain("lore show auth-model");
+});
+
+test("drift is too small to displace a concept priority", () => {
+  const status = sampleStatus();
+  status.dangling_narratives = [];
+  status.active_narratives = [];
+  status.priorities = [{ concept: "auth-model", action: "review", reason: "High pressure" }];
+  status.lake = { ...status.lake!, discovered_source_files: 1022, stale_source_files: 3 };
+
+  const plain = stripAnsi(renderStatus(status, { route: "cli" }));
+  expect(plain).toContain("lore show auth-model");
 });
 
 test("a FOCUS row named like a state row does not shadow the index label", () => {
@@ -92,7 +134,7 @@ test("the doc lane measures stale doc files against doc files, not chunks", () =
     discovered_doc_files: 20,
     stale_doc_files: 4,
   };
-  expect(indexLabel(status)).toBe("stale");
+  expect(indexLabel(status)).toBe("stale (7)");
 
   const details = stripAnsi(renderStatus(status, { route: "cli", details: true }));
   expect(details).toContain("578 chunks · 20 files");

@@ -73,7 +73,8 @@ import {
 } from "./commands/health.ts";
 import { suggestCommand } from "./commands/suggest.ts";
 import { coverageCommand } from "./commands/scan.ts";
-import { ingestFileCommand, ingestAllCommand } from "./commands/ingest.ts";
+import { ingestFileCommand, ingestAllCommand, queueIngestAllCommand } from "./commands/ingest.ts";
+import { describeHook, installHook, manualHookLine, uninstallHook } from "./hooks.ts";
 import { closeJobCommand, closeJobsCommand, waitCommand } from "./commands/jobs.ts";
 import { workerCommand } from "./commands/worker.ts";
 import {
@@ -680,9 +681,25 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             type: "boolean",
             description: "Re-chunk every file, ignoring the unchanged-content check",
           },
+          // Named for what it does, not for what it skips. commander reads a
+          // `--no-x` flag as the negation of `x` and inverts the value, so a
+          // `--no-wait` here would arrive true when it was never passed.
+          queue: {
+            type: "boolean",
+            description: "Queue the ingest and return, instead of waiting for it",
+          },
         },
         async action({ args, options }) {
           const file = args.file as string | undefined;
+          if (options.queue) {
+            if (file) {
+              throw new Error("--queue ingests the whole project, so it takes no file argument.");
+            }
+            await queueIngestAllCommand(getWorker(), {
+              force: options.force as boolean | undefined,
+            });
+            return;
+          }
           if (file) {
             await ingestFileCommand(getWorker(), file);
           } else {
@@ -756,9 +773,18 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 description: "Install for this agent (repeatable). Default: claude-code",
                 repeatable: true,
               },
-              project: { type: "boolean", description: "Install into this project, not the home directory" },
-              link: { type: "boolean", description: "Link from this binary instead of calling the skills CLI" },
-              dir: { type: "string", description: "Install somewhere other than ~/.claude/skills/lore" },
+              project: {
+                type: "boolean",
+                description: "Install into this project, not the home directory",
+              },
+              link: {
+                type: "boolean",
+                description: "Link from this binary instead of calling the skills CLI",
+              },
+              dir: {
+                type: "string",
+                description: "Install somewhere other than ~/.claude/skills/lore",
+              },
               copy: { type: "boolean", description: "Write a copy instead of a link" },
               force: { type: "boolean", description: "Replace whatever sits at the target" },
             },
@@ -783,7 +809,9 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 }
                 console.log("npx is not available — linking from this binary instead.");
               } else if (agentList.length > 0 || options.project) {
-                console.log("--agent and --project need the skills CLI. Drop --link, --copy and --dir.");
+                console.log(
+                  "--agent and --project need the skills CLI. Drop --link, --copy and --dir.",
+                );
                 process.exitCode = 1;
                 return;
               }
@@ -801,7 +829,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             name: "status",
             description: "Show where the skill is, and whether it follows this lore",
             options: {
-              dir: { type: "string", description: "Check somewhere other than ~/.claude/skills/lore" },
+              dir: {
+                type: "string",
+                description: "Check somewhere other than ~/.claude/skills/lore",
+              },
             },
             action({ options }) {
               for (const line of describeSkill({ dir: options.dir as string | undefined })) {
@@ -813,7 +844,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             name: "uninstall",
             description: "Remove the installed skill",
             options: {
-              dir: { type: "string", description: "Remove from somewhere other than ~/.claude/skills/lore" },
+              dir: {
+                type: "string",
+                description: "Remove from somewhere other than ~/.claude/skills/lore",
+              },
             },
             action({ options }) {
               const result = uninstallSkill({ dir: options.dir as string | undefined });
@@ -839,6 +873,102 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
         name: "sys",
         description: "System administration for the current lore",
         subcommands: {
+          hooks: defineCommand({
+            name: "hooks",
+            description: "Manage the git hook that keeps the index fresh",
+            subcommands: {
+              install: defineCommand({
+                name: "install",
+                description: "Write a post-commit hook that queues an ingest",
+                options: {
+                  force: {
+                    type: "boolean",
+                    description: "Replace a post-commit hook lore did not write",
+                  },
+                },
+                action({ options }) {
+                  const result = installHook({ force: Boolean(options.force) });
+                  switch (result.kind) {
+                    case "installed":
+                      console.log(`Installed the post-commit hook.\n  ${result.path}`);
+                      return;
+                    case "updated":
+                      console.log(`Updated the post-commit hook.\n  ${result.path}`);
+                      return;
+                    case "unchanged":
+                      console.log(`Already installed.\n  ${result.path}`);
+                      return;
+                    case "occupied":
+                      console.log(
+                        [
+                          "A post-commit hook is already there, and lore did not write it.",
+                          `  ${result.path}`,
+                          "Add this line to it, or pass --force to replace it:",
+                          `  ${manualHookLine()}`,
+                        ].join("\n"),
+                      );
+                      process.exitCode = 1;
+                      return;
+                    case "shared":
+                      console.log(
+                        [
+                          `core.hooksPath is ${result.hooksPath}, outside this repository.`,
+                          "git runs that directory for every repository that reads this",
+                          "config, so lore does not write there. Add this line to its",
+                          "post-commit hook:",
+                          `  ${manualHookLine()}`,
+                        ].join("\n"),
+                      );
+                      process.exitCode = 1;
+                      return;
+                    case "not-a-repo":
+                      console.log("Not a git repository.");
+                      process.exitCode = 1;
+                  }
+                },
+              }),
+              status: defineCommand({
+                name: "status",
+                description: "Show whether the hook is installed",
+                action() {
+                  for (const line of describeHook()) console.log(line);
+                },
+              }),
+              uninstall: defineCommand({
+                name: "uninstall",
+                description: "Remove the post-commit hook lore wrote",
+                action() {
+                  const result = uninstallHook();
+                  switch (result.kind) {
+                    case "removed":
+                      console.log(`Removed the post-commit hook.\n  ${result.path}`);
+                      return;
+                    case "absent":
+                      console.log("No lore hook to remove.");
+                      return;
+                    case "foreign":
+                      console.log(
+                        [
+                          "The post-commit hook there was not written by lore, so it stays.",
+                          `  ${result.path}`,
+                        ].join("\n"),
+                      );
+                      process.exitCode = 1;
+                      return;
+                    case "shared":
+                      console.log(
+                        `core.hooksPath is ${result.hooksPath}, outside this repository. lore wrote nothing there.`,
+                      );
+                      process.exitCode = 1;
+                      return;
+                    case "not-a-repo":
+                      console.log("Not a git repository.");
+                      process.exitCode = 1;
+                  }
+                },
+              }),
+            },
+          }),
           worker: defineCommand({
             name: "worker",
             description: "Ask the daemon to drain queued close jobs",

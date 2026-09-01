@@ -684,6 +684,23 @@ export class WorkerClient {
     return this.callDirect("ingestAll", args);
   }
 
+  /** Queue a full ingest and return its job without running it.
+   *
+   *  A git hook calls this. A commit must not wait for a scan, and the daemon
+   *  already collapses a second request onto the job still queued for the same
+   *  lore, so a run of quick commits leaves one job rather than a pile.
+   *
+   *  Without a daemon there is no queue to put the work in, so the caller is
+   *  told nothing was queued rather than being made to wait for a scan it
+   *  asked not to wait for. */
+  async queueIngestAll(opts?: { codePath?: string; force?: boolean }): Promise<LoreJob | null> {
+    if (!this.useDaemon("ingestAll")) return null;
+    const queued = (await this.daemon.call("ingestAll", [{ ...opts, wait: false }])) as {
+      job: LoreJob;
+    };
+    return queued.job;
+  }
+
   async autoBind(...args: Parameters<DirectWorkerClientDeps["autoBind"]>) {
     return this.call("autoBind", args);
   }
