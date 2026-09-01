@@ -112,6 +112,40 @@ For a multi-repo workspace, register one mind at the workspace root. Sub-repos t
 
 List every registration with `lore sys ls`. Remove one with `lore sys remove <name>`.
 
+### Keeping the index fresh
+
+Lore answers from the index it built at the last ingest. After an edit that
+index is behind, and nothing says so, so `lore ask` answers from the old code.
+
+A git hook closes the gap at the commit, which is the one moment the working
+tree is settled and the change is complete.
+
+```bash
+lore sys hooks install     # write the post-commit hook
+lore sys hooks status      # where it is, and whether it is current
+lore sys hooks uninstall   # remove it
+```
+
+The hook queues the work and returns, so a commit never waits for a scan. An
+ingest reads only the files whose content changed, and the daemon collapses a
+second request onto the job already queued, so a run of quick commits leaves
+one job.
+
+Queue an ingest by hand with:
+
+```bash
+lore ingest --queue
+```
+
+Install refuses in two cases, and prints the one line to add by hand instead:
+
+- A `post-commit` hook is already there and lore did not write it. Chaining
+  hooks is normal, and that file may be the only thing running git-lfs for the
+  repository. Pass `--force` to replace it.
+- `core.hooksPath` points outside the repository. git runs that directory for
+  every repository that reads the config, so a write there installs the hook in
+  all of them.
+
 ### Languages
 
 Lore extracts symbols from these languages:
@@ -330,12 +364,12 @@ lore wait <id>
 
 Use `lore close --wait` when the next step depends on the integrated concept state. `--merge-strategy` selects how the entries land:
 
-| Strategy | What it does to the concept body |
-| --- | --- |
+| Strategy          | What it does to the concept body                                              |
+| ----------------- | ----------------------------------------------------------------------------- |
 | `patch` (default) | Rewrites only the paragraphs the entries touch. Keeps the rest word for word. |
-| `extend` | Keeps every section. Adds new sections for new topics. |
-| `correct` | Treats the entries as the truth. Drops a claim the entries do not support. |
-| `replace` | Writes a new body from the entries. The old prose is gone. |
+| `extend`          | Keeps every section. Adds new sections for new topics.                        |
+| `correct`         | Treats the entries as the truth. Drops a claim the entries do not support.    |
+| `replace`         | Writes a new body from the entries. The old prose is gone.                    |
 
 `patch` and `extend` cannot remove text. `correct` and `replace` can.
 

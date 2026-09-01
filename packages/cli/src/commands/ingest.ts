@@ -28,6 +28,26 @@ export async function ingestFileCommand(client: WorkerClient, filePath: string):
   }
 }
 
+/** Queue a full ingest and return. The git hook uses this: a commit must not
+ *  wait for a scan. */
+export async function queueIngestAllCommand(
+  client: WorkerClient,
+  opts?: { force?: boolean },
+): Promise<void> {
+  const job = await client.queueIngestAll({ force: opts?.force });
+  if (isJsonOutput()) {
+    emit({ kind: "queued", job });
+    return;
+  }
+  if (!job) {
+    // No daemon means no queue. Say so rather than running the scan here: the
+    // caller asked not to wait, and a hook that scans blocks the commit.
+    console.log(`${DIM}No daemon is running, so nothing was queued.${RESET}`);
+    return;
+  }
+  console.log(`Queued ingest ${BOLD}${job.id}${RESET}`);
+}
+
 export async function ingestAllCommand(
   client: WorkerClient,
   opts?: { force?: boolean },
