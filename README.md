@@ -225,6 +225,7 @@ lore suggest
 | `lore ingest [file]`             | Index source code and docs. `--force` re-chunks every file |
 | `lore open <narrative> <intent>` | Start an exploration session                               |
 | `lore write <narrative> <entry>` | Journal a finding against explicit concept designations    |
+| `lore note <entry>`              | Journal a finding. Lore picks the narrative and concept    |
 | `lore ask <query>`               | Query the knowledge graph                                  |
 | `lore close <narrative>`         | Queue a close job. `--wait` blocks until it finishes       |
 | `lore rebuild <concept>`         | Rewrite a concept body from its inputs                     |
@@ -260,6 +261,35 @@ The old body stays in the version history — `lore show <concept>@<ref>` still 
 `create:<name>` against an archived name restores that concept and writes the new body onto it. The close reports the restore. If the name belongs to a concept that was merged into another, the close stops and names that concept.
 
 `lore write` needs `--concept` unless the narrative has exactly one create/update target. Add `--symbol` for touched symbols and `--ref` for file or line references.
+
+### Capturing without the ceremony
+
+`lore write` asks for a narrative and a concept on every entry. That precision
+pays at close. It costs at capture, and capture is where an agent gives up: a
+finding never written costs more than one filed under the wrong concept,
+because a close can move prose and cannot recover what nobody wrote.
+
+`lore note` asks for neither and works both out.
+
+```bash
+lore note "Two concurrent refreshes both pass the expiry check" --ref src/auth.ts:44-97
+```
+
+Lore picks the narrative: the one open narrative, or a standing `inbox` it
+opens when none is open or several are. It picks the concept by searching the
+note text with the same retrieval that answers a question, so a note lands
+where a reader looking for it would search. It then prints what it chose:
+
+```
+Noted in inbox (opened)
+  filed under auth-model — pass --concept to override
+```
+
+`--concept` skips the search. `--narrative` skips the choice. `--symbol` and
+`--ref` work as they do on `lore write`.
+
+Lore refuses rather than guess in two cases: a lore with no concepts yet, and a
+note that matches no target the narrative declared. Both name the fix.
 
 ### Asking
 

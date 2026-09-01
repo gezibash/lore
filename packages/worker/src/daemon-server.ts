@@ -106,6 +106,7 @@ const PROXY_METHODS = {
   open: { maxArgs: 3, inject: 2 },
   write: { maxArgs: 3, inject: 2 },
   log: { maxArgs: 3, inject: 2 },
+  note: { maxArgs: 2, inject: 1 },
   designateJournalEntry: { maxArgs: 3, inject: 2 },
   ask: { maxArgs: 2, inject: 1, concurrent: true },
   query: { maxArgs: 2, inject: 1, concurrent: true },

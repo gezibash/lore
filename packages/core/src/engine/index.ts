@@ -10,6 +10,8 @@ import {
   type RegisterResult,
   type OpenResult,
   type LogResult,
+  type NoteOptions,
+  type NoteResult,
   type JournalDesignationResult,
   type QueryResult,
   type QueryNextAction,
@@ -183,6 +185,14 @@ import {
   discardNarrative,
 } from "./narrative-lifecycle.ts";
 import type { CloseMaintenancePayload } from "./narrative-lifecycle.ts";
+import {
+  INBOX_INTENT,
+  INBOX_NARRATIVE,
+  chooseNarrative,
+  routeConcept,
+  type ConceptRouting,
+} from "./note-routing.ts";
+import { getOpenNarrativeByName, getWritableNarrativeByName } from "@/db/narratives.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import { resolveJournalConceptDesignations } from "./journal-routing.ts";
 import { cosineDistance } from "./residuals.ts";
@@ -892,6 +902,71 @@ export class LoreEngine {
       concepts: opts.concepts,
       symbols: opts.symbols,
     });
+  }
+
+  /**
+   * Capture a finding without naming a narrative or a concept.
+   *
+   * Everything `lore write` demands is worked out here: the narrative from
+   * what is open, the concept from the note text. The stored entry is the same
+   * shape either way, so a note needs no second pass to become useful and the
+   * close reads it exactly as it reads a written entry.
+   */
+  async note(text: string, opts?: NoteOptions): Promise<NoteResult> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const config = this.configFor(entry);
+
+    let narrativeName = opts?.narrative;
+    let openedInbox = false;
+    if (!narrativeName) {
+      const choice = chooseNarrative(db);
+      if (choice.kind === "open") {
+        narrativeName = choice.narrative.name;
+      } else {
+        narrativeName = INBOX_NARRATIVE;
+        // Opening it here is what keeps a note from ever being refused for
+        // want of somewhere to go.
+        if (!getOpenNarrativeByName(db, INBOX_NARRATIVE)) {
+          await this.open(INBOX_NARRATIVE, INBOX_INTENT, { codePath: opts?.codePath });
+          openedInbox = true;
+        }
+      }
+    }
+
+    const narrative = getWritableNarrativeByName(db, narrativeName);
+    if (!narrative) {
+      throw new LoreError("NO_ACTIVE_NARRATIVE", `Narrative '${narrativeName}' is not open.`);
+    }
+
+    // An explicit concept skips routing entirely: the caller already decided,
+    // and journal-routing validates it against the narrative's targets.
+    let concepts = opts?.concepts ?? [];
+    let routing: ConceptRouting | null = null;
+    if (concepts.length === 0) {
+      routing = await routeConcept(
+        db,
+        await this.embedderFor(config, entry),
+        config,
+        narrative,
+        text,
+      );
+      if (routing.kind !== "inherit") concepts = [routing.concept];
+    }
+
+    const logged = await logEntry(db, entry.lore_path, narrativeName, text, config, {
+      codePath: entry.code_path,
+      refs: opts?.refs,
+      concepts,
+      symbols: opts?.symbols,
+      topics: opts?.topics,
+    });
+
+    return {
+      ...logged,
+      narrative: narrativeName,
+      opened_narrative: openedInbox,
+      routed_concept: routing?.kind === "routed" ? routing.concept : null,
+    };
   }
 
   private async runQuery(

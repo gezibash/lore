@@ -12,7 +12,7 @@ import { readSymbolContent } from "./git.ts";
 import type { AskTracer } from "./tracer.ts";
 import { mapConcurrent } from "./async.ts";
 
-interface EmbedderLike {
+export interface EmbedderLike {
   embed: (text: string) => Promise<Float32Array>;
 }
 

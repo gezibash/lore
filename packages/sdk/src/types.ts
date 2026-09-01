@@ -470,6 +470,27 @@ export interface LogResult {
   note?: string;
 }
 
+export interface NoteOptions {
+  codePath?: string;
+  /** Skips routing. The narrative's own targets still bound it. */
+  concepts?: string[];
+  topics?: string[];
+  symbols?: string[];
+  refs?: FileRef[];
+  /** Skips the choice of narrative. */
+  narrative?: string;
+}
+
+export interface NoteResult extends LogResult {
+  /** The narrative the note joined, chosen or named. */
+  narrative: string;
+  /** True when the inbox had to be opened to hold this note. */
+  opened_narrative: boolean;
+  /** The concept the note text selected, or null when it was not routed —
+   *  the caller named one, or the narrative had a single target. */
+  routed_concept: string | null;
+}
+
 export interface JournalDesignationResult {
   narrative: string;
   chunk_id: string;
