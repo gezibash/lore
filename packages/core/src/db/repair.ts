@@ -91,6 +91,8 @@ const RECONCILABLE_MIGRATIONS = new Set([
   "028_kpis",
   // Pure DDL: new usage_events table and its indexes.
   "029_usage_events",
+  // Pure DDL: new runs table and its indexes.
+  "030_runs",
 ]);
 
 function quoteSqliteIdentifier(name: string): string {

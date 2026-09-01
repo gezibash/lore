@@ -338,6 +338,7 @@ lore score <result-id> 4
 | `lore diff <target>`       | Preview a close, or compare `ref..ref`                                                   |
 | `lore suggest`             | Prioritized maintenance plan. Filter with `--kind`                                       |
 | `lore usage`               | What this lore has spent on AI calls. `--all` for every lore                             |
+| `lore run ls`              | List recorded runs. `lore run show <id>` for one                                         |
 
 ### Spend
 
@@ -352,6 +353,37 @@ lore usage --all --since 2w   # every lore, last two weeks
 Money is priced at report time from the provider's live catalog, not stored, because a price belongs to the model today rather than to a call made last month. A model with no published price shows its tokens and no cost, and the total is marked `≥` to say it is a floor.
 
 Recording starts when the table is created. Calls made before that are not backfilled.
+
+### Runs
+
+A KPI reading is one scalar over time. A run is the event behind it: what it
+was given, every number it produced, and the files it left. A sweep, a
+benchmark, a migration, a deploy. Without a record, that knowledge lives as
+prose in a journal entry, where it cannot be compared against the run before
+it.
+
+```bash
+lore run log sweep-42 \
+  --param lr=0.003 --param seed=7 \
+  --metric auc=0.812 \
+  --artifact results/sweep-42/plot.png \
+  --note "widened the search"
+
+lore run ls --name sweep-42 --since 2w
+lore run show <id>
+```
+
+`--outcome` takes `success` (the default), `failure` or `aborted`. Record a
+failed run: it states a configuration that does not work, which is the thing
+most often repeated by accident.
+
+A parameter keeps its text, because its type belongs to the tool that read it.
+A metric must be a number, because a value nothing can compare is not worth
+storing.
+
+Each run carries the same provenance as a KPI reading — narrative, git head,
+lore commit — so a run and a reading taken from it agree on which state of the
+code produced them. `lore run show` prints it.
 
 ### KPIs
 

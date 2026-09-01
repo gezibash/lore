@@ -10,6 +10,10 @@ import {
   type RegisterResult,
   type OpenResult,
   type LogResult,
+  type RunLogOptions,
+  type RunListOptions,
+  type RunSummary,
+  type RunRow,
   type NoteOptions,
   type NoteResult,
   type JournalDesignationResult,
@@ -193,6 +197,7 @@ import {
   type ConceptRouting,
 } from "./note-routing.ts";
 import { getOpenNarrativeByName, getWritableNarrativeByName } from "@/db/narratives.ts";
+import { getRun, insertRun, listRuns } from "@/db/runs.ts";
 import { buildExplicitClosePlan } from "./close-planner.ts";
 import { resolveJournalConceptDesignations } from "./journal-routing.ts";
 import { cosineDistance } from "./residuals.ts";
@@ -2517,6 +2522,77 @@ export class LoreEngine {
     }
     const open = getOpenNarratives(db);
     return open.length === 1 ? (open[0]?.id ?? null) : null;
+  }
+
+  /**
+   * Record something that ran.
+   *
+   * A KPI reading is one scalar over time. A run is the event behind it: what
+   * it was given, every number it produced, and the files it left. Provenance
+   * matches a reading exactly, so a run and a KPI logged from it agree on
+   * which narrative, git head and lore commit produced them.
+   */
+  async runLog(name: string, opts?: RunLogOptions): Promise<RunSummary> {
+    const { entry, db } = this.resolveLoreMind(opts?.codePath);
+    const gitHead = await getHeadSha(entry.code_path);
+    const narrativeId = this.resolveKpiNarrativeId(db, opts?.narrative);
+
+    const row = insertRun(db, {
+      name,
+      // A run nobody graded is a success by default: the common case is
+      // recording something that worked, and demanding the flag every time is
+      // the friction that stops it being recorded at all.
+      outcome: opts?.outcome ?? "success",
+      params: opts?.params,
+      metrics: opts?.metrics,
+      artifacts: opts?.artifacts,
+      note: opts?.note,
+      narrativeId,
+      gitHead,
+      loreCommitId: getHeadCommit(db)?.id ?? null,
+    });
+    return this.runSummary(db, row);
+  }
+
+  runList(opts?: RunListOptions): RunSummary[] {
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    return listRuns(db, { name: opts?.name, since: opts?.since, limit: opts?.limit }).map((row) =>
+      this.runSummary(db, row),
+    );
+  }
+
+  runShow(id: string, opts?: { codePath?: string }): RunSummary {
+    const { db } = this.resolveLoreMind(opts?.codePath);
+    const row = getRun(db, id);
+    if (!row) throw new LoreError("LORE_NOT_FOUND", `Run '${id}' not found`);
+    return this.runSummary(db, row);
+  }
+
+  /** Read the JSON columns back and name the narrative, which is what a
+   *  reader wants and an id is not. */
+  private runSummary(db: Database, row: RunRow): RunSummary {
+    const parse = <T>(raw: string | null, fallback: T): T => {
+      if (!raw) return fallback;
+      try {
+        return JSON.parse(raw) as T;
+      } catch {
+        // A row written by a future version must not break a listing.
+        return fallback;
+      }
+    };
+    return {
+      id: row.id,
+      name: row.name,
+      outcome: row.outcome,
+      params: parse<Record<string, string>>(row.params_json, {}),
+      metrics: parse<Record<string, number>>(row.metrics_json, {}),
+      artifacts: parse<string[]>(row.artifacts_json, []),
+      note: row.note,
+      narrative: row.narrative_id ? (getNarrative(db, row.narrative_id)?.name ?? null) : null,
+      git_head: row.git_head,
+      lore_commit_id: row.lore_commit_id,
+      created_at: row.created_at,
+    };
   }
 
   async kpiLog(

@@ -169,6 +169,9 @@ type DirectWorkerClientDeps = Pick<
   | "bootstrapPlan"
   | "recall"
   | "scoreResult"
+  | "runLog"
+  | "runList"
+  | "runShow"
   | "kpiLog"
   | "kpiGoal"
   | "kpiStatus"
@@ -208,6 +211,9 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "showNarrativeTrail",
   "recall",
   "scoreResult",
+  "runLog",
+  "runList",
+  "runShow",
   "kpiLog",
   "kpiGoal",
   "conceptRename",
@@ -737,6 +743,18 @@ export class WorkerClient {
 
   async scoreResult(...args: Parameters<DirectWorkerClientDeps["scoreResult"]>) {
     return this.call("scoreResult", args);
+  }
+
+  async runLog(...args: Parameters<DirectWorkerClientDeps["runLog"]>) {
+    return this.call("runLog", args);
+  }
+
+  async runList(...args: Parameters<DirectWorkerClientDeps["runList"]>) {
+    return this.call("runList", args);
+  }
+
+  async runShow(...args: Parameters<DirectWorkerClientDeps["runShow"]>) {
+    return this.call("runShow", args);
   }
 
   async kpiLog(...args: Parameters<DirectWorkerClientDeps["kpiLog"]>) {
