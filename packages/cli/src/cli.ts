@@ -15,6 +15,7 @@ import { defineCli, defineCommand } from "./cli-schema.ts";
 import { registerCommand } from "./commands/register.ts";
 import { openCommand } from "./commands/open.ts";
 import { logCommand } from "./commands/log.ts";
+import { noteCommand } from "./commands/note.ts";
 import { queryCommand } from "./commands/query.ts";
 import { recallCommand } from "./commands/recall.ts";
 import { scoreCommand } from "./commands/score.ts";
@@ -310,6 +311,54 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             topics,
             symbols,
             refs,
+          });
+        },
+      }),
+      note: defineCommand({
+        name: "note",
+        description:
+          "Capture a finding. Picks the narrative and the concept for you unless you name them.",
+        arguments: {
+          entry: { type: "string", required: true, description: "What you found" },
+        },
+        options: {
+          concept: {
+            type: "string",
+            repeatable: true,
+            description: "File it under this concept instead of the one the text selects",
+          },
+          symbol: {
+            type: "string",
+            repeatable: true,
+            description: "Optional symbol qualified name (repeatable).",
+          },
+          ref: {
+            type: "string",
+            description: "File refs (comma-separated: path or path:start-end)",
+          },
+          narrative: {
+            type: "string",
+            description: "Write to this narrative instead of the one lore would choose",
+          },
+        },
+        async action({ args, options }) {
+          const list = (raw: unknown): string[] =>
+            raw
+              ? (Array.isArray(raw) ? (raw as string[]) : [raw as string])
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+              : [];
+          const refs = options.ref
+            ? (options.ref as string)
+                .split(",")
+                .map((value: string) => value.trim())
+                .filter(Boolean)
+            : undefined;
+          await noteCommand(getWorker(), args.entry, {
+            concepts: list(options.concept),
+            symbols: list(options.symbol),
+            refs,
+            narrative: options.narrative as string | undefined,
           });
         },
       }),

@@ -455,6 +455,27 @@ export interface LogResult {
   note?: string;
 }
 
+export interface NoteOptions {
+  codePath?: string;
+  /** Skips routing. The narrative's own targets still bound it. */
+  concepts?: string[];
+  topics?: string[];
+  symbols?: string[];
+  refs?: FileRef[];
+  /** Skips the choice of narrative. */
+  narrative?: string;
+}
+
+export interface NoteResult extends LogResult {
+  /** The narrative the note joined, chosen or named. */
+  narrative: string;
+  /** True when the inbox had to be opened to hold this note. */
+  opened_narrative: boolean;
+  /** The concept the note text selected, or null when it was not routed —
+   *  the caller named one, or the narrative had a single target. */
+  routed_concept: string | null;
+}
+
 export interface JournalDesignationResult {
   narrative: string;
   chunk_id: string;
@@ -1492,7 +1513,10 @@ export type LoreErrorCode =
   | "LANCE_INDEX_UNAVAILABLE"
   | "JOB_WAIT_TIMEOUT"
   | "KPI_NOT_FOUND"
-  | "KPI_INVALID_VALUE";
+  | "KPI_INVALID_VALUE"
+  // note() routing failures
+  | "NOTE_NO_CONCEPTS"
+  | "NOTE_UNROUTABLE";
 
 export class LoreError extends Error {
   constructor(

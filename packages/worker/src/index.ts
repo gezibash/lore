@@ -109,6 +109,7 @@ type DirectWorkerClientDeps = Pick<
   | "open"
   | "write"
   | "log"
+  | "note"
   | "designateJournalEntry"
   | "ask"
   | "query"
@@ -198,6 +199,7 @@ const DAEMON_ROUTED_METHODS = new Set<string>([
   "open",
   "write",
   "log",
+  "note",
   "designateJournalEntry",
   "ask",
   "query",
@@ -348,6 +350,10 @@ export class WorkerClient {
 
   async log(...args: Parameters<DirectWorkerClientDeps["log"]>) {
     return this.call("log", args);
+  }
+
+  async note(...args: Parameters<DirectWorkerClientDeps["note"]>) {
+    return this.call("note", args);
   }
 
   async designateJournalEntry(

@@ -60,6 +60,8 @@ import type {
   JournalDesignationResult,
   LifecycleResult,
   LogResult,
+  NoteOptions,
+  NoteResult,
   LsResult,
   MigrationStatus,
   OpenResult,
@@ -235,6 +237,7 @@ interface LoreClientEngine {
       symbols?: string[];
     },
   ): Promise<LogResult>;
+  note(entry: string, opts?: NoteOptions): Promise<NoteResult>;
   designateJournalEntry(
     narrative: string,
     chunkId: string,
@@ -546,6 +549,10 @@ export class LoreClient {
     },
   ): Promise<LogResult> {
     return this.write(narrative, entry, opts);
+  }
+
+  note(entry: string, opts?: NoteOptions): Promise<NoteResult> {
+    return this.engine.note(entry, opts);
   }
 
   designateJournalEntry(
