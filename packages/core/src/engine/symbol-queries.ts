@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { SYMBOL_KINDS } from "@/types/index.ts";
 import type {
   SupportedLanguage,
   SymbolKind,
@@ -116,6 +117,16 @@ const ELIXIR_QUERY = `
 // needs a pattern. `example` has no name and defines nothing a reader can bind
 // to, so it is left out. An anonymous `instance` has no name field and drops
 // out on its own, because the pattern requires one.
+//
+// The six command patterns below carry no `@name` capture. A declaration names
+// itself in one field, but a Lean command has three ways to do it — an explicit
+// `(name := X)`, a `name` field, or the token it declares — and only the first
+// match wins. leanCommandName picks between them, and collectSymbols calls it
+// when a Lean match arrives without a name.
+//
+// `macro_rules` and `elab_rules` are absent on purpose. Both add cases to a
+// syntax another command already declared, so neither introduces a name to bind
+// to. This is the rule `example` follows: no new name, no symbol.
 const LEAN_QUERY = `
 (theorem name: (identifier) @name) @definition.theorem
 (def name: (identifier) @name) @definition.function
@@ -126,6 +137,12 @@ const LEAN_QUERY = `
 (axiom name: (identifier) @name) @definition.constant
 (opaque name: (identifier) @name) @definition.constant
 (constant name: (identifier) @name) @definition.constant
+(syntax_cmd) @definition.syntax
+(macro_cmd) @definition.syntax
+(notation_decl_cmd) @definition.syntax
+(declare_syntax_cat_cmd) @definition.syntax
+(initialize) @definition.constant
+(register_cmd) @definition.constant
 `;
 
 const QUERY_MAP: Record<SupportedLanguage, string> = {
@@ -231,20 +248,9 @@ function nodeKindFromCapture(captureName: string): SymbolKind | null {
   const parts = captureName.split(".");
   if (parts.length < 2 || parts[0] !== "definition") return null;
   const kind = parts[1] as string;
-  const valid: SymbolKind[] = [
-    "function",
-    "class",
-    "method",
-    "interface",
-    "type",
-    "enum",
-    "struct",
-    "trait",
-    "impl",
-    "constant",
-    "theorem",
-  ];
-  return valid.includes(kind as SymbolKind) ? (kind as SymbolKind) : null;
+  // SYMBOL_KINDS is the list the SymbolKind type is built from, so a kind added
+  // to the type is accepted here without a second edit.
+  return (SYMBOL_KINDS as readonly string[]).includes(kind) ? (kind as SymbolKind) : null;
 }
 
 // ─── Lean Namespace Scopes ────────────────────────────────
@@ -351,6 +357,155 @@ function trimLeanEndRow(
   return end;
 }
 
+/** The `register_cmd` keywords that name a global. An option is registered in
+ *  a table of its own under the literal name written: `register_option pp.all`
+ *  declares that option from inside any namespace, not `Foo.pp.all`. */
+const LEAN_GLOBAL_REGISTER_KEYWORDS = new Set(["register_option", "register_builtin_option"]);
+
+/** True when Lean records the command's name as written, so no open namespace
+ *  prefixes it. `declare_syntax_cat authRule` declares the category `authRule`
+ *  from inside any namespace.
+ *
+ *  `register_cmd` covers three keywords, and only the two option forms are
+ *  known to take a global name. `register_error_explanation` is left out: it is
+ *  treated as an ordinary declaration, which is the reversible choice, because
+ *  a wrongly global name is stored unqualified and a search for the qualified
+ *  one never finds it. */
+function leanNameIsGlobal(node: TreeSitterNode): boolean {
+  if (node.type === "declare_syntax_cat_cmd") return true;
+  if (node.type !== "register_cmd") return false;
+  // The keyword opens the command today, but reading children[0] would tie this
+  // to that position. A grammar that later admits an attribute, a modifier or
+  // an ERROR node in front would then match nothing here, and every option name
+  // would quietly gain a namespace it does not have.
+  return node.children.some((child) => LEAN_GLOBAL_REGISTER_KEYWORDS.has(child.type));
+}
+
+/** A name read off a Lean command, and whether the open namespace applies. */
+interface LeanCommandName {
+  text: string;
+  /** True when Lean records the name as written, so no namespace prefixes it. */
+  global: boolean;
+}
+
+/** The name a Lean command declares, or null when it declares none.
+ *
+ *  A command names itself in one of three ways, and they are tried in this
+ *  order:
+ *
+ *  1. `(name := myTac)`. The grammar stores the operand in a `value` field and
+ *     records which keyword opened it in `attr`. `(priority := high)` fills the
+ *     same `value` field, so the `attr` test is what keeps a priority from being
+ *     stored as the tactic's name.
+ *  2. A `name` field. `declare_syntax_cat`, `register_option`, `initialize` and
+ *     the `syntax foo := ...` abbreviation all use it. `initialize _ <- ...`
+ *     puts a `hole` there, which names nothing.
+ *  3. The first string token. `syntax "ring_nf" : tactic` declares no
+ *     identifier, and Lean generates one, but `ring_nf` is what the file calls
+ *     the tactic and what a reader searches for.
+ *
+ *  The first token is taken rather than the grammar's `op` field. For a bracket
+ *  pair such as `notation "[[" a "]]" => f a`, `op` holds the closing `]]`,
+ *  and the opening token is the half worth indexing.
+ *
+ *  Only forms 1 and 2 can produce a name a namespace prefixes, and form 2 only
+ *  outside the global-name commands. A token is parsed from a global table, so
+ *  `syntax "ring_nf"` inside `namespace Mathlib.Tactic` still writes `ring_nf`
+ *  in a proof. Storing `Mathlib.Tactic.ring_nf` would repeat the `_root_` bug:
+ *  a qualified name no Lean project holds, and a binding to it that never
+ *  resolves. */
+function leanCommandName(node: TreeSitterNode): LeanCommandName | null {
+  const global = leanNameIsGlobal(node);
+
+  if (node.childForFieldName("attr")?.text === "name") {
+    const explicit = node.childForFieldName("value");
+    if (explicit?.type === "identifier") return { text: explicit.text, global };
+  }
+
+  const named = node.childForFieldName("name");
+  if (named?.type === "identifier") return { text: named.text, global };
+
+  // The head ends where the body starts. `macro` marks its body `body` and
+  // `notation` marks its expansion `target`.
+  const body = node.childForFieldName("body") ?? node.childForFieldName("target");
+  const token = firstLeanToken(node, body);
+  if (!token) return null;
+  // Trim inside the quotes as well: an operator is written with the spaces it
+  // needs when printed, and ` +++ ` is called `+++`.
+  const text = decodeLeanString(token.text.slice(1, -1)).trim();
+  // An escape can decode to a control character, and a name holding one breaks
+  // every line-oriented reader of the index. A token like this names no tactic
+  // a proof could write, so it is dropped the way an empty token is.
+  if (!text || hasControlCharacter(text)) return null;
+  return { text, global: true };
+}
+
+/** True when the text holds a C0 control character or DEL. */
+function hasControlCharacter(text: string): boolean {
+  for (const character of text) {
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** The text a Lean string literal stands for.
+ *
+ *  A token is read from the source, so it still carries its escapes. Mathlib
+ *  writes the `\\` operator as `" \\\\ "`, and storing those four characters
+ *  puts a name in the index that no Lean file writes and no search finds. */
+function decodeLeanString(raw: string): string {
+  if (!raw.includes("\\")) return raw;
+  return raw.replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)/g, (_match, escape: string) => {
+    const lead = escape[0]!;
+    if (lead === "u" || lead === "x") {
+      return String.fromCodePoint(Number.parseInt(escape.slice(1), 16));
+    }
+    return LEAN_STRING_ESCAPES[lead] ?? escape;
+  });
+}
+
+const LEAN_STRING_ESCAPES: Record<string, string> = {
+  n: "\n",
+  t: "\t",
+  r: "\r",
+  "\\": "\\",
+  '"': '"',
+  "'": "'",
+};
+
+/** The first string token a Lean command declares, in source order, from the
+ *  rows before `body` starts.
+ *
+ *  The search enters an ERROR node and nothing else. A token the grammar could
+ *  not place stays in the tree inside one — `notation "[[" a "]]" => f a` leaves
+ *  the opening `[[` under an ERROR and lifts only the closing `]]` — so
+ *  skipping ERROR nodes names that notation after its closing bracket.
+ *
+ *  `body` bounds the search, and a command that declares no token must return
+ *  null rather than a string taken from its expansion. A macro body is usually
+ *  a `quotation`, which the search would not enter, but the grammar types that
+ *  body as any term: `macro emptyHead : tactic => "not_a_token"` puts a bare
+ *  string literal directly under the command, and without the bound it names
+ *  the macro after its own expansion. */
+function firstLeanToken(node: TreeSitterNode, body: TreeSitterNode | null): TreeSitterNode | null {
+  for (const child of node.namedChildren) {
+    if (body && startsAtOrAfter(child, body)) break;
+    if (child.type === "str_lit") return child;
+    if (child.type !== "ERROR") continue;
+    const recovered = firstLeanToken(child, body);
+    if (recovered) return recovered;
+  }
+  return null;
+}
+
+/** True when `node` starts at or after `mark`, in source order. */
+function startsAtOrAfter(node: TreeSitterNode, mark: TreeSitterNode): boolean {
+  const a = node.startPosition;
+  const b = mark.startPosition;
+  return a.row > b.row || (a.row === b.row && a.column >= b.column);
+}
+
 /** The dotted namespace prefix for a row, outermost first. */
 function leanNamespacePrefix(scopes: LeanScope[], row: number): string | null {
   const names = scopes
@@ -382,7 +537,13 @@ function extractSignature(
   // `(name : String` and lose the return type. For a theorem the type is the
   // statement being proved, so that loses the claim itself.
   if (language === "lean") {
-    const body = node.childForFieldName("body") ?? node.childForFieldName("value");
+    // `value` holds the operand of a `(name := X)` or `(priority := N)` prefix
+    // as well as a declaration body, and `attr` is what tells them apart.
+    // Reading the prefix as a body cuts `syntax (name := ringNF) "ring_nf"` down
+    // to `syntax (name :=`.
+    const isNamedAttr = node.childForFieldName("attr") !== null;
+    const body =
+      node.childForFieldName("body") ?? (isNamedAttr ? null : node.childForFieldName("value"));
     if (body && body.startPosition.row === startLine) {
       const head = sourceLines[startLine]?.slice(0, body.startPosition.column) ?? "";
       // `:=` is not part of the body node, so drop the separator it leaves.
@@ -441,6 +602,12 @@ function detectExportStatus(
     return "exported";
   }
   if (language === "lean") {
+    // A command carries its own visibility keyword, and the keyword is an
+    // anonymous child of the command rather than a `decl_modifiers` node.
+    // `local` stops the syntax at the end of the file. `scoped` does not: it
+    // ties the syntax to a namespace, and opening that namespace elsewhere
+    // brings it back, so a scoped command still leaves the file.
+    if (node.children.some((c) => c.type === "local")) return "local";
     // The modifiers sit on the enclosing `declaration`, beside the form node.
     // `protected` is not private: it only forces callers to write the full
     // name, so the symbol still leaves the file.
@@ -602,6 +769,17 @@ function collectSymbols(
       }
     }
 
+    // A Lean command pattern captures the command and no name, because the
+    // field that holds the name depends on how the command was written.
+    let leanGlobalName = false;
+    if (!nameText && kind && definitionNode && language === "lean") {
+      const command = leanCommandName(definitionNode);
+      if (command) {
+        nameText = command.text;
+        leanGlobalName = command.global;
+      }
+    }
+
     if (!nameText || !kind || !definitionNode) continue;
 
     // Qualify every nested definition with its enclosing container. This cannot be gated
@@ -621,11 +799,12 @@ function collectSymbols(
     const isLeanRoot = language === "lean" && nameText.startsWith(LEAN_ROOT_PREFIX);
     const symbolName = isLeanRoot ? nameText.slice(LEAN_ROOT_PREFIX.length) : nameText;
 
-    const parentClass = isLeanRoot
-      ? null
-      : language === "lean"
-        ? leanNamespacePrefix(leanScopes, definitionNode.startPosition.row)
-        : findParentClass(definitionNode, language);
+    const parentClass =
+      isLeanRoot || leanGlobalName
+        ? null
+        : language === "lean"
+          ? leanNamespacePrefix(leanScopes, definitionNode.startPosition.row)
+          : findParentClass(definitionNode, language);
     const qualifiedName = parentClass ? `${parentClass}.${symbolName}` : symbolName;
 
     const startRow = definitionNode.startPosition.row;
@@ -720,7 +899,13 @@ function isElixirDeclarationSite(site: TreeSitterNode): boolean {
   return target ? ELIXIR_DEFINITION_TARGETS.has(target.text) : false;
 }
 
-/** The Lean declaration forms that bound a body, and so name a call's caller. */
+/** The Lean declaration forms that bound a body, and so name a call's caller.
+ *
+ *  The command forms are absent. Each one names itself through leanCommandName
+ *  rather than through a `name` field, and findEnclosingFunction reads the
+ *  `name` field, so a command would report no caller and the walk would carry
+ *  on past it. `<module>` is what it reports instead, which is the honest
+ *  answer for a call written in a macro body. */
 const LEAN_DECLARATION_TYPES = new Set([
   "theorem",
   "def",

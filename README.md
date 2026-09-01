@@ -161,15 +161,15 @@ Install refuses in two cases, and prints the one line to add by hand instead:
 
 Lore extracts symbols from these languages:
 
-| Language   | Extensions                 | Symbols                                                                       |
-| ---------- | -------------------------- | ----------------------------------------------------------------------------- |
-| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant                      |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                                             |
-| Python     | `.py`                      | function, class, constant                                                     |
-| Go         | `.go`                      | function, method, struct, interface                                           |
-| Rust       | `.rs`                      | function, struct, enum, trait, impl                                           |
-| Elixir     | `.ex` `.exs`               | function, module, protocol                                                    |
-| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom, opaque, constant |
+| Language   | Extensions                 | Symbols                                                                               |
+| ---------- | -------------------------- | ------------------------------------------------------------------------------------- |
+| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant                              |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                                                     |
+| Python     | `.py`                      | function, class, constant                                                             |
+| Go         | `.go`                      | function, method, struct, interface                                                   |
+| Rust       | `.rs`                      | function, struct, enum, trait, impl                                                   |
+| Elixir     | `.ex` `.exs`               | function, module, protocol                                                            |
+| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom, opaque, constant, syntax |
 
 A file in another language is still indexed and still answers a `lore ask`.
 Lore reads it as text, so it has no symbols. Three features need symbols:
@@ -179,9 +179,23 @@ Lean gets its own symbol kind for a theorem, separate from a function. A
 theorem states a fact, and the proof is only the body, so `lore show` marks
 which bindings of a concept are claims and which are definitions.
 
+Lean also gets a symbol kind for syntax. `syntax`, `macro`, `notation` and
+`declare_syntax_cat` add a way to write something, not a value to compute, so
+a search for a tactic does not return every definition beside it.
+
+A tactic is named by the token that calls it. `syntax "ring_nf" : tactic`
+declares no identifier, and Lean generates one, but a proof writes `ring_nf`,
+so `ring_nf` is the name lore stores. A command that writes `(name := ringNF)`
+declares the identifier itself, and lore stores that instead.
+
 Lore reads a Lean namespace as part of the name, and binds
 `Auth.Token.refresh`, not `refresh`. A section bounds variables and not names,
-so it changes no name.
+so it changes no name. A token, a syntax category and an option name are
+different: Lean registers each one as written, so a namespace does not qualify
+them.
+
+`macro_rules` and `elab_rules` add cases to a syntax that another command
+declared. Neither introduces a name, so neither becomes a symbol.
 
 No package publishes a Lean grammar, so lore carries the built parser at
 `packages/core/grammars/tree-sitter-lean.wasm`. To rebuild it, run
@@ -189,18 +203,36 @@ No package publishes a Lean grammar, so lore carries the built parser at
 Docker or Emscripten.
 
 The Lean grammar is experimental, and it reads mathematics better than it
-reads metaprogramming. On the `batteries` library, 258 files, lore finds:
+reads metaprogramming. A declaration counts as found when a symbol covers the
+row that opens it. An anonymous instance is out of the count, because lore
+skips it by design.
 
-| Content                       | Declarations found |
-| ----------------------------- | ------------------ |
-| Theorems                      | 98%                |
-| All mathematical definitions  | 97%                |
-| Tactics, elaborators, linters | 48%                |
+On the `batteries` library, 258 files:
+
+| Content                        | Declarations found |
+| ------------------------------ | ------------------ |
+| Theorems                       | 98%                |
+| Mathematical definitions       | 79%                |
+| Tactics, elaborators, notation | 26%                |
+
+On `Mathlib/Tactic`, 366 files that exist to extend Lean:
+
+| Content                        | Declarations found |
+| ------------------------------ | ------------------ |
+| Theorems                       | 79%                |
+| Mathematical definitions       | 53%                |
+| Tactics, elaborators, notation | 22%                |
 
 A tactic file uses `do` notation and syntax quotations, and the parser stops
-early in them. It never fails a file: it returns the declarations it read and
-skips the rest. Expect full results for a file of theorems and definitions,
-and gaps in a file that extends Lean itself.
+early in them. Three quarters of the rows in `Mathlib/Tactic` sit inside a
+parse error, and no query reaches a declaration in one. The grammar has no
+rule for the `elab` command at all, and an `elab` block takes the declarations
+next to it into the same error.
+
+Lore never fails a file: it returns the declarations it read and skips the
+rest. Across all 8456 files of Mathlib, no file crashed the parser. Expect
+full results for a file of theorems and definitions, and gaps in a file that
+extends Lean itself.
 
 ---
 

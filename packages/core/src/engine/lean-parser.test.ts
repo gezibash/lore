@@ -329,4 +329,158 @@ describe("Lean parser", () => {
 
     expect(symbols.map((s) => s.qualified_name)).toContain("after");
   });
+
+  // ─── Syntax, macro and notation commands ────────────────
+
+  test("a tactic is named by the token that calls it", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.name);
+
+    // Lean generates an identifier for a `syntax` command that declares none.
+    // The token is what the file writes in a proof and what a reader searches
+    // for, so the token is the name.
+    expect(names).toContain("expiry_tac");
+    expect(names).toContain("bump_tac");
+    expect(symbols.find((s) => s.name === "expiry_tac")?.kind).toBe("syntax");
+    expect(symbols.find((s) => s.name === "bump_tac")?.kind).toBe("syntax");
+  });
+
+  test("`(name := X)` names the tactic, and `(priority := N)` does not", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.name);
+
+    // Both prefixes fill the same `value` field in the tree. Reading that field
+    // without checking which keyword opened it names this tactic `high`.
+    expect(names).toContain("refreshTac");
+    expect(names).toContain("priority_tac");
+    expect(names).not.toContain("high");
+  });
+
+  test("a namespace does not qualify a token, a category or an option", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    const qualified = symbols.map((s) => s.qualified_name);
+
+    // All three sit inside `namespace Auth.Syntax`. Lean registers each under
+    // the literal name written, so `Auth.Syntax.expiry_tac` is a name no Lean
+    // project holds and a binding to it could never be looked up.
+    expect(qualified).toContain("expiry_tac");
+    expect(qualified).toContain("authRule");
+    expect(qualified).toContain("auth.verbose");
+
+    // The two forms that do declare a name in the namespace still carry it.
+    expect(qualified).toContain("Auth.Syntax.refreshTac");
+    expect(qualified).toContain("Auth.Syntax.authRef");
+
+    // `register_cmd` covers three keywords, and only the two option forms name
+    // a global. An error explanation is read as an ordinary declaration, so the
+    // namespace applies to it.
+    expect(qualified).toContain("Auth.Syntax.authFailed");
+    expect(qualified).not.toContain("authFailed");
+  });
+
+  test("`local` stops at the file, `scoped` does not", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    expect(symbols.find((s) => s.name === "file_only_tac")?.export_status).toBe("local");
+    // `scoped` ties the syntax to a namespace. Opening that namespace elsewhere
+    // brings it back, so the symbol still leaves the file.
+    expect(symbols.find((s) => s.name === "namespace_tac")?.export_status).toBe("exported");
+  });
+
+  test("a notation is named by its opening token", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    const names = symbols.map((s) => s.name);
+
+    // The operator is written with the spaces it needs when printed.
+    expect(names).toContain("⊕'");
+    // The grammar lifts the closing bracket of a pair into its `op` field and
+    // leaves the opening one under an ERROR node. The opening half is the one
+    // worth indexing.
+    expect(names).toContain("⟦");
+    expect(names).not.toContain("⟧");
+  });
+
+  test("the signature of a named tactic keeps its head", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    // `value` holds the operand of the `(name := ...)` prefix as well as a
+    // declaration body. Reading it as a body cuts the signature at `syntax
+    // (name :=` and loses the token and the category.
+    const named = symbols.find((s) => s.name === "refreshTac");
+    expect(named?.signature).toContain("refresh_tac");
+    expect(named?.signature).toContain("tactic");
+  });
+
+  test("`macro_rules` adds cases to a tactic, so it declares no symbol", async () => {
+    const { tree, lang } = await pool.parse(FIXTURE, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", FIXTURE, pool);
+    tree.delete();
+
+    // The block implements `expiry_tac`, which the `syntax` command above it
+    // already declares. Only one row claims the name, and it is the
+    // declaration. This is the rule `example` follows: no new name, no symbol.
+    expect(symbols.filter((s) => s.name === "expiry_tac").length).toBe(1);
+    expect(symbols.find((s) => s.name === "expiry_tac")?.signature).toStartWith("syntax");
+  });
+
+  test("a command with no token and no name yields nothing", async () => {
+    const source = [
+      // No string token and no `(name := ...)`: the head is an identifier, so
+      // there is nothing a proof would write.
+      "syntax ident_only : term",
+      "",
+      // A `hole` names nothing, and the second form binds nothing at all.
+      "initialize _ ← pure ()",
+      "",
+      "initialize registerTraceClass `foo",
+      "",
+    ].join("\n");
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    expect(symbols).toEqual([]);
+  });
+
+  test("a macro is not named after a string in its own expansion", async () => {
+    const source = 'macro emptyHead : tactic => "not_a_token"\n';
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // The grammar types a macro body as any term, so a bare string literal sits
+    // directly under the command. The token search stops where the body starts,
+    // and the head declares no token, so this macro names nothing.
+    expect(symbols).toEqual([]);
+  });
+
+  test("a token keeps the characters it stands for, not its escapes", async () => {
+    // Byte-for-byte the notation from Mathlib/Data/Finset/Sups.lean. The Lean
+    // literal holds four backslashes, which Lean reads as the two-character
+    // operator `\\`.
+    const source = String.raw`infixl:74 " \\\\ " => Finset.diffs` + "\n";
+    const { tree, lang } = await pool.parse(source, "lean");
+    const symbols = extractSymbols(tree, lang, "lean", source, pool);
+    tree.delete();
+
+    // Storing the raw source between the quotes would put a four-character name
+    // in the index that no Lean file writes and no search finds.
+    expect(symbols.map((s) => s.name)).toContain(String.raw`\\`);
+  });
 });

@@ -1,3 +1,5 @@
+import type { SymbolKind as CoreSymbolKind } from "@lore/core";
+
 // ─── Identifiers ──────────────────────────────────────────
 export type LoreId = string;
 
@@ -1441,7 +1443,21 @@ export type SymbolKind =
   // Lean. A theorem is a proof, and the proof body is not the knowledge: the
   // statement is. Kept apart from "function" so a reader can ask for the
   // proofs about a concept without getting every definition too.
-  | "theorem";
+  | "theorem"
+  // Lean. `syntax`, `macro`, `notation` and `declare_syntax_cat` introduce
+  // surface syntax, not a value. A tactic is called by the token it declares,
+  // so the token is the name a reader looks for.
+  | "syntax";
+
+// The scanner writes the kinds core declares, and this file restates them for
+// callers of the SDK. Nothing else keeps the two lists equal, so a kind added
+// to one and not the other would leave the SDK rejecting a kind lore stores.
+// Each half of this pair fails to compile when its side is missing a kind.
+type AssertExtends<Narrow extends Wide, Wide> = Narrow;
+type _SymbolKindMatchesCore = [
+  AssertExtends<SymbolKind, CoreSymbolKind>,
+  AssertExtends<CoreSymbolKind, SymbolKind>,
+];
 
 export interface SourceFileRow {
   id: string;
