@@ -416,12 +416,19 @@ export async function buildExplicitClosePlan(
         };
       }
 
+      // Always `replace`. A create has no prior body, and every other strategy
+      // asks the generator to keep the paragraphs the entries do not touch —
+      // of prose that does not exist. `patch` is the default, so the ordinary
+      // `--target create:` close asked for a state it had just been told was
+      // empty, and the model answered by asking for it: concepts landed
+      // holding the sentence "the existing state was not provided" instead of
+      // a body. Only `replace` writes a body from the entries alone.
       return {
         kind: "create",
         value: {
           conceptName,
           content: await synthesizeConceptBody(conceptName, () =>
-            generator.generateIntegration(group.entries, [], conceptName, mergeStrategy),
+            generator.generateIntegration(group.entries, [], conceptName, "replace"),
           ),
           sourceEntryIndices: group.indices,
         },
