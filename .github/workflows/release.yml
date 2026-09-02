@@ -17,7 +17,7 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: oven-sh/setup-bun@v2
@@ -43,7 +43,7 @@ jobs:
           - { target: linux-arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: oven-sh/setup-bun@v2
@@ -59,7 +59,7 @@ jobs:
       - run: ./scripts/smoke.sh ./dist/lore
       - run: ./scripts/package.sh ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lore-${{ matrix.target }}
           path: dist-archive/lore-${{ matrix.target }}.tar.gz
@@ -73,11 +73,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
