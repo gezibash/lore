@@ -282,16 +282,12 @@ import { scanProject, rescanProject } from "./scanner.ts";
 import { discoverFiles } from "./file-discovery.ts";
 import {
   extractBindingsForConcepts,
+  findBindableSymbolsByName,
   pruneOrphanedBindings,
   autoBindSemantic,
 } from "./binding-extraction.ts";
 import type { AutoBindResult } from "./binding-extraction.ts";
-import {
-  searchSymbols,
-  getSymbolsForFilePath,
-  findSymbolsByName,
-  getSymbolCount,
-} from "@/db/symbols.ts";
+import { searchSymbols, getSymbolsForFilePath, getSymbolCount } from "@/db/symbols.ts";
 import {
   getSourceFileCount,
   getSourceFileLanguageCounts,
@@ -4394,14 +4390,18 @@ export class LoreEngine {
   bindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; confidence?: number; filePath?: string },
+    opts?: { codePath?: string; confidence?: number; filePath?: string; line?: number },
   ): ConceptBindingSummary {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
-    const found = findSymbolsByName(db, symbolQualifiedName);
-    const candidates = opts?.filePath
-      ? found.filter((row) => row.file_path === opts.filePath)
-      : found;
+    const found = findBindableSymbolsByName(db, symbolQualifiedName);
+    // `line` for the same reason unbind takes it: one file declares a name
+    // twice when a TypeScript overload repeats a signature or an Elixir
+    // function writes a clause per head. Without it the error named one file
+    // twice and asked for an answer the caller had already given.
+    const candidates = found
+      .filter((row) => !opts?.filePath || row.file_path === opts.filePath)
+      .filter((row) => opts?.line === undefined || row.line_start === opts.line);
     if (candidates.length === 0) {
       const where = opts?.filePath ? ` in ${opts.filePath}` : "";
       throw new LoreError("CONCEPT_NOT_FOUND", `No symbol named '${symbolQualifiedName}'${where}`);
@@ -4410,8 +4410,17 @@ export class LoreEngine {
       const places = candidates.map((row) => `${row.file_path}:${row.line_start}`).join(", ");
       throw new LoreError(
         "SYMBOL_AMBIGUOUS",
-        `'${symbolQualifiedName}' names ${candidates.length} symbols. Pass --file with one of: ${places}`,
-        { concept, symbol: symbolQualifiedName, candidates },
+        `'${symbolQualifiedName}' names ${candidates.length} symbols. Pass --file, and --line when one file holds several: ${places}`,
+        {
+          concept,
+          symbol: symbolQualifiedName,
+          candidates: candidates.map((row) => ({
+            qualified_name: row.qualified_name,
+            kind: row.kind,
+            file_path: row.file_path,
+            line_start: row.line_start,
+          })),
+        },
       );
     }
     const symbolRow = candidates[0]!;
@@ -4422,13 +4431,11 @@ export class LoreEngine {
       boundBodyHash: symbolRow.body_hash,
       confidence: opts?.confidence ?? 1.0,
     });
-    // File and line identify the row a reader named. The qualified name does
-    // not: a short name matches no summary, and `LoreEngine.open` matches the
-    // binding in every class that declares one.
+    // The symbol id names the row. File and line do not: two symbols can share
+    // a line, and `export const a = 1, b = 2;` writes two — binding the second
+    // then reported the first.
     const summaries = getBindingSummariesForConcept(db, conceptRow.id);
-    const match = summaries.find(
-      (s) => s.file_path === symbolRow.file_path && s.line_start === symbolRow.line_start,
-    );
+    const match = summaries.find((s) => s.symbol_id === symbolRow.id);
     return match!;
   }
 

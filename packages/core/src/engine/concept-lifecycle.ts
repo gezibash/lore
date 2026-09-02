@@ -679,7 +679,7 @@ export async function rebuildConcept(deps: LifecycleDeps, name: string): Promise
   }
 
   const debtBefore = getManifest(db)?.debt ?? 0;
-  await appendStateChunkForConcept(
+  const { chunkId } = await appendStateChunkForConcept(
     db,
     deps.lorePath,
     concept,
@@ -696,16 +696,39 @@ export async function rebuildConcept(deps: LifecycleDeps, name: string): Promise
   // of a body that no longer exists. Close measures it here; a rebuild did not,
   // and the value survived a cleanup of 44 bindings unchanged to sixteen
   // decimal places.
-  const measured = await measureGroundResiduals(db, {
-    codePath: deps.codePath,
-    targets: [{ conceptId: concept.id, content: newContent, textEmbedding: null }],
-    embedder: await deps.getEmbedder(),
-    codeEmbedder: await deps.getCodeEmbedder(),
-    codeModel: deps.codeModel,
-  });
-  const groundResidual = measured.get(concept.id) ?? null;
-  if (groundResidual != null) {
-    insertConceptVersion(db, concept.id, { ground_residual: groundResidual });
+  //
+  // The prose embedding comes from the chunk just written, the way heal reads
+  // it. Passing null there left the text lane unreachable, and a mind with no
+  // code embedding model configured — the default — measured nothing at all.
+  //
+  // The whole block runs after the body is on disk, so a provider that throws
+  // while it is built would abort the rebuild between the write and the
+  // commit. It cannot: nothing here is worth losing the body over.
+  if (deps.codePath) {
+    try {
+      const embeddingRow = getEmbeddingForChunk(db, chunkId);
+      const measured = await measureGroundResiduals(db, {
+        codePath: deps.codePath,
+        targets: [
+          {
+            conceptId: concept.id,
+            content: newContent,
+            textEmbedding: embeddingRow ? new Float32Array(embeddingRow.embedding.buffer) : null,
+          },
+        ],
+        embedder: await deps.getEmbedder(),
+        codeEmbedder: await deps.getCodeEmbedder(),
+        codeModel: deps.codeModel,
+      });
+      // Written even when null. A null is a measurement gap, and close writes
+      // it as one; skipping the write kept the old distance for a body that
+      // no longer exists, which is the case this measurement exists to catch.
+      insertConceptVersion(db, concept.id, {
+        ground_residual: measured.get(concept.id) ?? null,
+      });
+    } catch {
+      // Non-fatal: the body is written, and the residual reads as unmeasured.
+    }
   }
 
   await discoverConcepts(db, generator);

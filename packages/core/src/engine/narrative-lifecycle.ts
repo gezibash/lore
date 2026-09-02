@@ -106,7 +106,11 @@ import {
 import type { ConceptSymbolLineRange } from "@/db/concept-symbols.ts";
 import { getConceptRelations, get2HopNeighbors } from "@/db/concept-relations.ts";
 import { rescanFiles } from "./scanner.ts";
-import { extractBindingsForConcepts, pruneOrphanedBindings } from "./binding-extraction.ts";
+import {
+  extractBindingsForConcepts,
+  findBindableSymbolsByName,
+  pruneOrphanedBindings,
+} from "./binding-extraction.ts";
 import type { FileRef, SymbolSearchResult } from "@/types/index.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Generator } from "./generator.ts";
@@ -117,7 +121,7 @@ import { markLanceDirty } from "./lance-index.ts";
 import { isTestFilePath } from "./search.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
-import { searchSymbols, findSymbolsByName } from "@/db/symbols.ts";
+import { searchSymbols } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
@@ -245,7 +249,8 @@ function batchLoadBindingSummariesByConceptIds(
     const placeholders = conceptIds.map(() => "?").join(", ");
     rows = db
       .query<ConceptBindingSummary & { concept_id: string }, string[]>(
-        `SELECT cs.concept_id, s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
+        `SELECT cs.concept_id, cs.symbol_id, s.name AS symbol_name,
+                s.qualified_name AS symbol_qualified_name,
                 s.kind AS symbol_kind, sf.file_path, s.line_start,
                 cs.binding_type, cs.confidence
          FROM concept_symbols cs
@@ -262,6 +267,7 @@ function batchLoadBindingSummariesByConceptIds(
   for (const row of rows) {
     const list = grouped.get(row.concept_id);
     const summary: ConceptBindingSummary = {
+      symbol_id: row.symbol_id,
       symbol_name: row.symbol_name,
       symbol_qualified_name: row.symbol_qualified_name,
       symbol_kind: row.symbol_kind,
@@ -565,7 +571,7 @@ export function resolveEntrySymbols(
   const attached: string[] = [];
   const unattached: UnattachedSymbol[] = [];
   for (const name of names ?? []) {
-    const found = findSymbolsByName(db, name);
+    const found = findBindableSymbolsByName(db, name);
     if (found.length === 1) {
       attached.push(found[0]!.id);
       continue;
@@ -574,10 +580,15 @@ export function resolveEntrySymbols(
       unattached.push({ name, reason: "unknown" });
       continue;
     }
+    // The qualified name, because that is what `--symbol` reads back. A
+    // `file:line` place named where each candidate lives and matched nothing
+    // when the writer typed it, so the message described a remedy the flag
+    // rejects. The file follows the name, to tell two identical qualified
+    // names apart for a reader, not for the parser.
     unattached.push({
       name,
       reason: "ambiguous",
-      places: found.map((sym) => `${sym.file_path}:${sym.line_start}`),
+      places: found.map((sym) => `${sym.qualified_name} (${sym.file_path}:${sym.line_start})`),
     });
   }
   return { attached, unattached };
@@ -3829,12 +3840,18 @@ export async function runCloseMaintenanceJob(
   ]);
   for (const pair of autoBindPairs.values()) {
     try {
+      // `ref`, because a writer named this symbol on `--symbol`. A `mention`
+      // is what inference guessed, and `extractBindingsForConcepts` deletes
+      // every non-`ref` row before it rewrites its own. The re-add below reads
+      // only the closing narrative's entries, so a mention stated by an
+      // earlier narrative was deleted and never came back — and `lore sys
+      // rebind` cleared every one of them at once.
       upsertInferredConceptSymbol(db, {
         conceptId: pair.conceptId,
         symbolId: pair.symbolId,
-        bindingType: "mention",
+        bindingType: "ref",
         boundBodyHash: symbolBodyHashes.get(pair.symbolId) ?? null,
-        confidence: 0.6,
+        confidence: 1.0,
       });
     } catch {
       // Non-fatal.

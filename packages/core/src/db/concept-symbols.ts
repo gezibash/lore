@@ -221,7 +221,7 @@ export function getBindingSummariesForConcept(
 ): ConceptBindingSummary[] {
   return db
     .query<ConceptBindingSummary, [string]>(
-      `SELECT s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
+      `SELECT cs.symbol_id, s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
               s.kind AS symbol_kind, sf.file_path, s.line_start,
               cs.binding_type, cs.confidence
        FROM concept_symbols cs

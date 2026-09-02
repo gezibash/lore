@@ -9,6 +9,7 @@ import {
   type Dirent,
 } from "fs";
 import { dirname, join, resolve } from "path";
+
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { connect } from "net";
@@ -30,7 +31,28 @@ import type {
   LoreJob,
   LoreJobDetail,
   LoreJobType,
+  SerializedDaemonError,
 } from "./daemon-protocol.ts";
+import { LoreError, type LoreErrorCode } from "@lore/sdk";
+
+/** The error the daemon raised, with the code and details it carried.
+ *
+ *  A plain `new Error(message)` dropped both. `handleCliError` reads `code`
+ *  off a `LoreError`, so every daemon-routed failure reported `CLI_ERROR` and
+ *  no candidate list — and the daemon is the default path, so that was every
+ *  failure a user saw. */
+function reviveDaemonError(error: SerializedDaemonError): Error {
+  if (error.code) {
+    return new LoreError(
+      error.code as LoreErrorCode,
+      error.message,
+      (error.details ?? undefined) as Record<string, unknown> | undefined,
+    );
+  }
+  const revived = new Error(error.message);
+  if (error.name) revived.name = error.name;
+  return revived;
+}
 
 const SPAWN_TIMEOUT_MS = 5_000;
 
@@ -191,7 +213,7 @@ async function sendRequest(socketPath: string, method: string, args: unknown[]):
       try {
         const response = JSON.parse(buffer.slice(0, newlineIndex)) as DaemonResponse;
         if (!response.ok) {
-          reject(new Error(response.error.message));
+          reject(reviveDaemonError(response.error));
           return;
         }
         resolve(response.result);

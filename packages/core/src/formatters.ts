@@ -60,7 +60,7 @@ function unattachedLines(result: LogResult): string[] {
   return (result.unattached_symbols ?? []).map((sym) =>
     sym.reason === "unknown"
       ? `'${sym.name}' matches no symbol — not attached.`
-      : `'${sym.name}' names ${sym.places?.length ?? 0} symbols — not attached. Name one of: ${(sym.places ?? []).join(", ")}`,
+      : `'${sym.name}' names ${sym.places?.length ?? 0} symbols — not attached. Pass the qualified name: ${(sym.places ?? []).join(", ")}`,
   );
 }
 

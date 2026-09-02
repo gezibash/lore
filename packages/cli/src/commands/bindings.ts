@@ -12,8 +12,9 @@ export async function conceptBindCommand(
   symbol: string,
   confidence?: number,
   filePath?: string,
+  line?: number,
 ): Promise<void> {
-  const binding = await client.bindSymbol(concept, symbol, { confidence, filePath });
+  const binding = await client.bindSymbol(concept, symbol, { confidence, filePath, line });
   console.log(
     `Bound ${binding.symbol_name} (${binding.symbol_kind}) → ${concept} [${binding.binding_type}, confidence: ${binding.confidence.toFixed(2)}]`,
   );
@@ -32,7 +33,8 @@ export async function conceptUnbindCommand(
     filePath || line !== undefined ? { filePath, line } : undefined,
   );
   if (!result.removed) {
-    const where = filePath ? ` in ${filePath}` : "";
+    const at = [filePath ? ` in ${filePath}` : "", line !== undefined ? ` at line ${line}` : ""];
+    const where = at.join("");
     console.log(`No binding found for ${concept} ↔ ${symbol}${where}`);
     return;
   }

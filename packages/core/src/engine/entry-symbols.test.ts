@@ -46,11 +46,13 @@ test("a short name that fits several symbols attaches to none and names the plac
   const result = resolveEntrySymbols(db, ["open"]);
 
   expect(result.attached).toEqual([]);
+  // The places name what `--symbol` reads back, which is the qualified form.
+  // A bare `src/engine.ts:42` matched nothing when a writer typed it.
   expect(result.unattached).toEqual([
     {
       name: "open",
       reason: "ambiguous",
-      places: ["src/engine.ts:42", "src/worker.ts:42"],
+      places: ["LoreEngine.open (src/engine.ts:42)", "WorkerClient.open (src/worker.ts:42)"],
     },
   ]);
   db.close();

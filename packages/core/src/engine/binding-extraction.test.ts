@@ -14,6 +14,7 @@ import { writeStateChunk } from "@/storage/index.ts";
 import {
   autoBindByFileOverlap,
   extractBindingsForConcepts,
+  findBindableSymbolsByName,
   isSymbolShapedName,
 } from "./binding-extraction.ts";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
@@ -192,4 +193,93 @@ test("a name a writer could only have meant as a symbol is kept", () => {
 test("a name under three characters is never evidence", () => {
   expect(isSymbolShapedName("id")).toBe(false);
   expect(isSymbolShapedName("Db")).toBe(false);
+});
+
+test("a lowercase word in any script is prose", () => {
+  // An ASCII-only test kept these as symbol-shaped evidence.
+  for (const word of ["café", "über", "naïve"]) {
+    expect(isSymbolShapedName(word)).toBe(false);
+  }
+});
+
+test("a name of punctuation is not a symbol reference", () => {
+  // `\b___\b` matches a markdown horizontal rule in concept prose.
+  expect(isSymbolShapedName("___")).toBe(false);
+  expect(isSymbolShapedName("---")).toBe(false);
+  expect(isSymbolShapedName("_id_")).toBe(true);
+});
+
+/** Binding refuses a test file, so a test twin must not veto the source symbol. */
+test("a test-file twin does not make the source symbol ambiguous", () => {
+  const db = createTestDb();
+  const source = upsertSourceFile(db, {
+    filePath: "src/routing.ts",
+    language: "typescript",
+    contentHash: "h-src",
+    sizeBytes: 100,
+    symbolCount: 1,
+  });
+  const test = upsertSourceFile(db, {
+    filePath: "src/routing.test.ts",
+    language: "typescript",
+    contentHash: "h-test",
+    sizeBytes: 100,
+    symbolCount: 1,
+  });
+  const wanted = insertSymbol(db, {
+    sourceFileId: source.id,
+    name: "routeConcept",
+    qualifiedName: "routeConcept",
+    kind: "function",
+    parentId: null,
+    lineStart: 4,
+    lineEnd: 9,
+    signature: null,
+    bodyHash: "b-src",
+    exportStatus: "exported",
+  }).id;
+  insertSymbol(db, {
+    sourceFileId: test.id,
+    name: "routeConcept",
+    qualifiedName: "routeConcept",
+    kind: "function",
+    parentId: null,
+    lineStart: 12,
+    lineEnd: 14,
+    signature: null,
+    bodyHash: "b-test",
+    exportStatus: "exported",
+  });
+
+  const found = findBindableSymbolsByName(db, "routeConcept");
+
+  expect(found.map((s) => s.id)).toEqual([wanted]);
+  db.close();
+});
+
+test("a name only a test file declares still resolves", () => {
+  const db = createTestDb();
+  const file = upsertSourceFile(db, {
+    filePath: "src/only.test.ts",
+    language: "typescript",
+    contentHash: "h-only",
+    sizeBytes: 100,
+    symbolCount: 1,
+  });
+  insertSymbol(db, {
+    sourceFileId: file.id,
+    name: "addSymbol",
+    qualifiedName: "addSymbol",
+    kind: "function",
+    parentId: null,
+    lineStart: 3,
+    lineEnd: 8,
+    signature: null,
+    bodyHash: "b-only",
+    exportStatus: "exported",
+  });
+
+  // Refusing outright would report "no symbol" for one the index holds.
+  expect(findBindableSymbolsByName(db, "addSymbol")).toHaveLength(1);
+  db.close();
 });

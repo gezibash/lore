@@ -1461,6 +1461,9 @@ export interface ConceptSymbolRow {
 }
 
 export interface ConceptBindingSummary {
+  /** The row this binding points at. File and line do not name one: two
+   *  symbols can share a line, and `export const a = 1, b = 2;` writes two. */
+  symbol_id: string;
   symbol_name: string;
   symbol_qualified_name: string;
   symbol_kind: SymbolKind;

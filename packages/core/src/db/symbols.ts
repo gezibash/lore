@@ -302,12 +302,21 @@ export function searchSymbols(
  *
  *  The name matches `qualified_name` or `name`. A method carries the
  *  qualified form `LoreEngine.open`, and a reader types `open`, which is what
- *  every listing prints. */
+ *  every listing prints.
+ *
+ *  An exact `qualified_name` match wins alone. A top-level `parse` and a
+ *  `Lexer.parse` both answer to the short name `parse`, and returning both for
+ *  the query `parse` made a symbol that used to bind exactly read as
+ *  ambiguous. Writing the qualified form is how a caller says which one.
+ *
+ *  Test files are not filtered here. Binding excludes them, and
+ *  `findBindableSymbolsByName` applies that policy; this helper answers what
+ *  the index holds. */
 export function findSymbolsByName(
   db: Database,
   name: string,
 ): (SymbolRow & { file_path: string })[] {
-  return db
+  const rows = db
     .query<SymbolRow & { file_path: string }, [string, string]>(
       `SELECT s.*, sf.file_path FROM symbols s
        JOIN source_files sf ON s.source_file_id = sf.id
@@ -315,6 +324,8 @@ export function findSymbolsByName(
        ORDER BY sf.file_path, s.line_start`,
     )
     .all(name, name);
+  const qualified = rows.filter((row) => row.qualified_name === name);
+  return qualified.length > 0 ? qualified : rows;
 }
 
 export function getSymbolByQualifiedName(

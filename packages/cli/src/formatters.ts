@@ -166,7 +166,7 @@ export function formatUnattachedSymbolsCli(result: LogResult): string[] {
     const why =
       sym.reason === "unknown"
         ? "matches no symbol"
-        : `names ${sym.places?.length ?? 0} symbols — name one of: ${(sym.places ?? []).join(", ")}`;
+        : `names ${sym.places?.length ?? 0} symbols — pass the qualified name: ${(sym.places ?? []).join(", ")}`;
     return `  ${YELLOW}!${RESET} ${CYAN}${sym.name}${RESET} ${why}. ${DIM}Not attached.${RESET}`;
   });
 }

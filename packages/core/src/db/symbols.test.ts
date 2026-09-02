@@ -195,3 +195,24 @@ test("findSymbolsByName finds nothing for a name no file declares", () => {
   expect(findSymbolsByName(db, "absent")).toHaveLength(0);
   db.close();
 });
+
+/** A top-level `parse` and a `Lexer.parse` both answer to the short name. */
+test("an exact qualified name wins alone", () => {
+  const db = createTestDb();
+  const top = addSymbol(db, addFile(db, "src/top.ts"), "parse");
+  addMethod(db, addFile(db, "src/lexer.ts"), "Lexer", "parse");
+
+  // The bare name reaches both, and the qualified form names one.
+  expect(findSymbolsByName(db, "parse").map((s) => s.id)).toEqual([top]);
+  expect(findSymbolsByName(db, "Lexer.parse")).toHaveLength(1);
+  db.close();
+});
+
+test("two short-name matches with no exact qualified hit both return", () => {
+  const db = createTestDb();
+  addMethod(db, addFile(db, "src/a.ts"), "A", "run");
+  addMethod(db, addFile(db, "src/b.ts"), "B", "run");
+
+  expect(findSymbolsByName(db, "run")).toHaveLength(2);
+  db.close();
+});

@@ -15,6 +15,7 @@ import { Embedder } from "./embedder.ts";
 import { cosineDistance } from "./residuals.ts";
 import { readSymbolContent } from "./git.ts";
 import { isTestFilePath } from "./search.ts";
+import { findSymbolsByName } from "@/db/symbols.ts";
 import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -41,6 +42,24 @@ export interface AutoBindResult {
  * Get all symbols from the database with their file paths.
  * Returns a map of symbol name → SymbolRow[] for efficient lookup.
  */
+/** The symbols a caller may bind to a concept, by name.
+ *
+ *  `findSymbolsByName` answers what the index holds. This answers what may be
+ *  bound, which is narrower: a test file's symbol is not a subject a concept
+ *  explains, and the mention pass already refuses it. Without the same rule
+ *  here, a name a test file also declares made the source symbol ambiguous,
+ *  and the only way out was to bind the test file — a binding the mention pass
+ *  can never produce. */
+export function findBindableSymbolsByName(
+  db: Database,
+  name: string,
+): (SymbolRow & { file_path: string })[] {
+  const bindable = findSymbolsByName(db, name).filter((row) => !isTestFilePath(row.file_path));
+  // A name only a test file declares still resolves. Refusing it outright
+  // would report "no symbol" for one the index plainly holds.
+  return bindable.length > 0 ? bindable : findSymbolsByName(db, name);
+}
+
 /** Whether a symbol name is specific enough to read as a reference to it.
  *
  *  A word-boundary match cannot tell a reference from a sentence. Symbols in
@@ -60,7 +79,12 @@ export interface AutoBindResult {
  *  line, and no reader can see that an inferred binding is wrong. */
 export function isSymbolShapedName(name: string): boolean {
   if (name.length < 3) return false;
-  return !/^[a-z]+$/.test(name);
+  // At least one letter or digit. `___` is punctuation, and a markdown rule
+  // in prose matches the word-boundary search built from it.
+  if (!/[\p{L}\p{N}]/u.test(name)) return false;
+  // `\p{Ll}`, not `[a-z]`: `café`, `über` and `naïve` are lowercase words too,
+  // and an ASCII test kept them as evidence.
+  return !/^\p{Ll}+$/u.test(name);
 }
 
 function getAllSymbolsByName(db: Database): Map<string, Array<SymbolRow & { file_path: string }>> {
@@ -202,13 +226,18 @@ export async function autoBindSemantic(
     line_end: number;
     file_path: string;
   };
+  // Test files are out of every binding lane, not only the mention pass. A
+  // rebind runs this straight after `extractBindingsForConcepts`, so without
+  // the same rule it re-created the test bindings that pass had just dropped,
+  // at a higher confidence than they held before.
   const allSymbols = db
     .query<SymbolWithPath, []>(
       `SELECT s.id, s.name, s.body_hash, s.line_start, s.line_end, sf.file_path
        FROM symbols s
        JOIN source_files sf ON s.source_file_id = sf.id`,
     )
-    .all();
+    .all()
+    .filter((row) => !isTestFilePath(row.file_path));
 
   log({ type: "init", symbols: allSymbols.length, model: codeModel });
 
@@ -403,13 +432,14 @@ export async function autoBindByFileOverlap(
     // Get all exported symbols from those files
     const placeholders = boundFiles.map(() => "?").join(",");
     const exportedSymbols = db
-      .query<{ id: string; body_hash: string | null; name: string }, string[]>(
-        `SELECT s.id, s.body_hash, s.name FROM symbols s
+      .query<{ id: string; body_hash: string | null; name: string; file_path: string }, string[]>(
+        `SELECT s.id, s.body_hash, s.name, sf.file_path FROM symbols s
          JOIN source_files sf ON s.source_file_id = sf.id
          WHERE sf.file_path IN (${placeholders})
          AND s.export_status IN ('exported', 'default_export')`,
       )
-      .all(...boundFiles);
+      .all(...boundFiles)
+      .filter((row) => !isTestFilePath(row.file_path));
 
     if (exportedSymbols.length === 0) {
       log({
