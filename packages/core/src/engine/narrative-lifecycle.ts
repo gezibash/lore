@@ -8,6 +8,7 @@ import {
   type ReasoningLevel,
   type OpenResult,
   type LogResult,
+  type UnattachedSymbol,
   type QueryResult,
   type ExecutiveSummary,
   type JournalTrailEntry,
@@ -107,8 +108,8 @@ import { getConceptRelations, get2HopNeighbors } from "@/db/concept-relations.ts
 import { rescanFiles } from "./scanner.ts";
 import {
   extractBindingsForConcepts,
+  findBindableSymbolsByName,
   pruneOrphanedBindings,
-  autoBindByFileOverlap,
 } from "./binding-extraction.ts";
 import type { FileRef, SymbolSearchResult } from "@/types/index.ts";
 import type { Embedder } from "./embedder.ts";
@@ -120,7 +121,7 @@ import { markLanceDirty } from "./lance-index.ts";
 import { isTestFilePath } from "./search.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
-import { searchSymbols, getSymbolByQualifiedName } from "@/db/symbols.ts";
+import { searchSymbols } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
@@ -248,7 +249,8 @@ function batchLoadBindingSummariesByConceptIds(
     const placeholders = conceptIds.map(() => "?").join(", ");
     rows = db
       .query<ConceptBindingSummary & { concept_id: string }, string[]>(
-        `SELECT cs.concept_id, s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
+        `SELECT cs.concept_id, cs.symbol_id, s.name AS symbol_name,
+                s.qualified_name AS symbol_qualified_name,
                 s.kind AS symbol_kind, sf.file_path, s.line_start,
                 cs.binding_type, cs.confidence
          FROM concept_symbols cs
@@ -265,6 +267,7 @@ function batchLoadBindingSummariesByConceptIds(
   for (const row of rows) {
     const list = grouped.get(row.concept_id);
     const summary: ConceptBindingSummary = {
+      symbol_id: row.symbol_id,
       symbol_name: row.symbol_name,
       symbol_qualified_name: row.symbol_qualified_name,
       symbol_kind: row.symbol_kind,
@@ -546,6 +549,51 @@ export interface LogEntryOpts {
   symbols?: string[];
 }
 
+/** Turn the `--symbol` names on an entry into symbol ids.
+ *
+ *  A name that reaches several symbols attaches to none of them. Close binds
+ *  every symbol on an entry to every concept the entry designates, so a wrong
+ *  pick here writes a binding that outlives the entry, and no reader of that
+ *  concept can see it is wrong. A binding that never happened costs one
+ *  `lore sys concept bind`.
+ *
+ *  There is no search fallback. FTS ranks candidates for a reader who judges
+ *  them; reading its first row settles an identity instead, and a typo then
+ *  becomes a binding.
+ *
+ *  Nothing here refuses. A symbol is metadata and the prose is the finding, so
+ *  a refusal would cost the finding to protect a label. The caller reports
+ *  what did not attach. */
+export function resolveEntrySymbols(
+  db: Database,
+  names: readonly string[] | undefined,
+): { attached: string[]; unattached: UnattachedSymbol[] } {
+  const attached: string[] = [];
+  const unattached: UnattachedSymbol[] = [];
+  for (const name of names ?? []) {
+    const found = findBindableSymbolsByName(db, name);
+    if (found.length === 1) {
+      attached.push(found[0]!.id);
+      continue;
+    }
+    if (found.length === 0) {
+      unattached.push({ name, reason: "unknown" });
+      continue;
+    }
+    // The qualified name, because that is what `--symbol` reads back. A
+    // `file:line` place named where each candidate lives and matched nothing
+    // when the writer typed it, so the message described a remedy the flag
+    // rejects. The file follows the name, to tell two identical qualified
+    // names apart for a reader, not for the parser.
+    unattached.push({
+      name,
+      reason: "ambiguous",
+      places: found.map((sym) => `${sym.qualified_name} (${sym.file_path}:${sym.line_start})`),
+    });
+  }
+  return { attached, unattached };
+}
+
 export async function logEntry(
   db: Database,
   lorePath: string,
@@ -589,24 +637,10 @@ export async function logEntry(
   const { designations: conceptDesignations, conceptRefs: resolvedConceptIds } =
     resolveJournalConceptDesignations(db, narrative, concepts);
 
-  // Resolve symbol names → IDs
-  const resolvedSymbolIds: string[] = [];
-  if (symbols && symbols.length > 0) {
-    for (const name of symbols) {
-      // Exact qualified name lookup first
-      const sym = getSymbolByQualifiedName(db, name);
-      if (sym) {
-        resolvedSymbolIds.push(sym.id);
-      } else {
-        // FTS fallback
-        const results = searchSymbols(db, name, { limit: 1 });
-        if (results.length > 0) {
-          resolvedSymbolIds.push(results[0]!.symbol_id);
-        }
-        // Unresolved names silently skipped
-      }
-    }
-  }
+  const { attached: resolvedSymbolIds, unattached: unattachedSymbols } = resolveEntrySymbols(
+    db,
+    symbols,
+  );
 
   // Auto-derive topics from concept names if concepts provided but topics empty
   const effectiveTopics = topics.length === 0 ? [...conceptDesignations] : topics;
@@ -674,7 +708,11 @@ export async function logEntry(
     notes.push(`${narrative.entry_count + 1} entries — consider closing soon`);
   }
 
-  return { saved: true, note: notes.length > 0 ? notes.join(". ") : undefined };
+  return {
+    saved: true,
+    note: notes.length > 0 ? notes.join(". ") : undefined,
+    unattached_symbols: unattachedSymbols.length > 0 ? unattachedSymbols : undefined,
+  };
 }
 
 export async function queryConcepts(
@@ -3762,8 +3800,18 @@ export async function runCloseMaintenanceJob(
       const { filesFailed } = await rescanFiles(db, payload.codePath, [...filePaths]);
       rescanFailed = filesFailed;
     }
+    // Only name mentions bind here. The file-overlap sweep used to run next,
+    // and it bound every exported symbol of every file a concept already
+    // touched. One symbol in `packages/sdk/src/index.ts`, a barrel of about 30
+    // exports, therefore bound all 30 at 0.8 — and it bound the same 30 to the
+    // next concept that touched that file. Two concepts then carried the same
+    // set, which is proof the set describes neither. A reader of the concept
+    // cannot see that those bindings are noise, and `--mode code` injects
+    // their bodies.
+    //
+    // File adjacency is not evidence of subject. What is left is evidence: a
+    // name the prose states, and a symbol the writer passed to `--symbol`.
     await extractBindingsForConcepts(db, residualConceptIds);
-    await autoBindByFileOverlap(db, { conceptIds: residualConceptIds });
     pruneOrphanedBindings(db);
   }
 
@@ -3792,12 +3840,18 @@ export async function runCloseMaintenanceJob(
   ]);
   for (const pair of autoBindPairs.values()) {
     try {
+      // `ref`, because a writer named this symbol on `--symbol`. A `mention`
+      // is what inference guessed, and `extractBindingsForConcepts` deletes
+      // every non-`ref` row before it rewrites its own. The re-add below reads
+      // only the closing narrative's entries, so a mention stated by an
+      // earlier narrative was deleted and never came back — and `lore sys
+      // rebind` cleared every one of them at once.
       upsertInferredConceptSymbol(db, {
         conceptId: pair.conceptId,
         symbolId: pair.symbolId,
-        bindingType: "mention",
+        bindingType: "ref",
         boundBodyHash: symbolBodyHashes.get(pair.symbolId) ?? null,
-        confidence: 0.6,
+        confidence: 1.0,
       });
     } catch {
       // Non-fatal.

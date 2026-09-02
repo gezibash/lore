@@ -133,7 +133,15 @@ export async function healConcept(
     // 2. Ungrounded → look for bindings. Additive only; see module doc.
     if (boundBefore === 0) {
       await extractBindingsForConcepts(db, [conceptId]);
-      await autoBindByFileOverlap(db, { conceptIds: [conceptId] });
+      // `boundBefore` reads the state before the line above, and that line
+      // binds. The sweep binds every export of every file the concept now
+      // touches, so one name matched into a barrel of thirty exports bound
+      // all thirty — which is why the close path no longer calls it. Read the
+      // count again: the sweep is the last resort for a concept the prose
+      // could not ground at all.
+      if ((getConceptBindingStats(db).get(conceptId)?.total ?? 0) === 0) {
+        await autoBindByFileOverlap(db, { conceptIds: [conceptId] });
+      }
       bindingsAdded = getConceptBindingStats(db).get(conceptId)?.total ?? 0;
     }
 

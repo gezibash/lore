@@ -109,16 +109,23 @@ test("an update whose rewrite stays empty fails the plan and names the concept",
 });
 
 /** Records what each strategy hands the generator. */
-function recordingGenerator(body: string, patchOps: string) {
+function recordingGenerator(body: string, patchOps = "") {
   const existingStateSeen: string[][] = [];
+  const strategiesSeen: Array<string | undefined> = [];
   const generator = {
-    generateIntegration: async (_entries: string[], existingState: string[]): Promise<string> => {
+    generateIntegration: async (
+      _entries: string[],
+      existingState: string[],
+      _conceptName?: string,
+      strategy?: string,
+    ): Promise<string> => {
       existingStateSeen.push(existingState);
+      strategiesSeen.push(strategy);
       return body;
     },
     generate: async (): Promise<string> => patchOps,
   };
-  return { generator: generator as unknown as Generator, existingStateSeen };
+  return { generator: generator as unknown as Generator, existingStateSeen, strategiesSeen };
 }
 
 async function seedActiveConcept(
@@ -216,5 +223,52 @@ test("correct rewrites from the existing prose", async () => {
   } finally {
     db.close();
     removeDir(lorePath);
+  }
+});
+
+/**
+ * `patch` asks the generator to keep the paragraphs the entries do not touch.
+ * A create has none, so the model answered by asking for the state it was
+ * never given, and the concept landed holding that sentence instead of a body.
+ */
+test("a create writes with replace, whatever strategy the close was given", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-planner-");
+  try {
+    const narrative = await seedJournalEntry(db, lorePath, "make-gamma", "gamma", [
+      { op: "create", concept: "gamma" },
+    ]);
+    const { generator, strategiesSeen } = recordingGenerator("The gamma concept holds the rules.");
+
+    const plan = await buildExplicitClosePlan(db, narrative, generator, "patch");
+
+    expect(strategiesSeen).toEqual(["replace"]);
+    expect(plan.creates).toHaveLength(1);
+    expect(plan.creates[0]!.content).toBe("The gamma concept holds the rules.");
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+test("a create ignores extend and correct too", async () => {
+  for (const asked of ["extend", "correct"] as const) {
+    const db = createTestDb();
+    const lorePath = createTempDir("lore-planner-");
+    try {
+      const narrative = await seedJournalEntry(db, lorePath, `make-${asked}`, "delta", [
+        { op: "create", concept: "delta" },
+      ]);
+      const { generator, strategiesSeen } = recordingGenerator(
+        "The delta concept holds the rules.",
+      );
+
+      await buildExplicitClosePlan(db, narrative, generator, asked);
+
+      expect(strategiesSeen).toEqual(["replace"]);
+    } finally {
+      db.close();
+      removeDir(lorePath);
+    }
   }
 });

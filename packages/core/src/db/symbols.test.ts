@@ -7,6 +7,7 @@ import {
   countOrphanedSymbolRows,
   deleteOrphanedSymbolRows,
   sumOrphanedSymbolRows,
+  findSymbolsByName,
 } from "./symbols.ts";
 import { upsertSourceFile } from "./source-files.ts";
 import { insertSymbolEmbedding } from "./embeddings.ts";
@@ -128,5 +129,90 @@ test("a NULL symbol id does not stop the sweep", () => {
   expect(deleteOrphanedSymbolRows(db)).toEqual({ symbol_embeddings: 1, symbol_fts: 1 });
   expect(countOrphanedSymbolRows(db)).toEqual({ symbol_embeddings: 0, symbol_fts: 0 });
 
+  db.close();
+});
+
+/** A method carries a qualified name its class prefixes, and a reader types
+ *  the short name every listing prints. */
+function addMethod(db: Database, sourceFileId: string, owner: string, name: string): string {
+  return insertSymbol(db, {
+    sourceFileId,
+    name,
+    qualifiedName: `${owner}.${name}`,
+    kind: "method",
+    parentId: null,
+    lineStart: 12,
+    lineEnd: 20,
+    signature: null,
+    bodyHash: `body-${owner}-${name}`,
+    exportStatus: "exported",
+  }).id;
+}
+
+test("findSymbolsByName returns every symbol sharing a short name", () => {
+  const db = createTestDb();
+  const engine = addFile(db, "src/engine.ts");
+  const worker = addFile(db, "src/worker.ts");
+  const first = addMethod(db, engine, "LoreEngine", "open");
+  const second = addMethod(db, worker, "WorkerClient", "open");
+
+  const found = findSymbolsByName(db, "open");
+
+  expect(found.map((s) => s.id)).toEqual([first, second]);
+  expect(found.map((s) => s.file_path)).toEqual(["src/engine.ts", "src/worker.ts"]);
+  db.close();
+});
+
+test("findSymbolsByName matches a qualified name too", () => {
+  const db = createTestDb();
+  const engine = addFile(db, "src/engine.ts");
+  const wanted = addMethod(db, engine, "LoreEngine", "open");
+  addMethod(db, addFile(db, "src/worker.ts"), "WorkerClient", "open");
+
+  const found = findSymbolsByName(db, "LoreEngine.open");
+
+  expect(found.map((s) => s.id)).toEqual([wanted]);
+  db.close();
+});
+
+test("findSymbolsByName returns both rows when a constant is declared twice", () => {
+  const db = createTestDb();
+  const a = addSymbol(db, addFile(db, "src/sdk.ts"), "GENERATION_PROMPT_KEYS");
+  const b = addSymbol(db, addFile(db, "src/worker.ts"), "GENERATION_PROMPT_KEYS");
+
+  expect(
+    findSymbolsByName(db, "GENERATION_PROMPT_KEYS")
+      .map((s) => s.id)
+      .sort(),
+  ).toEqual([a, b].sort());
+  db.close();
+});
+
+test("findSymbolsByName finds nothing for a name no file declares", () => {
+  const db = createTestDb();
+  addSymbol(db, addFile(db, "src/a.ts"), "present");
+
+  expect(findSymbolsByName(db, "absent")).toHaveLength(0);
+  db.close();
+});
+
+/** A top-level `parse` and a `Lexer.parse` both answer to the short name. */
+test("an exact qualified name wins alone", () => {
+  const db = createTestDb();
+  const top = addSymbol(db, addFile(db, "src/top.ts"), "parse");
+  addMethod(db, addFile(db, "src/lexer.ts"), "Lexer", "parse");
+
+  // The bare name reaches both, and the qualified form names one.
+  expect(findSymbolsByName(db, "parse").map((s) => s.id)).toEqual([top]);
+  expect(findSymbolsByName(db, "Lexer.parse")).toHaveLength(1);
+  db.close();
+});
+
+test("two short-name matches with no exact qualified hit both return", () => {
+  const db = createTestDb();
+  addMethod(db, addFile(db, "src/a.ts"), "A", "run");
+  addMethod(db, addFile(db, "src/b.ts"), "B", "run");
+
+  expect(findSymbolsByName(db, "run")).toHaveLength(2);
   db.close();
 });

@@ -1496,6 +1496,14 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 },
                 options: {
                   confidence: { type: "number", description: "Binding confidence [0–1]" },
+                  file: {
+                    type: "string",
+                    description: "File holding the symbol, when the name is not unique",
+                  },
+                  line: {
+                    type: "number",
+                    description: "First line of the symbol, when one file declares the name twice",
+                  },
                 },
                 async action({ args, options }) {
                   await conceptBindCommand(
@@ -1503,6 +1511,8 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     args.concept,
                     args.symbol,
                     options.confidence as number | undefined,
+                    options.file as string | undefined,
+                    options.line as number | undefined,
                   );
                 },
               }),
@@ -1513,8 +1523,24 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                   concept: { type: "string", required: true, description: "Concept name" },
                   symbol: { type: "string", required: true, description: "Symbol qualified name" },
                 },
-                async action({ args }) {
-                  await conceptUnbindCommand(getWorker(), args.concept, args.symbol);
+                options: {
+                  file: {
+                    type: "string",
+                    description: "File holding the symbol, when the name is bound more than once",
+                  },
+                  line: {
+                    type: "number",
+                    description: "First line of the symbol, when one file declares the name twice",
+                  },
+                },
+                async action({ args, options }) {
+                  await conceptUnbindCommand(
+                    getWorker(),
+                    args.concept,
+                    args.symbol,
+                    options.file as string | undefined,
+                    options.line as number | undefined,
+                  );
                 },
               }),
             },

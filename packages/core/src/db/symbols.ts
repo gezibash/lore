@@ -292,6 +292,42 @@ export function searchSymbols(
   return db.query<SymbolSearchResult, (string | number)[]>(exactSql).all(...exactParams);
 }
 
+/** Every symbol that answers to this name, exact match.
+ *
+ *  `getSymbolByQualifiedName` reads one row of the result and drops the rest,
+ *  which makes it wrong for anything a reader typed: three methods are named
+ *  `open` and two constants are named `GENERATION_PROMPT_KEYS`. A caller that
+ *  binds or unbinds must see all of them, and say so when the name alone
+ *  cannot pick one.
+ *
+ *  The name matches `qualified_name` or `name`. A method carries the
+ *  qualified form `LoreEngine.open`, and a reader types `open`, which is what
+ *  every listing prints.
+ *
+ *  An exact `qualified_name` match wins alone. A top-level `parse` and a
+ *  `Lexer.parse` both answer to the short name `parse`, and returning both for
+ *  the query `parse` made a symbol that used to bind exactly read as
+ *  ambiguous. Writing the qualified form is how a caller says which one.
+ *
+ *  Test files are not filtered here. Binding excludes them, and
+ *  `findBindableSymbolsByName` applies that policy; this helper answers what
+ *  the index holds. */
+export function findSymbolsByName(
+  db: Database,
+  name: string,
+): (SymbolRow & { file_path: string })[] {
+  const rows = db
+    .query<SymbolRow & { file_path: string }, [string, string]>(
+      `SELECT s.*, sf.file_path FROM symbols s
+       JOIN source_files sf ON s.source_file_id = sf.id
+       WHERE s.qualified_name = ? OR s.name = ?
+       ORDER BY sf.file_path, s.line_start`,
+    )
+    .all(name, name);
+  const qualified = rows.filter((row) => row.qualified_name === name);
+  return qualified.length > 0 ? qualified : rows;
+}
+
 export function getSymbolByQualifiedName(
   db: Database,
   qualifiedName: string,

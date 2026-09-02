@@ -37,5 +37,5 @@ export async function logCommand(
     symbols: opts.symbols,
     refs,
   });
-  emit(result, (value) => formatLogCli(value.note));
+  emit(result, (value) => formatLogCli(value));
 }

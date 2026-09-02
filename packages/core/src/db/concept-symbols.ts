@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type {
   ConceptSymbolRow,
   ConceptBindingSummary,
+  BoundSymbolMatch,
   SymbolConceptMatch,
   SymbolDriftResult,
   BindingType,
@@ -172,6 +173,35 @@ export function getDriftedBindings(db: Database): SymbolDriftResult[] {
     .all();
 }
 
+/** The bindings on one concept that carry this symbol name.
+ *
+ *  A binding holds a symbol id, and a name repeats across files: this
+ *  repository has two `GENERATION_PROMPT_KEYS` and many methods named `open`.
+ *  A lookup by name over the whole index returns one row of several, so a
+ *  caller that deletes by that row deletes nothing when it draws the symbol
+ *  nobody bound. Search this concept's own bindings instead, and let the
+ *  caller pick a file when more than one remains.
+ *
+ *  The name matches `qualified_name` or `name`, because `lore sys concept
+ *  bindings` prints the short name and a reader types back what it printed. */
+export function findBoundSymbolsByName(
+  db: Database,
+  conceptId: string,
+  name: string,
+): BoundSymbolMatch[] {
+  return db
+    .query<BoundSymbolMatch, [string, string, string]>(
+      `SELECT cs.symbol_id, s.name AS symbol_name, s.kind AS symbol_kind,
+              sf.file_path, s.line_start
+       FROM concept_symbols cs
+       JOIN symbols s ON cs.symbol_id = s.id
+       JOIN source_files sf ON s.source_file_id = sf.id
+       WHERE cs.concept_id = ? AND (s.qualified_name = ? OR s.name = ?)
+       ORDER BY sf.file_path, s.line_start`,
+    )
+    .all(conceptId, name, name);
+}
+
 export function deleteConceptSymbol(db: Database, conceptId: string, symbolId: string): boolean {
   const result = db.run(`DELETE FROM concept_symbols WHERE concept_id = ? AND symbol_id = ?`, [
     conceptId,
@@ -191,7 +221,7 @@ export function getBindingSummariesForConcept(
 ): ConceptBindingSummary[] {
   return db
     .query<ConceptBindingSummary, [string]>(
-      `SELECT s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
+      `SELECT cs.symbol_id, s.name AS symbol_name, s.qualified_name AS symbol_qualified_name,
               s.kind AS symbol_kind, sf.file_path, s.line_start,
               cs.binding_type, cs.confidence
        FROM concept_symbols cs

@@ -467,9 +467,20 @@ export interface OpenResult {
   };
 }
 
+/** A `--symbol` name that reached no single symbol, and the reason.
+ *  `ambiguous` carries the places, so a reader can name one. */
+export interface UnattachedSymbol {
+  name: string;
+  reason: "ambiguous" | "unknown";
+  places?: string[];
+}
+
 export interface LogResult {
   saved: boolean;
   note?: string;
+  /** The `--symbol` names that attached to nothing. The entry still saved:
+   *  a symbol is metadata, and the prose is the finding. */
+  unattached_symbols?: UnattachedSymbol[];
 }
 
 export interface NoteOptions {
@@ -1573,6 +1584,9 @@ export interface ConceptSymbolRow {
 }
 
 export interface ConceptBindingSummary {
+  /** The row this binding points at. File and line do not name one: two
+   *  symbols can share a line, and `export const a = 1, b = 2;` writes two. */
+  symbol_id: string;
   symbol_name: string;
   symbol_qualified_name: string;
   symbol_kind: SymbolKind;
@@ -1700,7 +1714,12 @@ export type LoreErrorCode =
   | "LANCE_INDEX_UNAVAILABLE"
   | "JOB_WAIT_TIMEOUT"
   | "KPI_NOT_FOUND"
-  | "KPI_INVALID_VALUE";
+  | "KPI_INVALID_VALUE"
+  // note() routing failures
+  | "NOTE_NO_CONCEPTS"
+  | "NOTE_UNROUTABLE"
+  // one name, several symbols
+  | "SYMBOL_AMBIGUOUS";
 
 // ─── Config ───────────────────────────────────────────────
 export interface LoreConfig {
