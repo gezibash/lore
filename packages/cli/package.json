@@ -1,6 +1,6 @@
 {
   "name": "@lore/cli",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "bin": {
     "lore": "src/index.ts"
   },
