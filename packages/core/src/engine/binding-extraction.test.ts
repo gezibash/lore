@@ -11,7 +11,7 @@ import {
 import { upsertSourceFile } from "@/db/source-files.ts";
 import { insertSymbol } from "@/db/symbols.ts";
 import { writeStateChunk } from "@/storage/index.ts";
-import { extractBindingsForConcepts } from "./binding-extraction.ts";
+import { autoBindByFileOverlap, extractBindingsForConcepts } from "./binding-extraction.ts";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
 
 function addSymbol(db: Database, name: string): string {
@@ -96,4 +96,69 @@ test("the binding refresh keeps an explicit ref binding", async () => {
     db.close();
     removeDir(lorePath);
   }
+});
+
+/** Several symbols in one file, the shape of a barrel module. */
+function addExportsIn(db: Database, filePath: string, names: string[]): string[] {
+  const file = upsertSourceFile(db, {
+    filePath,
+    language: "typescript",
+    contentHash: `hash-${filePath}`,
+    sizeBytes: 400,
+    symbolCount: names.length,
+  });
+  return names.map(
+    (name, index) =>
+      insertSymbol(db, {
+        sourceFileId: file.id,
+        name,
+        qualifiedName: name,
+        kind: "function",
+        parentId: null,
+        lineStart: (index + 1) * 10,
+        lineEnd: (index + 1) * 10 + 4,
+        signature: null,
+        bodyHash: `body-${name}`,
+        exportStatus: "exported",
+      }).id,
+  );
+}
+
+/**
+ * This is why the close path does not call the sweep.
+ *
+ * One binding into a barrel module binds every export of it, whatever the
+ * concept is about. In this repository `packages/sdk/src/index.ts` carries
+ * about thirty exports, and two unrelated concepts each ended up holding the
+ * same thirty — a set that describes neither of them.
+ *
+ * The function stays for `autoBindSemantic`, which falls back to it when no
+ * code embedding model is configured, and for `heal`, which calls it only for
+ * a concept that holds no bindings at all.
+ */
+test("the file-overlap sweep binds every export of a file it touches once", async () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "posting-rules");
+  const [seed] = addExportsIn(db, "src/barrel.ts", [
+    "transferPaths",
+    "formatOpen",
+    "formatClose",
+    "KpiGoalOptions",
+  ]);
+  upsertConceptSymbol(db, {
+    conceptId: concept.id,
+    symbolId: seed!,
+    bindingType: "ref",
+    boundBodyHash: "body-transferPaths",
+    confidence: 0.5,
+  });
+
+  await autoBindByFileOverlap(db, { conceptIds: [concept.id] });
+
+  // One seed binding drew in all three siblings, none of which the concept
+  // names. The seed itself keeps the confidence it was given.
+  const bound = getBindingsForConcept(db, concept.id);
+  expect(bound).toHaveLength(4);
+  expect(bound.filter((b) => b.confidence === 0.8)).toHaveLength(3);
+  db.close();
 });

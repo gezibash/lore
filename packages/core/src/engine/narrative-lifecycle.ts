@@ -106,11 +106,7 @@ import {
 import type { ConceptSymbolLineRange } from "@/db/concept-symbols.ts";
 import { getConceptRelations, get2HopNeighbors } from "@/db/concept-relations.ts";
 import { rescanFiles } from "./scanner.ts";
-import {
-  extractBindingsForConcepts,
-  pruneOrphanedBindings,
-  autoBindByFileOverlap,
-} from "./binding-extraction.ts";
+import { extractBindingsForConcepts, pruneOrphanedBindings } from "./binding-extraction.ts";
 import type { FileRef, SymbolSearchResult } from "@/types/index.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Generator } from "./generator.ts";
@@ -3793,8 +3789,18 @@ export async function runCloseMaintenanceJob(
       const { filesFailed } = await rescanFiles(db, payload.codePath, [...filePaths]);
       rescanFailed = filesFailed;
     }
+    // Only name mentions bind here. The file-overlap sweep used to run next,
+    // and it bound every exported symbol of every file a concept already
+    // touched. One symbol in `packages/sdk/src/index.ts`, a barrel of about 30
+    // exports, therefore bound all 30 at 0.8 — and it bound the same 30 to the
+    // next concept that touched that file. Two concepts then carried the same
+    // set, which is proof the set describes neither. A reader of the concept
+    // cannot see that those bindings are noise, and `--mode code` injects
+    // their bodies.
+    //
+    // File adjacency is not evidence of subject. What is left is evidence: a
+    // name the prose states, and a symbol the writer passed to `--symbol`.
     await extractBindingsForConcepts(db, residualConceptIds);
-    await autoBindByFileOverlap(db, { conceptIds: residualConceptIds });
     pruneOrphanedBindings(db);
   }
 
