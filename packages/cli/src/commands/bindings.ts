@@ -24,8 +24,13 @@ export async function conceptUnbindCommand(
   concept: string,
   symbol: string,
   filePath?: string,
+  line?: number,
 ): Promise<void> {
-  const result = await client.unbindSymbol(concept, symbol, filePath ? { filePath } : undefined);
+  const result = await client.unbindSymbol(
+    concept,
+    symbol,
+    filePath || line !== undefined ? { filePath, line } : undefined,
+  );
   if (!result.removed) {
     const where = filePath ? ` in ${filePath}` : "";
     console.log(`No binding found for ${concept} ↔ ${symbol}${where}`);

@@ -446,7 +446,7 @@ interface LoreClientEngine {
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; filePath?: string },
+    opts?: { codePath?: string; filePath?: string; line?: number },
   ): { removed: boolean };
   symbolDrift(opts?: { codePath?: string }): SymbolDriftResult[];
   rebindAll(opts?: {
@@ -996,7 +996,7 @@ export class LoreClient {
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; filePath?: string },
+    opts?: { codePath?: string; filePath?: string; line?: number },
   ): { removed: boolean } {
     return this.engine.unbindSymbol(concept, symbolQualifiedName, opts);
   }

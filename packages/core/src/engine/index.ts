@@ -4445,12 +4445,17 @@ export class LoreEngine {
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; filePath?: string },
+    opts?: { codePath?: string; filePath?: string; line?: number },
   ): { removed: boolean } {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
     const bound = findBoundSymbolsByName(db, conceptRow.id, symbolQualifiedName);
-    const matches = opts?.filePath ? bound.filter((row) => row.file_path === opts.filePath) : bound;
+    // One file can declare a name twice: an Elixir function writes a clause per
+    // head, and a TypeScript overload repeats its signature. The file alone
+    // names both of those, so a line narrows it to one.
+    const matches = bound
+      .filter((row) => !opts?.filePath || row.file_path === opts.filePath)
+      .filter((row) => opts?.line === undefined || row.line_start === opts.line);
     if (matches.length === 0) {
       return { removed: false };
     }
@@ -4458,7 +4463,7 @@ export class LoreEngine {
       const where = matches.map((row) => `${row.file_path}:${row.line_start}`).join(", ");
       throw new LoreError(
         "SYMBOL_AMBIGUOUS",
-        `'${symbolQualifiedName}' is bound to ${concept} in ${matches.length} places. Pass --file with one of: ${where}`,
+        `'${symbolQualifiedName}' is bound to ${concept} in ${matches.length} places. Pass --file, and --line when one file holds several: ${where}`,
         { concept, symbol: symbolQualifiedName, matches },
       );
     }

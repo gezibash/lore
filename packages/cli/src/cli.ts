@@ -1523,6 +1523,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     type: "string",
                     description: "File holding the symbol, when the name is bound more than once",
                   },
+                  line: {
+                    type: "number",
+                    description: "First line of the symbol, when one file declares the name twice",
+                  },
                 },
                 async action({ args, options }) {
                   await conceptUnbindCommand(
@@ -1530,6 +1534,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     args.concept,
                     args.symbol,
                     options.file as string | undefined,
+                    options.line as number | undefined,
                   );
                 },
               }),
