@@ -1287,7 +1287,10 @@ export class LoreEngine {
       db,
       lorePath: entry.lore_path,
       embeddingModel: config.ai.embedding.model,
+      codePath: entry.code_path,
+      codeModel: config.ai.embedding.code?.model ?? null,
       getEmbedder: () => this.embedderFor(config, entry),
+      getCodeEmbedder: () => this.codeEmbedderFor(config, entry),
       getGenerator: () => this.generatorFor(config, entry),
     };
   }

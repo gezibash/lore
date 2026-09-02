@@ -30,6 +30,7 @@ import {
 } from "@/storage/index.ts";
 import { getBindingSummariesForConcept } from "@/db/concept-symbols.ts";
 import { readChunk } from "@/storage/chunk-reader.ts";
+import { measureGroundResiduals } from "./ground-residual.ts";
 import { createGenesisCommit } from "./narrative-lifecycle.ts";
 import type { Embedder } from "./embedder.ts";
 import { synthesizeConceptBody } from "./generator.ts";
@@ -71,8 +72,15 @@ export interface LifecycleDeps {
   db: Database;
   lorePath: string;
   embeddingModel: string;
+  /** The codebase, for reading the bodies a concept is bound to. Null leaves
+   *  the ground residual unmeasured. */
+  codePath: string | null;
+  /** The code embedding model's name, for the ground residual. */
+  codeModel: string | null;
   /** Resolved on first use — only operations that need it pay for it. */
   getEmbedder(): Promise<Embedder>;
+  /** Resolved on first use — only operations that need it pay for it. */
+  getCodeEmbedder(): Promise<Embedder | null>;
   /** Resolved on first use — only operations that need it pay for it. */
   getGenerator(): Promise<Generator>;
 }
@@ -681,6 +689,24 @@ export async function rebuildConcept(deps: LifecycleDeps, name: string): Promise
     deps.embeddingModel,
     { supersedesId: concept.active_chunk_id },
   );
+
+  // The ground residual measures the prose against the code it is bound to.
+  // A rebuild replaces both — it writes a new body from the current bindings —
+  // so leaving the stored number alone makes `lore status` report the distance
+  // of a body that no longer exists. Close measures it here; a rebuild did not,
+  // and the value survived a cleanup of 44 bindings unchanged to sixteen
+  // decimal places.
+  const measured = await measureGroundResiduals(db, {
+    codePath: deps.codePath,
+    targets: [{ conceptId: concept.id, content: newContent, textEmbedding: null }],
+    embedder: await deps.getEmbedder(),
+    codeEmbedder: await deps.getCodeEmbedder(),
+    codeModel: deps.codeModel,
+  });
+  const groundResidual = measured.get(concept.id) ?? null;
+  if (groundResidual != null) {
+    insertConceptVersion(db, concept.id, { ground_residual: groundResidual });
+  }
 
   await discoverConcepts(db, generator);
   const commit = snapshotCurrentTree(db, `lifecycle: rebuild ${concept.name}`);

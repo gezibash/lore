@@ -69,6 +69,10 @@ async function seedFixture(content = "original prose"): Promise<Fixture> {
       db,
       lorePath,
       embeddingModel: model,
+      // No codebase in these tests, so the ground residual stays unmeasured.
+      codePath: null,
+      codeModel: null,
+      getCodeEmbedder: async () => null,
       getEmbedder: async () =>
         ({
           embed: async () => new Float32Array([0, 1, 0]),
@@ -180,6 +184,10 @@ test("an embedding failure writes nothing at all", async () => {
       db: fx.db,
       lorePath: fx.lorePath,
       embeddingModel: model,
+      // No codebase in these tests, so the ground residual stays unmeasured.
+      codePath: null,
+      codeModel: null,
+      getCodeEmbedder: async () => null,
       getEmbedder: async () =>
         ({
           embed: async () => {
