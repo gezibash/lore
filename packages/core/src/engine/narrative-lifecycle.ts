@@ -8,6 +8,7 @@ import {
   type ReasoningLevel,
   type OpenResult,
   type LogResult,
+  type UnattachedSymbol,
   type QueryResult,
   type ExecutiveSummary,
   type JournalTrailEntry,
@@ -120,7 +121,7 @@ import { markLanceDirty } from "./lance-index.ts";
 import { isTestFilePath } from "./search.ts";
 import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
-import { searchSymbols, getSymbolByQualifiedName } from "@/db/symbols.ts";
+import { searchSymbols, findSymbolsByName } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
@@ -546,6 +547,46 @@ export interface LogEntryOpts {
   symbols?: string[];
 }
 
+/** Turn the `--symbol` names on an entry into symbol ids.
+ *
+ *  A name that reaches several symbols attaches to none of them. Close binds
+ *  every symbol on an entry to every concept the entry designates, so a wrong
+ *  pick here writes a binding that outlives the entry, and no reader of that
+ *  concept can see it is wrong. A binding that never happened costs one
+ *  `lore sys concept bind`.
+ *
+ *  There is no search fallback. FTS ranks candidates for a reader who judges
+ *  them; reading its first row settles an identity instead, and a typo then
+ *  becomes a binding.
+ *
+ *  Nothing here refuses. A symbol is metadata and the prose is the finding, so
+ *  a refusal would cost the finding to protect a label. The caller reports
+ *  what did not attach. */
+export function resolveEntrySymbols(
+  db: Database,
+  names: readonly string[] | undefined,
+): { attached: string[]; unattached: UnattachedSymbol[] } {
+  const attached: string[] = [];
+  const unattached: UnattachedSymbol[] = [];
+  for (const name of names ?? []) {
+    const found = findSymbolsByName(db, name);
+    if (found.length === 1) {
+      attached.push(found[0]!.id);
+      continue;
+    }
+    if (found.length === 0) {
+      unattached.push({ name, reason: "unknown" });
+      continue;
+    }
+    unattached.push({
+      name,
+      reason: "ambiguous",
+      places: found.map((sym) => `${sym.file_path}:${sym.line_start}`),
+    });
+  }
+  return { attached, unattached };
+}
+
 export async function logEntry(
   db: Database,
   lorePath: string,
@@ -589,24 +630,10 @@ export async function logEntry(
   const { designations: conceptDesignations, conceptRefs: resolvedConceptIds } =
     resolveJournalConceptDesignations(db, narrative, concepts);
 
-  // Resolve symbol names → IDs
-  const resolvedSymbolIds: string[] = [];
-  if (symbols && symbols.length > 0) {
-    for (const name of symbols) {
-      // Exact qualified name lookup first
-      const sym = getSymbolByQualifiedName(db, name);
-      if (sym) {
-        resolvedSymbolIds.push(sym.id);
-      } else {
-        // FTS fallback
-        const results = searchSymbols(db, name, { limit: 1 });
-        if (results.length > 0) {
-          resolvedSymbolIds.push(results[0]!.symbol_id);
-        }
-        // Unresolved names silently skipped
-      }
-    }
-  }
+  const { attached: resolvedSymbolIds, unattached: unattachedSymbols } = resolveEntrySymbols(
+    db,
+    symbols,
+  );
 
   // Auto-derive topics from concept names if concepts provided but topics empty
   const effectiveTopics = topics.length === 0 ? [...conceptDesignations] : topics;
@@ -674,7 +701,11 @@ export async function logEntry(
     notes.push(`${narrative.entry_count + 1} entries — consider closing soon`);
   }
 
-  return { saved: true, note: notes.length > 0 ? notes.join(". ") : undefined };
+  return {
+    saved: true,
+    note: notes.length > 0 ? notes.join(". ") : undefined,
+    unattached_symbols: unattachedSymbols.length > 0 ? unattachedSymbols : undefined,
+  };
 }
 
 export async function queryConcepts(

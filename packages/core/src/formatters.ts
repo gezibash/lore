@@ -54,9 +54,21 @@ export function formatOpen(result: OpenResult): string {
   return lines.join("\n");
 }
 
+/** One line per name that attached to nothing. A reader who cannot see this
+ *  reads the entry as carrying symbols it does not carry. */
+function unattachedLines(result: LogResult): string[] {
+  return (result.unattached_symbols ?? []).map((sym) =>
+    sym.reason === "unknown"
+      ? `'${sym.name}' matches no symbol — not attached.`
+      : `'${sym.name}' names ${sym.places?.length ?? 0} symbols — not attached. Name one of: ${(sym.places ?? []).join(", ")}`,
+  );
+}
+
 export function formatLog(result: LogResult): string {
   let text = result.saved ? "Entry saved." : "Failed to save entry.";
   if (result.note) text += ` ${result.note}`;
+  const unattached = unattachedLines(result);
+  if (unattached.length > 0) text += `\n${unattached.join("\n")}`;
   return text;
 }
 

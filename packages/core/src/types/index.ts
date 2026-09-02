@@ -450,9 +450,20 @@ export interface OpenResult {
   };
 }
 
+/** A `--symbol` name that reached no single symbol, and the reason.
+ *  `ambiguous` carries the places, so a reader can name one. */
+export interface UnattachedSymbol {
+  name: string;
+  reason: "ambiguous" | "unknown";
+  places?: string[];
+}
+
 export interface LogResult {
   saved: boolean;
   note?: string;
+  /** The `--symbol` names that attached to nothing. The entry still saved:
+   *  a symbol is metadata, and the prose is the finding. */
+  unattached_symbols?: UnattachedSymbol[];
 }
 
 export interface NoteOptions {

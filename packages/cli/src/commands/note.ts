@@ -1,5 +1,6 @@
 import type { WorkerClient, FileRef } from "@lore/worker";
 import { emit } from "../output.ts";
+import { formatUnattachedSymbolsCli } from "../formatters.ts";
 
 const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
@@ -49,6 +50,7 @@ export async function noteCommand(
         `${DIM}  filed under ${value.routed_concept} — pass --concept to override${RESET}`,
       );
     }
+    lines.push(...formatUnattachedSymbolsCli(value));
     return lines.join("\n");
   });
 }

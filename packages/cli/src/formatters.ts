@@ -4,6 +4,7 @@ import type {
   ConceptHealthExplainResult,
   ConceptRelationSummary,
   JournalDesignationResult,
+  LogResult,
   LsResult,
   ConceptRow,
   ConceptTagSummary,
@@ -158,9 +159,23 @@ export function formatRegisterCli(codePath: string, lorePath: string): string {
   ].join("\n");
 }
 
-export function formatLogCli(note?: string): string {
+/** One line per `--symbol` name that attached to nothing. A writer who cannot
+ *  see this reads the entry as carrying symbols it does not carry. */
+export function formatUnattachedSymbolsCli(result: LogResult): string[] {
+  return (result.unattached_symbols ?? []).map((sym) => {
+    const why =
+      sym.reason === "unknown"
+        ? "matches no symbol"
+        : `names ${sym.places?.length ?? 0} symbols — name one of: ${(sym.places ?? []).join(", ")}`;
+    return `  ${YELLOW}!${RESET} ${CYAN}${sym.name}${RESET} ${why}. ${DIM}Not attached.${RESET}`;
+  });
+}
+
+export function formatLogCli(result: LogResult): string {
   let text = `${GREEN}✓${RESET} Entry saved.`;
-  if (note) text += ` ${DIM}${note}${RESET}`;
+  if (result.note) text += ` ${DIM}${result.note}${RESET}`;
+  const unattached = formatUnattachedSymbolsCli(result);
+  if (unattached.length > 0) text += `\n${unattached.join("\n")}`;
   return text;
 }
 
