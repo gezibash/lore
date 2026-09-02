@@ -1459,6 +1459,17 @@ export interface ConceptBindingSummary {
   confidence: number;
 }
 
+/** One binding on a concept, found by the symbol name a reader typed.
+ *  `lore sys concept unbind` needs the symbol id to delete the row, and the
+ *  file path to tell two same-named bindings apart. */
+export interface BoundSymbolMatch {
+  symbol_id: string;
+  symbol_name: string;
+  symbol_kind: SymbolKind;
+  file_path: string;
+  line_start: number;
+}
+
 export interface SymbolDriftResult {
   concept_id: string;
   concept_name: string;
@@ -1584,7 +1595,9 @@ export type LoreErrorCode =
   | "KPI_INVALID_VALUE"
   // note() routing failures
   | "NOTE_NO_CONCEPTS"
-  | "NOTE_UNROUTABLE";
+  | "NOTE_UNROUTABLE"
+  // one name, several symbols
+  | "SYMBOL_AMBIGUOUS";
 
 export class LoreError extends Error {
   constructor(

@@ -441,12 +441,12 @@ interface LoreClientEngine {
   bindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; confidence?: number },
+    opts?: { codePath?: string; confidence?: number; filePath?: string },
   ): ConceptBindingSummary;
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string },
+    opts?: { codePath?: string; filePath?: string },
   ): { removed: boolean };
   symbolDrift(opts?: { codePath?: string }): SymbolDriftResult[];
   rebindAll(opts?: {
@@ -988,7 +988,7 @@ export class LoreClient {
   bindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; confidence?: number },
+    opts?: { codePath?: string; confidence?: number; filePath?: string },
   ): ConceptBindingSummary {
     return this.engine.bindSymbol(concept, symbolQualifiedName, opts);
   }
@@ -996,7 +996,7 @@ export class LoreClient {
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string },
+    opts?: { codePath?: string; filePath?: string },
   ): { removed: boolean } {
     return this.engine.unbindSymbol(concept, symbolQualifiedName, opts);
   }

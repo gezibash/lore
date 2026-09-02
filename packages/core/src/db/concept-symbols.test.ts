@@ -6,6 +6,7 @@ import {
   getBindingCounts,
   getBindingsForConcept,
   getExplicitBindingSymbolIds,
+  findBoundSymbolsByName,
   pruneOrphanedBindings,
   upsertConceptSymbol,
   upsertInferredConceptSymbol,
@@ -166,5 +167,66 @@ test("the inferred delete keeps the explicit bindings", () => {
 
   expect(getBindingCounts(db)).toMatchObject({ ref: 1, mention: 0 });
   expect([...getExplicitBindingSymbolIds(db, concept.id)]).toEqual([stated]);
+  db.close();
+});
+
+/** Two files declare `open`, and the concept binds the one in worker.ts. A
+ *  lookup over every symbol of that name can return the other. */
+function addSymbolIn(db: Database, file: string, name: string): string {
+  const source = upsertSourceFile(db, {
+    filePath: file,
+    language: "typescript",
+    contentHash: `hash-${file}`,
+    sizeBytes: 100,
+    symbolCount: 1,
+  });
+  return insertSymbol(db, {
+    sourceFileId: source.id,
+    name,
+    qualifiedName: name,
+    kind: "function",
+    parentId: null,
+    lineStart: 7,
+    lineEnd: 9,
+    signature: null,
+    bodyHash: `body-${file}-${name}`,
+    exportStatus: "exported",
+  }).id;
+}
+
+test("findBoundSymbolsByName reads only the bindings of that concept", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "cli-surface");
+  const bound = addSymbolIn(db, "src/worker.ts", "open");
+  const unbound = addSymbolIn(db, "src/engine.ts", "open");
+  bind(db, concept.id, bound);
+
+  const matches = findBoundSymbolsByName(db, concept.id, "open");
+
+  expect(matches).toHaveLength(1);
+  expect(matches[0]?.symbol_id).toBe(bound);
+  expect(matches[0]?.file_path).toBe("src/worker.ts");
+  expect(matches.some((m) => m.symbol_id === unbound)).toBe(false);
+  db.close();
+});
+
+test("findBoundSymbolsByName returns every file when one concept binds both", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "cli-surface");
+  bind(db, concept.id, addSymbolIn(db, "src/worker.ts", "open"));
+  bind(db, concept.id, addSymbolIn(db, "src/engine.ts", "open"));
+
+  const matches = findBoundSymbolsByName(db, concept.id, "open");
+
+  expect(matches.map((m) => m.file_path)).toEqual(["src/engine.ts", "src/worker.ts"]);
+  db.close();
+});
+
+test("findBoundSymbolsByName finds nothing for a name the concept never bound", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "cli-surface");
+  addSymbolIn(db, "src/engine.ts", "open");
+
+  expect(findBoundSymbolsByName(db, concept.id, "open")).toHaveLength(0);
   db.close();
 });

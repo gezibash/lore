@@ -292,6 +292,31 @@ export function searchSymbols(
   return db.query<SymbolSearchResult, (string | number)[]>(exactSql).all(...exactParams);
 }
 
+/** Every symbol that answers to this name, exact match.
+ *
+ *  `getSymbolByQualifiedName` reads one row of the result and drops the rest,
+ *  which makes it wrong for anything a reader typed: three methods are named
+ *  `open` and two constants are named `GENERATION_PROMPT_KEYS`. A caller that
+ *  binds or unbinds must see all of them, and say so when the name alone
+ *  cannot pick one.
+ *
+ *  The name matches `qualified_name` or `name`. A method carries the
+ *  qualified form `LoreEngine.open`, and a reader types `open`, which is what
+ *  every listing prints. */
+export function findSymbolsByName(
+  db: Database,
+  name: string,
+): (SymbolRow & { file_path: string })[] {
+  return db
+    .query<SymbolRow & { file_path: string }, [string, string]>(
+      `SELECT s.*, sf.file_path FROM symbols s
+       JOIN source_files sf ON s.source_file_id = sf.id
+       WHERE s.qualified_name = ? OR s.name = ?
+       ORDER BY sf.file_path, s.line_start`,
+    )
+    .all(name, name);
+}
+
 export function getSymbolByQualifiedName(
   db: Database,
   qualifiedName: string,

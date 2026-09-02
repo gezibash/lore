@@ -289,7 +289,7 @@ import type { AutoBindResult } from "./binding-extraction.ts";
 import {
   searchSymbols,
   getSymbolsForFilePath,
-  getSymbolByQualifiedName,
+  findSymbolsByName,
   getSymbolCount,
 } from "@/db/symbols.ts";
 import {
@@ -300,6 +300,7 @@ import {
 import {
   getBindingSummariesForConcept,
   deleteConceptSymbol,
+  findBoundSymbolsByName,
   upsertConceptSymbol,
   getDriftedBindings,
   getBindingCounts,
@@ -4380,20 +4381,37 @@ export class LoreEngine {
     return getBindingSummariesForConcept(db, row.id);
   }
 
+  /** Bind one symbol, named by what a listing prints.
+   *
+   *  The search reads the whole index, because the symbol is not bound yet.
+   *  A name repeats there — three methods answer to `open` — so several
+   *  matches refuse and name the files rather than binding an arbitrary one.
+   *  `filePath` chooses. This mirrors `unbindSymbol`, which searches the one
+   *  concept instead. */
   bindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string; confidence?: number },
+    opts?: { codePath?: string; confidence?: number; filePath?: string },
   ): ConceptBindingSummary {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
-    const symbolRow = getSymbolByQualifiedName(db, symbolQualifiedName);
-    if (!symbolRow) {
+    const found = findSymbolsByName(db, symbolQualifiedName);
+    const candidates = opts?.filePath
+      ? found.filter((row) => row.file_path === opts.filePath)
+      : found;
+    if (candidates.length === 0) {
+      const where = opts?.filePath ? ` in ${opts.filePath}` : "";
+      throw new LoreError("CONCEPT_NOT_FOUND", `No symbol named '${symbolQualifiedName}'${where}`);
+    }
+    if (candidates.length > 1) {
+      const places = candidates.map((row) => `${row.file_path}:${row.line_start}`).join(", ");
       throw new LoreError(
-        "CONCEPT_NOT_FOUND",
-        `No symbol with qualified name '${symbolQualifiedName}'`,
+        "SYMBOL_AMBIGUOUS",
+        `'${symbolQualifiedName}' names ${candidates.length} symbols. Pass --file with one of: ${places}`,
+        { concept, symbol: symbolQualifiedName, candidates },
       );
     }
+    const symbolRow = candidates[0]!;
     upsertConceptSymbol(db, {
       conceptId: conceptRow.id,
       symbolId: symbolRow.id,
@@ -4401,23 +4419,47 @@ export class LoreEngine {
       boundBodyHash: symbolRow.body_hash,
       confidence: opts?.confidence ?? 1.0,
     });
+    // File and line identify the row a reader named. The qualified name does
+    // not: a short name matches no summary, and `LoreEngine.open` matches the
+    // binding in every class that declares one.
     const summaries = getBindingSummariesForConcept(db, conceptRow.id);
-    const match = summaries.find((s) => s.symbol_qualified_name === symbolQualifiedName);
+    const match = summaries.find(
+      (s) => s.file_path === symbolRow.file_path && s.line_start === symbolRow.line_start,
+    );
     return match!;
   }
 
+  /** Remove one binding, named by its symbol.
+   *
+   *  The match runs over this concept's own bindings. A global lookup by name
+   *  returns one symbol of several that share it, and deleting by that symbol
+   *  removes nothing whenever it picks the one nobody bound — the command then
+   *  reported "no binding found" against a binding the listing still printed.
+   *
+   *  Two bindings on one concept can still share a name, in different files.
+   *  That refuses and names the files: a caller passes `filePath` to choose.
+   *  Deleting both would be a second guess at which one the caller meant. */
   unbindSymbol(
     concept: string,
     symbolQualifiedName: string,
-    opts?: { codePath?: string },
+    opts?: { codePath?: string; filePath?: string },
   ): { removed: boolean } {
     const { db } = this.resolveLoreMind(opts?.codePath);
     const conceptRow = resolveConceptByNameCi(db, concept, { activeOnly: true });
-    const symbolRow = getSymbolByQualifiedName(db, symbolQualifiedName);
-    if (!symbolRow) {
+    const bound = findBoundSymbolsByName(db, conceptRow.id, symbolQualifiedName);
+    const matches = opts?.filePath ? bound.filter((row) => row.file_path === opts.filePath) : bound;
+    if (matches.length === 0) {
       return { removed: false };
     }
-    const removed = deleteConceptSymbol(db, conceptRow.id, symbolRow.id);
+    if (matches.length > 1) {
+      const where = matches.map((row) => `${row.file_path}:${row.line_start}`).join(", ");
+      throw new LoreError(
+        "SYMBOL_AMBIGUOUS",
+        `'${symbolQualifiedName}' is bound to ${concept} in ${matches.length} places. Pass --file with one of: ${where}`,
+        { concept, symbol: symbolQualifiedName, matches },
+      );
+    }
+    const removed = deleteConceptSymbol(db, conceptRow.id, matches[0]!.symbol_id);
     return { removed };
   }
 
