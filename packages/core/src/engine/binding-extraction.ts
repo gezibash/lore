@@ -14,6 +14,7 @@ import { readChunk } from "@/storage/chunk-reader.ts";
 import { Embedder } from "./embedder.ts";
 import { cosineDistance } from "./residuals.ts";
 import { readSymbolContent } from "./git.ts";
+import { isTestFilePath } from "./search.ts";
 import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -40,6 +41,28 @@ export interface AutoBindResult {
  * Get all symbols from the database with their file paths.
  * Returns a map of symbol name → SymbolRow[] for efficient lookup.
  */
+/** Whether a symbol name is specific enough to read as a reference to it.
+ *
+ *  A word-boundary match cannot tell a reference from a sentence. Symbols in
+ *  this repository are named `from`, `name`, `open`, `note`, `call`, `clear`,
+ *  `concept`, `target`, `write` and `search`, and prose about a note routed to
+ *  an open narrative contains four of them. Closing one narrative bound 28
+ *  such symbols to one concept, among them a function named `name` in an
+ *  Elixir test fixture.
+ *
+ *  An all-lowercase word carries no evidence that a writer meant the symbol,
+ *  so it is prose here. Every other shape a symbol takes is kept: an internal
+ *  capital (`routeConcept`, `LoreEngine`), an underscore (`INBOX_NARRATIVE`),
+ *  a digit, or a leading capital (`Embedder`).
+ *
+ *  A genuinely all-lowercase symbol therefore never binds by mention. That is
+ *  the trade: `lore write --symbol` and `lore sys concept bind` state one in a
+ *  line, and no reader can see that an inferred binding is wrong. */
+export function isSymbolShapedName(name: string): boolean {
+  if (name.length < 3) return false;
+  return !/^[a-z]+$/.test(name);
+}
+
 function getAllSymbolsByName(db: Database): Map<string, Array<SymbolRow & { file_path: string }>> {
   const rows = db
     .query<SymbolRow & { file_path: string }, []>(
@@ -51,6 +74,10 @@ function getAllSymbolsByName(db: Database): Map<string, Array<SymbolRow & { file
 
   const byName = new Map<string, Array<SymbolRow & { file_path: string }>>();
   for (const row of rows) {
+    // Retrieval only ranks a test below the code it exercises. A binding must
+    // exclude it: a concept explains the implementation, and a test fixture
+    // named `name` is not a statement about any subject.
+    if (isTestFilePath(row.file_path)) continue;
     const existing = byName.get(row.name);
     if (existing) {
       existing.push(row);
@@ -107,8 +134,7 @@ export async function extractBindingsForConcepts(
 
     // Word-boundary match symbol names against concept content
     for (const [symbolName, symbols] of symbolsByName) {
-      // Skip very short names to avoid false positives
-      if (symbolName.length < 3) continue;
+      if (!isSymbolShapedName(symbolName)) continue;
 
       const escaped = symbolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const re = new RegExp(`\\b${escaped}\\b`);

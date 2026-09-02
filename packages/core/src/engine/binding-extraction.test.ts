@@ -11,7 +11,11 @@ import {
 import { upsertSourceFile } from "@/db/source-files.ts";
 import { insertSymbol } from "@/db/symbols.ts";
 import { writeStateChunk } from "@/storage/index.ts";
-import { autoBindByFileOverlap, extractBindingsForConcepts } from "./binding-extraction.ts";
+import {
+  autoBindByFileOverlap,
+  extractBindingsForConcepts,
+  isSymbolShapedName,
+} from "./binding-extraction.ts";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
 
 function addSymbol(db: Database, name: string): string {
@@ -161,4 +165,31 @@ test("the file-overlap sweep binds every export of a file it touches once", asyn
   expect(bound).toHaveLength(4);
   expect(bound.filter((b) => b.confidence === 0.8)).toHaveLength(3);
   db.close();
+});
+
+test("an all-lowercase word is prose, not a symbol reference", () => {
+  // Every one of these names a symbol in this repository, and every one is a
+  // word ordinary prose about narratives and concepts contains.
+  for (const word of ["from", "name", "open", "note", "call", "clear", "concept", "search"]) {
+    expect(isSymbolShapedName(word)).toBe(false);
+  }
+});
+
+test("a name a writer could only have meant as a symbol is kept", () => {
+  for (const name of [
+    "routeConcept",
+    "LoreEngine",
+    "INBOX_NARRATIVE",
+    "getOpenNarratives",
+    "Embedder",
+    "snake_case_name",
+    "parse2",
+  ]) {
+    expect(isSymbolShapedName(name)).toBe(true);
+  }
+});
+
+test("a name under three characters is never evidence", () => {
+  expect(isSymbolShapedName("id")).toBe(false);
+  expect(isSymbolShapedName("Db")).toBe(false);
 });
