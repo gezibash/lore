@@ -7,6 +7,7 @@ import {
   getBindingsForConcept,
   getExplicitBindingSymbolIds,
   findBoundSymbolsByName,
+  getUncoveredSymbols,
   pruneOrphanedBindings,
   upsertConceptSymbol,
   upsertInferredConceptSymbol,
@@ -219,6 +220,52 @@ test("findBoundSymbolsByName returns every file when one concept binds both", ()
   const matches = findBoundSymbolsByName(db, concept.id, "open");
 
   expect(matches.map((m) => m.file_path)).toEqual(["src/engine.ts", "src/worker.ts"]);
+  db.close();
+});
+
+test("an upsert on an existing pair returns the row that is stored", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "cli-surface");
+  const symbol = addSymbol(db, "open");
+
+  const first = upsertConceptSymbol(db, {
+    conceptId: concept.id,
+    symbolId: symbol,
+    bindingType: "mention",
+    boundBodyHash: "body-1",
+    confidence: 0.4,
+  });
+  const second = upsertConceptSymbol(db, {
+    conceptId: concept.id,
+    symbolId: symbol,
+    bindingType: "ref",
+    boundBodyHash: "body-2",
+    confidence: 1,
+  });
+
+  // A fresh ulid on conflict is not the row. Callers that log or re-read by
+  // that id would look at a binding that does not exist.
+  expect(second.id).toBe(first.id);
+  expect(getBindingsForConcept(db, concept.id)).toEqual([
+    expect.objectContaining({
+      id: first.id,
+      binding_type: "ref",
+      bound_body_hash: "body-2",
+      confidence: 1,
+    }),
+  ]);
+  db.close();
+});
+
+test("getUncoveredSymbols lists a symbol that no concept binds", () => {
+  const db = createTestDb();
+  const concept = insertConcept(db, "cli-surface");
+  const bound = addSymbol(db, "open");
+  const free = addSymbol(db, "close");
+  bind(db, concept.id, bound);
+
+  const uncovered = getUncoveredSymbols(db);
+  expect(uncovered.map((s) => s.symbol_id)).toEqual([free]);
   db.close();
 });
 

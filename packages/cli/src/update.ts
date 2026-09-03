@@ -11,7 +11,7 @@
  * file, so a single file swap would remove the native libraries.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -100,10 +100,35 @@ export async function refreshUpdateCache(): Promise<string | null> {
   return latest;
 }
 
+/**
+ * The child that refreshes the update cache.
+ *
+ * A compiled binary is its own entry: `execPath` is lore. A source run is bun
+ * plus the CLI script. Passing only `sys` to bun would run `bun sys ...` and
+ * fail, so the cache would never refresh.
+ */
+export function updateCheckSpawnArgs(
+  execPath = process.execPath,
+  argv1 = process.argv[1],
+): { command: string; args: string[] } {
+  if (argv1) {
+    try {
+      realpathSync(argv1);
+      if (argv1.endsWith("/cli/src/index.ts")) {
+        return { command: execPath, args: [argv1, "sys", "update-check", "--refresh"] };
+      }
+    } catch {
+      // A compiled binary reports a virtual path. It runs the subcommand itself.
+    }
+  }
+  return { command: execPath, args: ["sys", "update-check", "--refresh"] };
+}
+
 /** Start a detached child that refreshes the cache, then forget about it. */
 function startBackgroundRefresh(): void {
   try {
-    const child = spawn(process.execPath, ["sys", "update-check", "--refresh"], {
+    const { command, args } = updateCheckSpawnArgs();
+    const child = spawn(command, args, {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, LORE_NO_UPDATE_CHECK: "1" },
@@ -142,7 +167,9 @@ export function installPrefix(execPath: string): string | null {
   return libDir.endsWith("/lore") && lib.endsWith("/lib") ? prefix : null;
 }
 
-export type UpgradeResult = { ok: true; version: string } | { ok: false; reason: string };
+export type UpgradeResult =
+  | { ok: true; version: string }
+  | { ok: false; reason: string; alreadyLatest?: boolean };
 
 /**
  * Install the latest release over this one.
@@ -171,7 +198,11 @@ export async function runUpgrade(
   writeCache({ checked_at: Date.now(), latest });
 
   if (!isNewerVersion(latest, currentVersion)) {
-    return { ok: false, reason: `Already on the latest release (${normalize(currentVersion)}).` };
+    return {
+      ok: false,
+      reason: `Already on the latest release (${normalize(currentVersion)}).`,
+      alreadyLatest: true,
+    };
   }
 
   log(`Upgrading ${normalize(currentVersion)} → ${latest}`);

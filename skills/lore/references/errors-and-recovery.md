@@ -24,6 +24,31 @@ Recover by:
 - Opening a fresh narrative if the old one is closed, abandoned, or ambiguous.
 - Avoiding repeated retries against a ghost narrative name; pick a new name and continue.
 
+## `NOTE_NO_CONCEPTS`
+
+Meaning:
+
+- `lore note` has nowhere to file. The lore has no concepts yet.
+
+Recover by:
+
+- Running `lore ingest` and bootstrapping at least one concept.
+- Passing `--concept` after that concept exists.
+- Using `lore write` on a narrative that declares `--target create:<concept>`.
+
+## `NOTE_UNROUTABLE`
+
+Meaning:
+
+- `lore note` searched for a concept and none of the hits are a target this
+  narrative may write, or the search returned nothing it could file against.
+
+Recover by:
+
+- Passing `--concept` to name the destination.
+- Opening or resuming a narrative whose `--target` includes that concept.
+- Writing a more specific note, or adding `--ref` / `--symbol` so retrieval has more to match.
+
 ## `CONCEPT_NOT_FOUND`
 
 Meaning:

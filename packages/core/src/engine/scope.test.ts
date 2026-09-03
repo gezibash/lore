@@ -1,7 +1,12 @@
 import { expect, test, describe } from "bun:test";
-import { insertConcept } from "@/db/index.ts";
+import { insertConcept, insertConceptVersion } from "@/db/index.ts";
 import { createTestDb } from "../../test/support/db.ts";
-import { filterChunkIdsByScope, isUnderScope, normalizeScope } from "./scope.ts";
+import {
+  filterChunkIdsByScope,
+  filterItemsByScope,
+  isUnderScope,
+  normalizeScope,
+} from "./scope.ts";
 
 describe("scope paths", () => {
   test("a scope matches itself and anything under it", () => {
@@ -92,6 +97,22 @@ describe("filterChunkIdsByScope", () => {
     db.close();
   });
 
+  test("an archived unbound concept does not survive a scope", () => {
+    const db = createTestDb();
+    const retired = insertConcept(db, "old-architecture");
+    insertConceptVersion(db, retired.id, {
+      lifecycle_status: "archived",
+      archived_at: new Date().toISOString(),
+    });
+    addChunk(db, "c-dead", { conceptId: retired.id });
+
+    // Nothing places it, but it is no longer active. Keeping it would let a
+    // retired concept answer a scoped question about living code.
+    expect([...filterChunkIdsByScope(db, ["c-dead"], ["packages/core"])]).toEqual([]);
+
+    db.close();
+  });
+
   test("a concept with no bindings survives every scope", () => {
     const db = createTestDb();
     const floating = insertConcept(db, "architecture");
@@ -142,6 +163,20 @@ describe("filterChunkIdsByScope", () => {
     expect([...filterChunkIdsByScope(db, ["j"], ["packages/core"])]).toEqual(["j"]);
 
     db.close();
+  });
+
+  test("filterItemsByScope keeps only paths under the scope", () => {
+    const items = [
+      { file_path: "packages/core/src/a.ts", name: "in" },
+      { file_path: "packages/cli/src/b.ts", name: "out" },
+      { file_path: "packages/core-utils/src/c.ts", name: "sibling" },
+    ];
+    expect(filterItemsByScope(items, ["packages/core"]).map((item) => item.name)).toEqual(["in"]);
+    expect(filterItemsByScope(items, []).map((item) => item.name)).toEqual([
+      "in",
+      "out",
+      "sibling",
+    ]);
   });
 
   test("no scope keeps everything", () => {

@@ -8,10 +8,15 @@
  *
  * The hook queues the work and returns. It never runs a scan itself, because a
  * commit must not wait for one.
+ *
+ * Git often runs hooks with a short PATH, so a lookup for `lore` misses the
+ * binary at `~/.local/bin`. The hook prefers the lore that wrote it, prepends
+ * `~/.local/bin` to PATH, and only then looks `lore` up.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { loreInvoke, loreInvokeArgv, shellQuote, type LoreInvoke } from "./self-invoke.ts";
 
 const HOOK_NAME = "post-commit";
 
@@ -19,17 +24,39 @@ const HOOK_NAME = "post-commit";
  *  so it must never change: it is how uninstall knows the file is ours. */
 const MARKER = "# lore:post-commit";
 
-const HOOK_BODY = `#!/bin/sh
+/** The hook body for this install. The lore path is baked in so a short PATH
+ *  still finds it; the PATH fallback covers a binary that later moved. */
+export function hookBody(invoke: LoreInvoke = loreInvoke()): string {
+  const argv = loreInvokeArgv(["ingest", "--queue"], invoke);
+  const quoted = argv.map(shellQuote).join(" ");
+  const command = invoke.command;
+  const hasPinnedCommand =
+    command !== "lore" && (command.startsWith("/") || command.startsWith("."));
+
+  const pinned = hasPinnedCommand
+    ? `if [ -x ${shellQuote(command)}${invoke.args[0] ? ` ] && [ -f ${shellQuote(invoke.args[0])}` : ""} ]; then
+  ${quoted} >/dev/null 2>&1 || true
+  exit 0
+fi
+`
+    : "";
+
+  return `#!/bin/sh
 ${MARKER}
 # Queues a lore ingest after a commit. Managed by \`lore sys hooks install\`.
 # Remove it with \`lore sys hooks uninstall\`.
 #
 # The hook must never fail a commit and must never delay one, so it ignores
 # every error and asks lore to queue the scan instead of running it.
-command -v lore >/dev/null 2>&1 || exit 0
+#
+# Git often runs hooks with a short PATH. Prefer the lore that wrote this
+# file; if that path is gone, look in ~/.local/bin and then PATH.
+PATH="$HOME/.local/bin:$PATH"
+${pinned}command -v lore >/dev/null 2>&1 || exit 0
 lore ingest --queue >/dev/null 2>&1 || true
 exit 0
 `;
+}
 
 function git(args: string[], cwd: string): string | null {
   // env is passed rather than inherited: bun does not carry a change made to
@@ -85,7 +112,7 @@ export type HookState =
   /** A hook is there and lore did not write it. */
   | { kind: "foreign" };
 
-export function readHookState(path: string): HookState {
+export function readHookState(path: string, invoke?: LoreInvoke): HookState {
   if (!existsSync(path)) return { kind: "absent" };
   let body: string;
   try {
@@ -94,7 +121,7 @@ export function readHookState(path: string): HookState {
     return { kind: "foreign" };
   }
   if (!body.includes(MARKER)) return { kind: "foreign" };
-  return { kind: "installed", current: body === HOOK_BODY };
+  return { kind: "installed", current: body === hookBody(invoke) };
 }
 
 export type InstallOutcome =
@@ -112,17 +139,22 @@ export type InstallOutcome =
  * Chaining hooks is normal, and the file that is there may be the only thing
  * running git-lfs or a formatter for this repository.
  */
-export function installHook(opts?: { cwd?: string; force?: boolean }): InstallOutcome {
+export function installHook(opts?: {
+  cwd?: string;
+  force?: boolean;
+  invoke?: LoreInvoke;
+}): InstallOutcome {
   const target = resolveHooksTarget(opts?.cwd);
   if (target.kind === "not-a-repo") return { kind: "not-a-repo" };
   if (target.kind === "shared") return { kind: "shared", hooksPath: target.hooksPath };
 
-  const state = readHookState(target.path);
+  const body = hookBody(opts?.invoke);
+  const state = readHookState(target.path, opts?.invoke);
   if (state.kind === "foreign" && !opts?.force) return { kind: "occupied", path: target.path };
   if (state.kind === "installed" && state.current) return { kind: "unchanged", path: target.path };
 
   mkdirSync(target.dir, { recursive: true });
-  writeFileSync(target.path, HOOK_BODY, { mode: 0o755 });
+  writeFileSync(target.path, body, { mode: 0o755 });
   // writeFileSync keeps the mode of a file that already exists, so an earlier
   // hook without the execute bit would stay unexecutable and git would skip it.
   if ((statSync(target.path).mode & 0o111) === 0) {
@@ -152,8 +184,8 @@ export function uninstallHook(opts?: { cwd?: string }): UninstallOutcome {
 }
 
 /** The line to add by hand, for a repository lore must not write to. */
-export function manualHookLine(): string {
-  return "lore ingest --queue >/dev/null 2>&1 || true";
+export function manualHookLine(invoke: LoreInvoke = loreInvoke()): string {
+  return `${loreInvokeArgv(["ingest", "--queue"], invoke).map(shellQuote).join(" ")} >/dev/null 2>&1 || true`;
 }
 
 export function describeHook(opts?: { cwd?: string }): string[] {

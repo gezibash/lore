@@ -51,16 +51,31 @@ function conceptsInScope(db: Database, scopes: readonly string[]): Set<string> {
   return inScope;
 }
 
-/** Concepts that have no binding at all, so nothing places them. */
+/** Active concepts that have no binding at all, so nothing places them.
+ *
+ *  Archived and superseded versions must not ride along. `concepts` is
+ *  append-only, so a query over it would keep a retired concept in every
+ *  scoped answer. */
 function unboundConcepts(db: Database): Set<string> {
   const rows = db
     .query<{ id: string }, []>(
       `SELECT c.id AS id
-         FROM concepts c
-         WHERE NOT EXISTS (SELECT 1 FROM concept_symbols cs WHERE cs.concept_id = c.id)`,
+         FROM current_concepts c
+         WHERE (c.lifecycle_status IS NULL OR c.lifecycle_status = 'active')
+           AND NOT EXISTS (SELECT 1 FROM concept_symbols cs WHERE cs.concept_id = c.id)`,
     )
     .all();
   return new Set(rows.map((row) => row.id));
+}
+
+/** Keep items whose `file_path` sits inside the scope. No scope keeps all. */
+export function filterItemsByScope<T extends { file_path: string }>(
+  items: readonly T[],
+  rawScopes: readonly string[] | undefined,
+): T[] {
+  const scopes = (rawScopes ?? []).map(normalizeScope).filter((scope) => scope.length > 0);
+  if (scopes.length === 0) return [...items];
+  return items.filter((item) => anyScope(item.file_path, scopes));
 }
 
 /**

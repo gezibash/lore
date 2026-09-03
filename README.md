@@ -7,7 +7,7 @@
   <a href="https://bun.sh/"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&amp;logoColor=000" alt="Bun"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/language-TypeScript-3178c6?logo=typescript&amp;logoColor=white" alt="TypeScript"></a>
   <a href="https://github.com/gezibash/lore/stargazers"><img src="https://img.shields.io/github/stars/gezibash/lore?style=flat&amp;logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/gezibash/lore/blob/main/package.json"><img src="https://img.shields.io/badge/version-0.1.0-0d6efd" alt="Version 0.1.0"></a>
+  <a href="https://github.com/gezibash/lore/blob/main/package.json"><img src="https://img.shields.io/badge/version-0.4.2-0d6efd" alt="Version 0.4.2"></a>
 </p>
 
 Lore turns a codebase into a queryable knowledge graph — named concepts, narrative exploration sessions, symbol-to-file bindings, and a running debt score. It is CLI-first, so agents can ask "how does auth work?" and get a precise, grounded answer with file references instead of grepping blind.
@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/gezibash/lore/main/install.sh | sh
 
 Builds exist for Apple Silicon macOS, and for Linux on x64 and arm64.
 Intel macOS has no build, because LanceDB ships no Intel macOS binary.
-Pin a version with `LORE_VERSION=v0.1.0`. Remove it with
+Pin a version with `LORE_VERSION=v0.4.2`. Remove it with
 `install.sh --uninstall`.
 
 ### Stay current
@@ -365,7 +365,7 @@ lore open fix-close-latency "Cut close latency" --from-result <result-id>
 lore score <result-id> 4
 ```
 
-`--from-result` also works on `show`, `trail`, and `close`.
+`--from-result` also works on `open`, `show`, `trail`, and `close`.
 
 ### Inspection
 
@@ -451,7 +451,7 @@ lore sys concept bind auth-model refreshToken
 lore sys relations set auth-model session-store depends_on
 lore sys health heal                         # refresh high-stale concepts
 lore sys embeddings refresh                  # re-embed with the current model
-lore sys worker --watch                      # ask the daemon to drain jobs
+lore sys worker --watch                      # drain queued close, ingest, and rebuild jobs
 ```
 
 Also available: `narrative designate`, `migrate`, `migrate-status`, `repair`, `audit`, `rebuild`, `reset`, `remove`, and `provider` for shared credentials.
