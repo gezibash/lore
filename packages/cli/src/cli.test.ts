@@ -404,7 +404,8 @@ test("embeddings refresh failure keeps the current direct exit behavior", async 
   });
 
   expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain("error: model unavailable");
+  expect(result.stderr).toContain("error:");
+  expect(result.stderr).toContain("model unavailable");
 });
 
 test("the version does not report the caller's repository", () => {

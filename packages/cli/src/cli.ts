@@ -839,7 +839,7 @@ Examples:
               : rawStrategy === "replace"
                 ? ("replace" as const)
                 : undefined;
-          const result = await closeCommand(
+          await closeCommand(
             getWorker(),
             args.narrative,
             mode,
