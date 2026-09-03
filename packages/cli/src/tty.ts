@@ -11,6 +11,37 @@ export function isInteractiveOutputEnabled(): boolean {
   return !isJsonOutput() && stdout().isTTY && process.env.CI !== "true";
 }
 
+/** Prompts need a real keyboard. A pipe or CI job cannot answer them. */
+export function isInteractiveInputEnabled(): boolean {
+  return Boolean(process.stdin.isTTY) && process.env.CI !== "true";
+}
+
+export function readStdinLine(): Promise<string> {
+  return new Promise((resolve) => {
+    process.stdin.setEncoding("utf-8");
+    process.stdin.once("data", (data) => resolve(String(data).trim()));
+  });
+}
+
+/**
+ * Ask for confirmation. `--force` skips the prompt. A non-TTY without
+ * `--force` throws so CI cannot hang on stdin.
+ */
+export async function confirmOrAbort(opts: {
+  prompt: string;
+  accept: (answer: string) => boolean;
+  force?: boolean;
+  forceHint: string;
+}): Promise<boolean> {
+  if (opts.force) return true;
+  if (!isInteractiveInputEnabled()) {
+    throw new Error(opts.forceHint);
+  }
+  process.stdout.write(opts.prompt);
+  const answer = await readStdinLine();
+  return opts.accept(answer);
+}
+
 function clearCurrentLine(): void {
   readline.clearLine(stdout(), 0);
   readline.cursorTo(stdout(), 0);

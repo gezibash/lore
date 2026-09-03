@@ -279,7 +279,7 @@ import { ulid } from "ulid";
 import { computeSuggestions } from "./suggest.ts";
 import type { SuggestResult, SuggestionKind } from "@/types/index.ts";
 import { scanProject, rescanProject } from "./scanner.ts";
-import { discoverFiles } from "./file-discovery.ts";
+import { collectLakeStats, indexFreshnessFromLake } from "./lake-stats.ts";
 import {
   extractBindingsForConcepts,
   findBindableSymbolsByName,
@@ -306,8 +306,6 @@ import {
 } from "@/db/concept-symbols.ts";
 import { computeBootstrapPlan } from "./bootstrap.ts";
 import { ingestDocFile, ingestTextFiles } from "./ingester.ts";
-import { discoverTextFiles } from "./file-discovery-text.ts";
-import { getSourceChunkCount, getDocLaneStats, getJournalEntryCount } from "@/db/chunks.ts";
 import {
   countEmbeddingsByModel,
   countSymbolEmbeddingLane,
@@ -881,7 +879,11 @@ export class LoreEngine {
       subject: narrativeName,
       meta: { intent },
     });
-    return result;
+    return {
+      narrative: { name: narrativeName, intent },
+      targets: opts?.targets ?? [],
+      context: result.context,
+    };
   }
 
   async log(
@@ -1044,7 +1046,7 @@ export class LoreEngine {
       throw new LoreError(
         "CODE_MODEL_NOT_CONFIGURED",
         `${sourceChunkCount} source chunks are indexed but no code embedding model is configured. ` +
-          `Run: lore mind config set ai.embedding.code.model <model>`,
+          `Run: lore sys config set ai.embedding.code.model <model>`,
       );
     }
 
@@ -1109,6 +1111,11 @@ export class LoreEngine {
     // Cache the result with a ULID for recall (shared with ask trace filename when tracing is on)
     result.result_id = askId;
     result.next_actions = buildNextActions(result);
+    try {
+      result.index_freshness = indexFreshnessFromLake(collectLakeStats(db, entry.code_path));
+    } catch {
+      // Discovery failed — ask still answers; the banner stays off.
+    }
     if (!internal?.skipTelemetry) {
       try {
         insertQueryCache(db, {
@@ -1881,50 +1888,7 @@ export class LoreEngine {
     // Lake stats: code + doc + journal chunks, staleness for both lanes
     let lake: StatusResult["lake"];
     try {
-      const lastCodeIndexedAt = getLastScannedAt(db);
-      const lastCodeMs = lastCodeIndexedAt ? new Date(lastCodeIndexedAt).getTime() : 0;
-      const docLane = getDocLaneStats(db);
-      const lastDocIndexedAt = docLane.last_indexed_at;
-      const lastDocMs = lastDocIndexedAt ? new Date(lastDocIndexedAt).getTime() : 0;
-
-      // Count stale source files (modified since last code scan)
-      const sourceFiles = discoverFiles(entry.code_path);
-      let staleSourceFiles = 0;
-      for (const file of sourceFiles) {
-        try {
-          if (statSync(file.absolutePath).mtimeMs > lastCodeMs) staleSourceFiles++;
-        } catch {
-          // file disappeared — skip
-        }
-      }
-
-      // Count stale doc files (modified since last doc ingest)
-      const docFiles = discoverTextFiles(entry.code_path);
-      let staleDocFiles = 0;
-      for (const file of docFiles) {
-        try {
-          if (statSync(file.absolutePath).mtimeMs > lastDocMs) staleDocFiles++;
-        } catch {
-          // file disappeared — skip
-        }
-      }
-
-      // The stale counts walk the disk, so the disk counts are their
-      // denominators. A lake count would make the ratio pass 100% as soon as
-      // the tree holds a file the last index run did not see.
-      lake = {
-        source_chunks: getSourceChunkCount(db),
-        source_files: getSourceFileCount(db),
-        doc_chunks: docLane.chunks,
-        doc_files: docLane.files,
-        journal_entries: getJournalEntryCount(db),
-        last_code_indexed_at: lastCodeIndexedAt,
-        last_doc_indexed_at: lastDocIndexedAt,
-        discovered_source_files: sourceFiles.length,
-        stale_source_files: staleSourceFiles,
-        discovered_doc_files: docFiles.length,
-        stale_doc_files: staleDocFiles,
-      };
+      lake = collectLakeStats(db, entry.code_path);
     } catch {
       // non-fatal: no code path or discovery failed
     }

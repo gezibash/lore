@@ -97,6 +97,11 @@ test("root help renders the current top-level command surface", async () => {
   expect(result.stdout).toContain("Usage: lore <command> [options]");
   expect(result.stdout).toContain("open [options] <narrative> <intent>");
   expect(result.stdout).toContain("sys [options]");
+  expect(result.stdout).toContain("Start");
+  expect(result.stdout).toContain("lore init");
+  expect(result.stdout).toContain("lore ask");
+  expect(result.stdout).toContain("lore note");
+  expect(result.stdout).not.toContain("Internal daemon entrypoint");
 });
 
 test("no arguments render root help without exiting non-zero", async () => {
@@ -115,10 +120,10 @@ test("version output uses the injected version string", async () => {
 test("non-json parse errors are rendered once through the CLI formatter", async () => {
   const result = await runCliForTest(["nope"]);
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("error:");
-  expect(result.stdout).toContain("unknown command 'nope'");
-  expect(result.stdout).not.toContain("error: error:");
-  expect(result.stderr).toBe("");
+  expect(result.stderr).toContain("error:");
+  expect(result.stderr).toContain("unknown command 'nope'");
+  expect(result.stderr).not.toContain("error: error:");
+  expect(result.stdout).toBe("");
 });
 
 test("repeatable options do not leak implementation defaults into help output", async () => {
@@ -126,6 +131,25 @@ test("repeatable options do not leak implementation defaults into help output", 
   expect(result.exitCode).toBeUndefined();
   expect(result.stdout).toContain("--target <string>");
   expect(result.stdout).not.toContain("(default: [])");
+});
+
+test("open always acknowledges the narrative even without context", async () => {
+  const worker = createWorkerStub({
+    open: async (name: string, intent: string) =>
+      ({
+        narrative: { name, intent },
+        targets: [],
+        context: { read_now: [], heads_up: [] },
+      }) as unknown as Awaited<ReturnType<WorkerClient["open"]>>,
+  });
+
+  const result = await runCliForTest(["open", "auth-debug", "Investigate auth"], {
+    createWorker: () => worker,
+  });
+  expect(result.exitCode).toBeUndefined();
+  expect(result.stdout).toContain("Opened narrative auth-debug");
+  expect(result.stdout).toContain("intent: Investigate auth");
+  expect(result.stdout).toContain("targets: none");
 });
 
 test("open accumulates repeated --target values", async () => {
@@ -304,15 +328,17 @@ test("close preserves hyphenated flags and current manual validation semantics",
 test("invalid recall section emits structured JSON errors when --json is present", async () => {
   const result = await runCliForTest(["recall", "01ASK", "--section", "bad", "--json"]);
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain('"code": "CLI_ERROR"');
-  expect(result.stdout).toContain("Invalid section 'bad'");
+  expect(result.stderr).toContain('"code": "CLI_ERROR"');
+  expect(result.stderr).toContain("Invalid section 'bad'");
+  expect(result.stdout).toBe("");
 });
 
 test("invalid recall section emits formatted text errors without --json", async () => {
   const result = await runCliForTest(["recall", "01ASK", "--section", "bad"]);
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("Invalid section 'bad'");
-  expect(result.stdout).not.toContain('"code": "CLI_ERROR"');
+  expect(result.stderr).toContain("Invalid section 'bad'");
+  expect(result.stderr).not.toContain('"code": "CLI_ERROR"');
+  expect(result.stdout).toBe("");
 });
 
 test("sys remove preserves the direct exit path for missing lores", async () => {
@@ -325,7 +351,7 @@ test("sys remove preserves the direct exit path for missing lores", async () => 
   });
 
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("No lore registered with name 'missing'");
+  expect(result.stderr).toContain("No lore registered with name 'missing'");
 });
 
 test("sys remove prompt path can abort without deleting the lore", async () => {
@@ -344,10 +370,21 @@ test("sys remove prompt path can abort without deleting the lore", async () => {
     },
   });
 
-  const result = await runCliForTest(["sys", "remove", "demo"], {
-    createWorker: () => worker,
-    stdinValues: ["n\n"],
-  });
+  const originalIsTTY = process.stdin.isTTY;
+  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  const originalCI = process.env.CI;
+  process.env.CI = "false";
+  let result: TestRunResult;
+  try {
+    result = await runCliForTest(["sys", "remove", "demo"], {
+      createWorker: () => worker,
+      stdinValues: ["n\n"],
+    });
+  } finally {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+    if (originalCI === undefined) delete process.env.CI;
+    else process.env.CI = originalCI;
+  }
 
   expect(result.exitCode).toBeUndefined();
   expect(result.stdout).toContain("Continue? [y/N] ");
@@ -410,4 +447,107 @@ test("rebuild passes the concept name to the worker", async () => {
   expect(result.exitCode).toBeUndefined();
   expect(calls).toEqual(["auth-model"]);
   expect(result.stdout).toContain("Rebuilt 'auth-model'");
+});
+
+test("history is an alias of log", async () => {
+  const calls: Array<Parameters<WorkerClient["commitLog"]>[0]> = [];
+  const worker = createWorkerStub({
+    commitLog: async (opts: Parameters<WorkerClient["commitLog"]>[0]) => {
+      calls.push(opts);
+      return [];
+    },
+  });
+
+  const result = await runCliForTest(["history"], { createWorker: () => worker });
+  expect(result.exitCode).toBeUndefined();
+  expect(calls).toEqual([{ limit: 20, since: undefined }]);
+});
+
+test("bind is a top-level alias of sys concept bind", async () => {
+  const calls: Array<Parameters<WorkerClient["bindSymbol"]>> = [];
+  const worker = createWorkerStub({
+    bindSymbol: async (...args: Parameters<WorkerClient["bindSymbol"]>) => {
+      calls.push(args);
+      return {
+        symbol_name: args[1],
+        symbol_kind: "function",
+        binding_type: "ref",
+        confidence: 1,
+      };
+    },
+  });
+
+  const result = await runCliForTest(["bind", "auth-model", "refreshToken", "--json"], {
+    createWorker: () => worker,
+  });
+  expect(result.exitCode).toBeUndefined();
+  expect(calls[0]?.[0]).toBe("auth-model");
+  expect(calls[0]?.[1]).toBe("refreshToken");
+  expect(result.stdout).toContain("refreshToken");
+});
+
+test("discard without a TTY requires --force", async () => {
+  let closed = false;
+  const worker = createWorkerStub({
+    close: async () => {
+      closed = true;
+      return { queued: true };
+    },
+  });
+
+  const originalIsTTY = process.stdin.isTTY;
+  Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+  try {
+    const result = await runCliForTest(["close", "auth-debug", "--mode", "discard"], {
+      createWorker: () => worker,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("requires --force");
+    expect(closed).toBe(false);
+  } finally {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+  }
+});
+
+test("init prints next steps and honors --json", async () => {
+  const worker = createWorkerStub({
+    register: async (path: string) => ({ lore_path: `${path}/.lore/mind`, ready: true }),
+  });
+
+  const human = await runCliForTest(["init", "/tmp/demo-lore"], { createWorker: () => worker });
+  expect(human.exitCode).toBeUndefined();
+  expect(human.stdout).toContain("Initialized at");
+  expect(human.stdout).toContain("lore ingest");
+  expect(human.stdout).toContain("lore status");
+  expect(human.stdout).toContain("lore sys hooks install");
+
+  const json = await runCliForTest(["init", "/tmp/demo-lore", "--json"], {
+    createWorker: () => worker,
+  });
+  expect(json.exitCode).toBeUndefined();
+  expect(json.stdout).toContain('"code_path"');
+  expect(json.stdout).toContain('"lore_path"');
+});
+
+test("sys remove without a TTY requires --force", async () => {
+  const worker = createWorkerStub({
+    listLoreMinds: async () => [
+      {
+        name: "demo",
+        code_path: "/repo",
+        lore_path: "/repo/.lore",
+        registered_at: "2026-03-07T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const originalIsTTY = process.stdin.isTTY;
+  Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+  try {
+    const result = await runCliForTest(["sys", "remove", "demo"], { createWorker: () => worker });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Pass --force");
+  } finally {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+  }
 });

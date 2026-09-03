@@ -68,11 +68,13 @@ Example:
 
 ```bash
 lore ask "how does auth refresh work?" --sources
-lore open fix-auth-refresh "Investigate and fix the refresh token race" --target update:auth-model
-lore write fix-auth-refresh "Two concurrent refresh calls both pass the expiry check before either writes the rotated token, so the race is caused by the pre-write validation window." --concept auth-model --symbol refreshToken --ref src/auth.ts:44-97
-lore close fix-auth-refresh --wait
+lore note "Two concurrent refresh calls both pass the expiry check before either writes the rotated token." --symbol refreshToken --ref src/auth.ts:44-97
+# When the session must reshape a concept, open with a target and write instead:
+# lore open fix-auth-refresh "Investigate and fix the refresh token race" --target update:auth-model
+# lore write fix-auth-refresh "…" --concept auth-model --symbol refreshToken --ref src/auth.ts:44-97
+lore close fix-auth-refresh --wait   # or lore close inbox --wait
 lore ingest src/auth.ts
-lore sys concept bind auth-model refreshToken
+lore bind auth-model refreshToken
 ```
 
 ## Add A Feature In Unfamiliar Territory

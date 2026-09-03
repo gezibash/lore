@@ -485,7 +485,7 @@ test("renderAskBrief includes provenance, attribution, result_id, and CLI guidan
   expect(rendered).toContain("lore recall 01ASK123");
   expect(rendered).toContain("lore score 01ASK123 <1-5>");
   expect(rendered).toContain("lore trail auth-debug");
-  expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
+  expect(rendered).toContain("lore bind <concept> <symbol>");
 });
 
 test("renderAsk includes sources and CLI guidance", () => {
@@ -496,7 +496,7 @@ test("renderAsk includes sources and CLI guidance", () => {
   expect(rendered).toContain("bindings: authenticateUser (function, src/auth.ts:12)");
   // The nudge must state its own cost: binding raises residual until the prose
   // covers the symbol, so the operator does not read the rise as a mistake.
-  expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
+  expect(rendered).toContain("lore bind <concept> <symbol>");
   expect(rendered).toContain("raises the concept's residual until the prose covers the symbol");
   expect(rendered).toContain("## Investigation Trail");
   expect(rendered).toContain("lore trail auth-debug --from-result 01ASK123");
@@ -522,6 +522,19 @@ test("renderRecall renders requested sections", () => {
  * A summary that failed must say so. The retrieval survives it, and silence
  * would read as "this is the whole answer".
  */
+test("a stale index is reported on ask", () => {
+  const result = sampleQueryResult();
+  result.index_freshness = {
+    worst: "high",
+    stale_files: 4,
+    stale_source_files: 4,
+    stale_doc_files: 0,
+  };
+  const rendered = renderAskBrief(result, { route: "cli" });
+  expect(rendered).toContain("4 files changed since last ingest");
+  expect(rendered).toContain("lore ingest");
+});
+
 test("a failed executive summary is reported and the sources are shown", () => {
   const result = sampleQueryResult();
   delete result.executive_summary;

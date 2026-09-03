@@ -456,6 +456,11 @@ export interface SearchResult {
 }
 
 export interface OpenResult {
+  narrative?: {
+    name: string;
+    intent: string;
+  };
+  targets?: NarrativeTarget[];
   context: {
     read_now: Array<{
       file: string;
@@ -736,10 +741,19 @@ export interface ExecutiveSummary {
   unbound_source_symbols?: string[];
 }
 
+export interface QueryIndexFreshness {
+  worst: "none" | "low" | "medium" | "high";
+  stale_files: number;
+  stale_source_files: number;
+  stale_doc_files: number;
+}
+
 export interface QueryResult {
   result_id?: string;
   /** Set when the ask ran with debug tracing — path to the ndjson pipeline trace. */
   debug_trace_path?: string;
+  /** Files on disk that the last ingest has not read. Absent when discovery failed. */
+  index_freshness?: QueryIndexFreshness;
   meta: QueryRunMeta;
   executive_summary?: ExecutiveSummary;
   next_actions?: QueryNextAction[];

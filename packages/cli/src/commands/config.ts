@@ -96,7 +96,7 @@ export async function configGetCommand(client: WorkerClient, key: string): Promi
   const resolvedValue = getDeepValue(resolved as unknown as Record<string, unknown>, key);
 
   if (resolvedValue === undefined) {
-    console.log(`${DIM}Key '${key}' not found in config${RESET}`);
+    emit({ key, found: false }, () => `${DIM}Key '${key}' not found in config${RESET}`);
     return;
   }
 
@@ -104,7 +104,9 @@ export async function configGetCommand(client: WorkerClient, key: string): Promi
     overrideValue !== undefined
       ? `${CYAN}(lore override)${RESET}`
       : `${DIM}(default/global)${RESET}`;
-  console.log(`${BOLD}${key}${RESET} = ${JSON.stringify(resolvedValue)}  ${source}`);
+  emit({ key, value: resolvedValue, override: overrideValue !== undefined }, () =>
+    `${BOLD}${key}${RESET} = ${JSON.stringify(resolvedValue)}  ${source}`,
+  );
 }
 
 export async function configShowCommand(
@@ -132,23 +134,33 @@ export async function configShowCommand(
   const headerNote = hasOverrides
     ? `${CYAN}has local overrides${RESET}`
     : `${DIM}all defaults${RESET}`;
-  console.log(`${BOLD}Config${RESET}  ${headerNote}`);
-  console.log(`${DIM}Use 'lore mind config set <key> <value>' to override any key${RESET}`);
-  console.log("");
-
-  if (rows.length === 0) return;
-
-  // Column widths sized to actual content + 2-space gap
-  const KEY_COL = Math.max(20, ...rows.map((r) => r.key.length)) + 2;
-  const VAL_COL = Math.max(8, ...rows.map((r) => r.rawDisplay.length)) + 2;
-
-  for (const { key, rawDisplay, isOverride } of rows) {
-    const keyStr = isOverride ? `${CYAN}${key}${RESET}` : `${DIM}${key}${RESET}`;
-    const sourceBadge = isOverride ? `${CYAN}override${RESET}` : `${DIM}default${RESET} `;
-    const keyPad = " ".repeat(KEY_COL - key.length);
-    const valPad = " ".repeat(VAL_COL - rawDisplay.length);
-    console.log(`  ${keyStr}${keyPad}${rawDisplay}${valPad}${sourceBadge}`);
-  }
+  const payload = {
+    overrides,
+    resolved,
+    rows: rows.map((row) => ({
+      key: row.key,
+      value: row.rawDisplay,
+      override: row.isOverride,
+    })),
+  };
+  emit(payload, () => {
+    const lines = [
+      `${BOLD}Config${RESET}  ${headerNote}`,
+      `${DIM}Use 'lore sys config set <key> <value>' to override any key${RESET}`,
+      "",
+    ];
+    if (rows.length === 0) return lines.join("\n");
+    const KEY_COL = Math.max(20, ...rows.map((r) => r.key.length)) + 2;
+    const VAL_COL = Math.max(8, ...rows.map((r) => r.rawDisplay.length)) + 2;
+    for (const { key, rawDisplay, isOverride } of rows) {
+      const keyStr = isOverride ? `${CYAN}${key}${RESET}` : `${DIM}${key}${RESET}`;
+      const sourceBadge = isOverride ? `${CYAN}override${RESET}` : `${DIM}default${RESET} `;
+      const keyPad = " ".repeat(KEY_COL - key.length);
+      const valPad = " ".repeat(VAL_COL - rawDisplay.length);
+      lines.push(`  ${keyStr}${keyPad}${rawDisplay}${valPad}${sourceBadge}`);
+    }
+    return lines.join("\n");
+  });
 }
 
 export async function configSetCommand(
@@ -158,12 +170,14 @@ export async function configSetCommand(
 ): Promise<void> {
   const coerced = coerceValue(key, value);
   await client.setLoreMindConfig(key, coerced);
-  console.log(`${GREEN}✓${RESET} Set ${BOLD}${key}${RESET} = ${JSON.stringify(coerced)}`);
+  emit({ key, value: coerced }, () =>
+    `${GREEN}✓${RESET} Set ${BOLD}${key}${RESET} = ${JSON.stringify(coerced)}`,
+  );
 }
 
 export async function configUnsetCommand(client: WorkerClient, key: string): Promise<void> {
   await client.unsetLoreMindConfig(key);
-  console.log(`${GREEN}✓${RESET} Unset ${BOLD}${key}${RESET}`);
+  emit({ key, unset: true }, () => `${GREEN}✓${RESET} Unset ${BOLD}${key}${RESET}`);
 }
 
 export async function configPromptPreviewCommand(client: WorkerClient, key: string): Promise<void> {
@@ -192,15 +206,10 @@ export async function configPromptPreviewCommand(client: WorkerClient, key: stri
 
 export async function configCloneCommand(client: WorkerClient, lore: string): Promise<void> {
   const result = await client.cloneLoreMindConfig(lore);
-  if (!result.hasConfig) {
-    console.log(
-      `${GREEN}✓${RESET} Source lore mind ${BOLD}${CYAN}${result.source}${RESET} has no config overrides; cleared overrides for current lore mind ${BOLD}${CYAN}${result.target}${RESET}.`,
-    );
-    return;
-  }
-
-  console.log(
-    `${GREEN}✓${RESET} Cloned config overrides from ${BOLD}${CYAN}${result.source}${RESET} into current lore mind ${BOLD}${CYAN}${result.target}${RESET}.`,
+  emit(result, (value) =>
+    value.hasConfig
+      ? `${GREEN}✓${RESET} Cloned config overrides from ${BOLD}${CYAN}${value.source}${RESET} into current lore ${BOLD}${CYAN}${value.target}${RESET}.`
+      : `${GREEN}✓${RESET} Source lore ${BOLD}${CYAN}${value.source}${RESET} has no config overrides; cleared overrides for current lore ${BOLD}${CYAN}${value.target}${RESET}.`,
   );
 }
 
@@ -237,14 +246,16 @@ export async function providerConfigGetCommand(
   const parsedProvider = parseProvider(provider);
   const config = await client.getProviderCredential(parsedProvider);
   if (!config) {
-    console.log(`${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`);
+    emit({ provider: parsedProvider, found: false }, () =>
+      `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
+    );
     return;
   }
   const apiKey = config.api_key ? maskSecret(config.api_key) : "(unset)";
   const baseUrl = config.base_url ?? "(unset)";
-  console.log(`${BOLD}${parsedProvider}${RESET}`);
-  console.log(`api_key: ${apiKey}`);
-  console.log(`base_url: ${baseUrl}`);
+  emit({ provider: parsedProvider, api_key: apiKey, base_url: baseUrl }, () =>
+    `${BOLD}${parsedProvider}${RESET}\napi_key: ${apiKey}\nbase_url: ${baseUrl}`,
+  );
 }
 
 /** Right-align a number column so prices and context windows compare by eye. */
@@ -473,7 +484,7 @@ export async function providerConfigSetCommand(
     api_key: options.apiKey,
     base_url: options.baseUrl,
   });
-  console.log(
+  emit({ provider: parsedProvider, updated: true }, () =>
     `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
   );
 }
@@ -492,10 +503,12 @@ export async function providerConfigUnsetCommand(
     base_url: noSelectors ? true : clearBaseUrl,
   });
   if (!next) {
-    console.log(`${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`);
+    emit({ provider: parsedProvider, found: false }, () =>
+      `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
+    );
     return;
   }
-  console.log(
+  emit({ provider: parsedProvider, credential: next }, () =>
     `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
   );
 }

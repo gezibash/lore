@@ -159,89 +159,10 @@ Install refuses in two cases, and prints the one line to add by hand instead:
 
 ### Languages
 
-Lore extracts symbols from these languages:
-
-| Language   | Extensions                 | Symbols                                                                               |
-| ---------- | -------------------------- | ------------------------------------------------------------------------------------- |
-| TypeScript | `.ts` `.tsx`               | function, class, method, interface, type, enum, constant                              |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | function, class, method, constant                                                     |
-| Python     | `.py`                      | function, class, constant                                                             |
-| Go         | `.go`                      | function, method, struct, interface                                                   |
-| Rust       | `.rs`                      | function, struct, enum, trait, impl                                                   |
-| Elixir     | `.ex` `.exs`               | function, module, protocol                                                            |
-| Lean 4     | `.lean`                    | theorem, def, abbrev, structure, inductive, instance, axiom, opaque, constant, syntax |
-
-A file in another language is still indexed and still answers a `lore ask`.
-Lore reads it as text, so it has no symbols. Three features need symbols:
-`lore sys concept bind`, `lore ask --mode code`, and `lore sys coverage`.
-
-Lean gets its own symbol kind for a theorem, separate from a function. A
-theorem states a fact, and the proof is only the body, so `lore show` marks
-which bindings of a concept are claims and which are definitions.
-
-Lean also gets a symbol kind for syntax. `syntax`, `macro`, `elab`, `notation`
-and `declare_syntax_cat` add a way to write something, not a value to compute,
-so a search for a tactic does not return every definition beside it.
-
-A tactic is named by the token that calls it. `syntax "ring_nf" : tactic`
-declares no identifier, and Lean generates one, but a proof writes `ring_nf`,
-so `ring_nf` is the name lore stores. A command that writes `(name := ringNF)`
-declares the identifier itself, and lore stores that instead.
-
-Lore reads a Lean namespace as part of the name, and binds
-`Auth.Token.refresh`, not `refresh`. A section bounds variables and not names,
-so it changes no name. A token, a syntax category and an option name are
-different: Lean registers each one as written, so a namespace does not qualify
-them.
-
-`macro_rules` and `elab_rules` add cases to a syntax that another command
-declared. Neither introduces a name, so neither becomes a symbol.
-
-No package publishes a Lean grammar, so lore carries the built parser at
-`packages/core/grammars/tree-sitter-lean.wasm`. To rebuild it, run
-`scripts/build-lean-grammar.sh`. The script pins the upstream commit, applies
-the patches in `patches/tree-sitter-lean`, and needs Docker or Emscripten.
-
-The patch is lore's, not upstream's. Upstream models `elab_rules` and has no
-`elab` rule, so an `elab` block became a parse error that also swallowed the
-declarations after it.
-
-The Lean grammar is experimental, and it reads mathematics better than it
-reads metaprogramming.
-
-The tables below count a declaration as found when a symbol covers the row
-that opens it, and no other declaration opens between that symbol's first row
-and this one. An anonymous instance is out of the count, because lore skips it
-by design. This rule is stricter than the one lore used before it: it does not
-credit a declaration to the symbol above it, so its numbers are lower for the
-same parser and are not comparable to any earlier figure.
-
-On the `batteries` library, 258 files:
-
-| Content                        | Declarations found |
-| ------------------------------ | ------------------ |
-| Theorems                       | 98%                |
-| Mathematical definitions       | 84%                |
-| Tactics, elaborators, notation | 46%                |
-
-On `Mathlib/Tactic`, 366 files that exist to extend Lean:
-
-| Content                        | Declarations found |
-| ------------------------------ | ------------------ |
-| Theorems                       | 83%                |
-| Mathematical definitions       | 49%                |
-| Tactics, elaborators, notation | 28%                |
-
-A tactic file uses `do` notation and syntax quotations, and the parser stops
-early in them. Three quarters of the rows in `Mathlib/Tactic` sit inside a
-parse error, and no query reaches a declaration in one. `do` notation is the
-part the grammar reads least well. `return`, `for`, `unless` and a `let` that
-binds by matching have no rule, and each one ends the command it sits in.
-
-Lore never fails a file: it returns the declarations it read and skips the
-rest. Across all 9021 files of Mathlib, no file crashed the parser. Expect
-full results for a file of theorems and definitions, and gaps in a file that
-extends Lean itself.
+TypeScript, JavaScript, Python, Go, Rust, Elixir, and Lean 4 get symbol
+extraction. Other files are still indexed as text. Binding, `--mode code`,
+and coverage need symbols. Details, including the experimental Lean
+grammar, live in [docs/languages.md](docs/languages.md).
 
 ---
 
@@ -251,14 +172,17 @@ extends Lean itself.
 # Ask a question
 lore ask "how does the auth flow work?" --sources
 
-# Open a narrative, journal findings, close
-lore open fix-auth-race "Investigate race condition in token refresh" --target update:auth-model
-lore write fix-auth-race "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --symbol refreshToken --ref src/auth.ts:44-97
-lore close fix-auth-race --wait
+# Capture a finding. Lore picks the narrative and the concept.
+lore note "The race is in refreshToken — two concurrent calls both pass the expiry check before either writes the new token" --symbol refreshToken --ref src/auth.ts:44-97
+
+# When the session must reshape a concept, open with a target and write:
+# lore open fix-auth-race "Investigate race condition in token refresh" --target update:auth-model
+# lore write fix-auth-race "…" --concept auth-model --symbol refreshToken --ref src/auth.ts:44-97
+lore close inbox --wait
 
 # Re-index the touched file and bind the symbol
 lore ingest src/auth.ts
-lore sys concept bind auth-model refreshToken
+lore bind auth-model refreshToken
 
 # Check status and debt
 lore status
@@ -273,14 +197,15 @@ lore suggest
 
 | Command                          | Description                                                |
 | -------------------------------- | ---------------------------------------------------------- |
-| `lore init [path] [name]`        | Register a codebase                                        |
-| `lore ingest [file]`             | Index source code and docs. `--force` re-chunks every file |
-| `lore open <narrative> <intent>` | Start an exploration session                               |
-| `lore write <narrative> <entry>` | Journal a finding against explicit concept designations    |
-| `lore note <entry>`              | Journal a finding. Lore picks the narrative and concept    |
-| `lore ask <query>`               | Query the knowledge graph                                  |
-| `lore close <narrative>`         | Queue a close job. `--wait` blocks until it finishes       |
-| `lore rebuild <concept>`         | Rewrite a concept body from its inputs                     |
+| `lore init [path] [name]`        | Register a codebase. `--hooks` writes the post-commit ingest hook |
+| `lore ingest [file]`             | Index source code and docs. `--force` re-chunks every file        |
+| `lore note <entry>`              | Capture a finding. Lore picks the narrative and concept           |
+| `lore ask <query>`               | Query the knowledge graph                                         |
+| `lore open <narrative> <intent>` | Start an exploration session when you need declared targets       |
+| `lore write <narrative> <entry>` | Journal a finding against explicit concept designations           |
+| `lore close <narrative>`         | Queue a close job. `--wait` blocks until it finishes              |
+| `lore bind <concept> <symbol>`   | Bind a source symbol to a concept                                 |
+| `lore rebuild <concept>`         | Rewrite a concept body from its inputs                            |
 
 ### Rebuilding a concept
 
@@ -294,7 +219,7 @@ Use it when a wrong sentence sits in a concept body. A close merges into the bod
 
 The old body stays in the version history — `lore show <concept>@<ref>` still prints it. If the generator returns an empty body, the rebuild stops and the current body stays. A concept with no journal entries cannot be rebuilt.
 
-`lore sys rebuild` is a different command. It rebuilds the database from the files on disk.
+`lore sys rebuild` (also `lore sys rebuild-db`) is a different command. It rebuilds the database from the files on disk.
 
 ### Declaring targets on open
 
@@ -395,49 +320,10 @@ Money is priced at report time from the provider's live catalog, not stored, bec
 
 Recording starts when the table is created. Calls made before that are not backfilled.
 
-### Runs
+### Runs and KPIs
 
-A KPI reading is one scalar over time. A run is the event behind it: what it
-was given, every number it produced, and the files it left. A sweep, a
-benchmark, a migration, a deploy. Without a record, that knowledge lives as
-prose in a journal entry, where it cannot be compared against the run before
-it.
-
-```bash
-lore run log sweep-42 \
-  --param lr=0.003 --param seed=7 \
-  --metric auc=0.812 \
-  --artifact results/sweep-42/plot.png \
-  --note "widened the search"
-
-lore run ls --name sweep-42 --since 2w
-lore run show <id>
-```
-
-`--outcome` takes `success` (the default), `failure` or `aborted`. Record a
-failed run: it states a configuration that does not work, which is the thing
-most often repeated by accident.
-
-A parameter keeps its text, because its type belongs to the tool that read it.
-A metric must be a number, because a value nothing can compare is not worth
-storing.
-
-Each run carries the same provenance as a KPI reading — narrative, git head,
-lore commit — so a run and a reading taken from it agree on which state of the
-code produced them. `lore run show` prints it.
-
-### KPIs
-
-Track a metric as a timeseries so each reading carries provenance — narrative, git head, lore commit — instead of living in a scratch CSV.
-
-```bash
-lore kpi log recall@10 0.518 --direction up --meta bench=httpx
-lore kpi goal recall@10 0.8
-lore kpi log recall@10 0.61
-lore kpi status recall@10
-```
-
-The first `log` for a KPI needs `--direction up|down`. Readings attach to the sole open narrative; pass `--narrative <name>` when several are open.
+Record structured experiment results and timeseries with provenance. See
+[docs/kpis-and-runs.md](docs/kpis-and-runs.md).
 
 ### System (`lore sys`)
 
@@ -447,7 +333,7 @@ lore sys provider models openrouter --search glm   # catalog, with context and p
 lore sys config show                         # resolved config, with override annotations
 lore sys config set ai.generation.model qwen3:8b
 lore sys coverage --uncovered                # exported symbols with no concept
-lore sys concept bind auth-model refreshToken
+lore bind auth-model refreshToken            # or lore sys concept bind
 lore sys relations set auth-model session-store depends_on
 lore sys health heal                         # refresh high-stale concepts
 lore sys embeddings refresh                  # re-embed with the current model
@@ -460,117 +346,19 @@ Also available: `narrative designate`, `migrate`, `migrate-status`, `repair`, `a
 
 ## The daemon
 
-A local daemon owns the job queue. Any command starts it on demand, so there is nothing to launch by hand.
-
-```bash
-lore daemon status
-lore daemon logs
-lore daemon stop
-```
-
-Merge closes are asynchronous by default:
-
-```bash
-lore close fix-auth-race     # returns a job ID
-lore jobs                    # queued, leased, done, failed
-lore job <id>
-lore wait <id>
-```
-
-Use `lore close --wait` when the next step depends on the integrated concept state. `--merge-strategy` selects how the entries land:
-
-| Strategy          | What it does to the concept body                                              |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `patch` (default) | Rewrites only the paragraphs the entries touch. Keeps the rest word for word. |
-| `extend`          | Keeps every section. Adds new sections for new topics.                        |
-| `correct`         | Treats the entries as the truth. Drops a claim the entries do not support.    |
-| `replace`         | Writes a new body from the entries. The old prose is gone.                    |
-
-`patch` and `extend` cannot remove text. `correct` and `replace` can.
-
-The daemon serves the code it was spawned with. It compares its start time against the newest `.ts` file under the workspace root and restarts itself before dispatch. A busy daemon is left alone, because a leased job holds state a restart would strand. The check applies only to a source checkout: a compiled binary carries its code inside itself, so a restart cannot make it newer. Set `LORE_DAEMON_STALE_CHECK=0` to opt out.
+A local daemon owns the job queue. Any command starts it on demand.
+`lore close` returns a job ID; use `--wait` when the next step needs the
+merged concept. Jobs, merge strategies, and restart behavior:
+[docs/daemon.md](docs/daemon.md).
 
 ---
 
 ## Configuration
 
-Lore uses layered config with this precedence (highest wins):
-
-```
-hardcoded defaults → ~/.lore/config.json → <project>/.lore/config.json → programmatic
-```
-
-On first `lore init`, `~/.lore/config.json` is seeded with readable defaults. Per-project config lives alongside your code and can be version-controlled. Inspect the resolved result with `lore sys config show`.
-
-`ai.search.timeouts.executive_summary_ms` caps the answer step of `lore ask`. It defaults to 300000, because a slow model needs minutes on an architectural question. A cap the model cannot meet no longer costs the answer: `lore ask` reports the failure and prints the retrieved sources.
-
-```bash
-lore sys config set ai.search.timeouts.executive_summary_ms 120000
-```
-
-### Providers
-
-**Embedding providers:** `ollama` · `openai` · `openai-compatible` · `openrouter` · `voyage` · `gateway`
-
-**Generation providers:** `ollama` · `openai` · `groq` · `openai-compatible` · `openrouter` · `moonshotai` · `alibaba` · `gateway`
-
-`gateway` is **Vercel AI Gateway**, which routes to many model providers on one key. `openai-compatible` reaches anything that speaks the OpenAI API — Cloudflare Workers AI at `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1`, Together, Fireworks, a local vLLM — with no code change. Set `base_url` on the credential first.
-
-### Picking a model
-
-Three commands: see what you have, search what it serves, adopt one.
-
-```bash
-# What is configured, what can be listed, what this project uses
-lore sys provider list
-
-# Search one provider, or every configured one at once
-lore sys provider models openrouter --search glm
-lore sys provider models --search glm-5.3 --sort price
-
-# Point this project at a model. The id is checked before it is written.
-lore sys provider use openrouter z-ai/glm-5.3-flash
-```
-
-`models` sorts by id by default; `--sort price` is cheapest first and `--sort context` is roomiest first. Models with no price sort last either way. It shows only models lore can be configured with — `--type embedding` narrows further, `--all-kinds` includes the video, image, and speech models a provider may also serve.
-
-`openrouter`, `gateway`, `openai`, `groq`, and `ollama` publish a catalog. `openai-compatible` needs a `--base-url` on the credential first. The rest have no catalog endpoint and say so. With no provider named, `models` queries every provider that has a catalog and a key; one unreachable provider is reported in a footer and the rest still list.
-
-Check what a key has left before a long run:
-
-```bash
-lore sys provider usage openrouter
-```
-
-Only `openrouter` and `gateway` report a balance; the rest publish no such endpoint and say so. OpenRouter also splits spend for this key from the account total, and shows today's and this month's.
-
-`use` writes to the current project by default, so the same key can drive a different model in every repo. `--scope global` writes `~/.lore/config.json` instead, setting the default for every lore; a project setting still wins over it. Either way the write keeps every other key in the file, including your API key.
-
-Add `--embedding --dim <n>` to switch the embedding role, and `--skip-verify` to write an id the catalog does not know yet.
-
-Default (no config needed): local Ollama with `qwen3-embedding:8b` (4096-dim) + `qwen3:8b`.
-
-Example `~/.lore/config.json`:
-
-```json
-{
-  "ai": {
-    "embedding": {
-      "provider": "openai",
-      "model": "text-embedding-3-small",
-      "dim": 1536,
-      "api_key": "sk-..."
-    },
-    "generation": {
-      "provider": "openai",
-      "model": "gpt-4o-mini",
-      "api_key": "sk-..."
-    }
-  }
-}
-```
-
-A separate code embedding model can be configured under `ai.embedding.code` for better symbol search (e.g. `voyage-code-3`). It inherits provider, base URL, and key from `ai.embedding` unless you override them.
+Default (no config needed): local Ollama with `qwen3-embedding:8b` and
+`qwen3:8b`. Inspect the resolved result with `lore sys config show`.
+Providers, catalogs, and switching models:
+[docs/providers.md](docs/providers.md).
 
 ---
 

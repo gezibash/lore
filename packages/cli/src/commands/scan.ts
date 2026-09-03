@@ -1,4 +1,5 @@
 import { formatCoverage, type WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 import { createSpinner } from "../tty.ts";
 
 const BOLD = "\x1b[1m";
@@ -45,8 +46,8 @@ export function coverageCommand(
       limit: opts?.uncovered ? 100 : 50,
     })
     .then((report) => {
-      console.log(
-        formatCoverage(report, {
+      emit(report, (value) =>
+        formatCoverage(value, {
           showUncovered: opts?.uncovered,
           filePath: opts?.file,
         }),

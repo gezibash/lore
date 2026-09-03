@@ -35,9 +35,46 @@ import {
   type StaleSeverity,
 } from "@/format.ts";
 
+function formatTargetSpec(target: NonNullable<OpenResult["targets"]>[number]): string {
+  switch (target.op) {
+    case "create":
+    case "update":
+    case "restore":
+      return `${target.op}:${target.concept}`;
+    case "archive":
+      return target.reason
+        ? `archive:${target.concept}:${target.reason}`
+        : `archive:${target.concept}`;
+    case "rename":
+      return `rename:${target.from}:${target.to}`;
+    case "merge":
+      return target.reason
+        ? `merge:${target.source}:${target.into}:${target.reason}`
+        : `merge:${target.source}:${target.into}`;
+    case "split":
+      return target.parts != null
+        ? `split:${target.concept}:${target.parts}`
+        : `split:${target.concept}`;
+  }
+}
+
 export function formatOpen(result: OpenResult): string {
   const lines: string[] = [];
+  const name = result.narrative?.name;
+  if (name) {
+    lines.push(`Opened narrative ${name}`);
+    if (result.narrative?.intent) {
+      lines.push(`  intent: ${result.narrative.intent}`);
+    }
+    const targets = result.targets ?? [];
+    lines.push(
+      targets.length > 0
+        ? `  targets: ${targets.map(formatTargetSpec).join(", ")}`
+        : "  targets: none",
+    );
+  }
   if (result.context.read_now.length > 0) {
+    if (lines.length > 0) lines.push("");
     lines.push("## Relevant Context\n");
     for (const item of result.context.read_now) {
       const warn = item.warning ? ` ⚠ ${item.warning}` : "";
@@ -46,7 +83,8 @@ export function formatOpen(result: OpenResult): string {
     }
   }
   if (result.context.heads_up.length > 0) {
-    lines.push("\n## Heads Up\n");
+    if (lines.length > 0) lines.push("");
+    lines.push("## Heads Up\n");
     for (const note of result.context.heads_up) {
       lines.push(`- ${note}`);
     }
@@ -298,6 +336,8 @@ export function formatClose(result: CloseResult): string {
     lines.push(`Status: ${result.close_job.status}`);
     lines.push(result.impact.summary);
     if (result.follow_up) lines.push(`Follow-up: ${result.follow_up}`);
+    lines.push(`Wait with: lore wait ${result.close_job.id}`);
+    lines.push("Or close with --wait next time if the next step needs the merged concept.");
     return lines.join("\n");
   }
 
@@ -437,7 +477,7 @@ export function formatStatus(result: StatusResult): string {
   lines.push(result.summary);
   if (result.state_distance != null) {
     lines.push(
-      `State distance: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap vs codebase)`,
+      `Trust gap: ${(result.state_distance * 100).toFixed(0)}% (how far the knowledge is from the current codebase)`,
     );
   }
 
