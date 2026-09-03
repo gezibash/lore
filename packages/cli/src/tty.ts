@@ -19,13 +19,18 @@ function isInteractiveInputEnabled(): boolean {
 function readStdinLine(): Promise<string> {
   return new Promise((resolve) => {
     process.stdin.setEncoding("utf-8");
-    process.stdin.once("data", (data) => resolve(String(data).trim()));
+    process.stdin.once("data", (data) => {
+      // A flowing stdin keeps the event loop alive after the command returns.
+      process.stdin.pause();
+      resolve(String(data).trim());
+    });
   });
 }
 
 /**
- * Ask for confirmation. `--force` skips the prompt. A non-TTY without
- * `--force` throws so CI cannot hang on stdin.
+ * Ask for confirmation. `--force` skips the prompt. A non-TTY or `--json`
+ * run without `--force` throws: CI cannot answer, and a prompt would
+ * corrupt the JSON document on stdout.
  */
 export async function confirmOrAbort(opts: {
   prompt: string;
@@ -34,7 +39,7 @@ export async function confirmOrAbort(opts: {
   forceHint: string;
 }): Promise<boolean> {
   if (opts.force) return true;
-  if (!isInteractiveInputEnabled()) {
+  if (!isInteractiveInputEnabled() || isJsonOutput()) {
     throw new Error(opts.forceHint);
   }
   process.stdout.write(opts.prompt);

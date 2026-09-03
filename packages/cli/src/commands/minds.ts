@@ -1,5 +1,5 @@
 import type { WorkerClient } from "@lore/worker";
-import { emit } from "../output.ts";
+import { emit, isJsonOutput } from "../output.ts";
 import { confirmOrAbort } from "../tty.ts";
 
 const RESET = "\x1b[0m";
@@ -41,7 +41,7 @@ export async function mindsRemoveCommand(
     throw new Error(`No lore registered with name '${name}'`);
   }
 
-  if (!force) {
+  if (!force && !isJsonOutput()) {
     console.log(`${BOLD}Will remove:${RESET}`);
     console.log(`  Name:          ${CYAN}${loreMind.name}${RESET}`);
     console.log(`  Code path:     ${loreMind.code_path}`);
@@ -68,7 +68,7 @@ export async function mindResetCommand(
   client: WorkerClient,
   force: boolean = false,
 ): Promise<void> {
-  if (!force) {
+  if (!force && !isJsonOutput()) {
     console.log(
       `${RED}${BOLD}This will wipe all Lore data (DB, concepts, narratives) for the current lore.${RESET}`,
     );

@@ -17,6 +17,7 @@ import type {
 import { renderLs as renderLsRoute } from "@lore/rendering";
 import { renderAsk, renderAskBrief } from "@lore/rendering";
 import { timeAgo } from "@lore/worker";
+import { formatInstallOutcome, type InstallOutcome } from "./hooks.ts";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -156,7 +157,7 @@ export function formatRegisterCli(result: {
   code_path: string;
   lore_path: string;
   has_loreignore: boolean;
-  hook?: { kind: string; path?: string; hooksPath?: string };
+  hook?: InstallOutcome;
 }): string {
   const lines = [
     `${GREEN}✓${RESET} Initialized at ${CYAN}${result.code_path}${RESET}`,
@@ -174,9 +175,7 @@ export function formatRegisterCli(result: {
   } else if (result.hook?.kind === "unchanged") {
     lines.push(`${DIM}Post-commit hook already installed.${RESET}`);
   } else if (result.hook) {
-    lines.push(
-      `${YELLOW}Hook not installed (${result.hook.kind}). Run: lore sys hooks install${RESET}`,
-    );
+    lines.push(`${YELLOW}${formatInstallOutcome(result.hook)}${RESET}`);
   } else {
     lines.push(`${DIM}Keep the index fresh after commits: lore sys hooks install${RESET}`);
   }

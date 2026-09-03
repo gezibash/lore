@@ -24,6 +24,12 @@ const HOOK_NAME = "post-commit";
  *  so it must never change: it is how uninstall knows the file is ours. */
 const MARKER = "# lore:post-commit";
 
+/** Bump when the hook body changes shape. A hook is current when it carries
+ *  this version, whichever lore binary wrote it: the pinned path differs per
+ *  install, and a release binary must not rewrite a hook a source checkout
+ *  wrote, or the reverse. */
+const HOOK_VERSION = "# lore:hook-version 2";
+
 /** The hook body for this install. The lore path is baked in so a short PATH
  *  still finds it; the PATH fallback covers a binary that later moved. */
 export function hookBody(invoke: LoreInvoke = loreInvoke()): string {
@@ -43,6 +49,7 @@ fi
 
   return `#!/bin/sh
 ${MARKER}
+${HOOK_VERSION}
 # Queues a lore ingest after a commit. Managed by \`lore sys hooks install\`.
 # Remove it with \`lore sys hooks uninstall\`.
 #
@@ -112,7 +119,7 @@ export type HookState =
   /** A hook is there and lore did not write it. */
   | { kind: "foreign" };
 
-export function readHookState(path: string, invoke?: LoreInvoke): HookState {
+export function readHookState(path: string): HookState {
   if (!existsSync(path)) return { kind: "absent" };
   let body: string;
   try {
@@ -121,7 +128,7 @@ export function readHookState(path: string, invoke?: LoreInvoke): HookState {
     return { kind: "foreign" };
   }
   if (!body.includes(MARKER)) return { kind: "foreign" };
-  return { kind: "installed", current: body === hookBody(invoke) };
+  return { kind: "installed", current: body.includes(HOOK_VERSION) };
 }
 
 export type InstallOutcome =
@@ -149,9 +156,11 @@ export function installHook(opts?: {
   if (target.kind === "shared") return { kind: "shared", hooksPath: target.hooksPath };
 
   const body = hookBody(opts?.invoke);
-  const state = readHookState(target.path, opts?.invoke);
+  const state = readHookState(target.path);
   if (state.kind === "foreign" && !opts?.force) return { kind: "occupied", path: target.path };
-  if (state.kind === "installed" && state.current) return { kind: "unchanged", path: target.path };
+  if (state.kind === "installed" && state.current && !opts?.force) {
+    return { kind: "unchanged", path: target.path };
+  }
 
   mkdirSync(target.dir, { recursive: true });
   writeFileSync(target.path, body, { mode: 0o755 });
@@ -161,6 +170,11 @@ export function installHook(opts?: {
     throw new Error(`Cannot make ${target.path} executable`);
   }
   return { kind: state.kind === "absent" ? "installed" : "updated", path: target.path };
+}
+
+/** True when no lore hook is in place after the call. */
+export function installFailed(result: InstallOutcome): boolean {
+  return result.kind === "occupied" || result.kind === "shared" || result.kind === "not-a-repo";
 }
 
 export type UninstallOutcome =

@@ -11,9 +11,10 @@
  * file, so a single file swap would remove the native libraries.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { loreInvoke, loreInvokeArgv } from "./self-invoke.ts";
 
 const REPO = "gezibash/lore";
 const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -100,28 +101,16 @@ export async function refreshUpdateCache(): Promise<string | null> {
   return latest;
 }
 
-/**
- * The child that refreshes the update cache.
- *
- * A compiled binary is its own entry: `execPath` is lore. A source run is bun
- * plus the CLI script. Passing only `sys` to bun would run `bun sys ...` and
- * fail, so the cache would never refresh.
- */
+/** The child that refreshes the update cache. Same self-detection as the hook. */
 export function updateCheckSpawnArgs(
   execPath = process.execPath,
   argv1 = process.argv[1],
 ): { command: string; args: string[] } {
-  if (argv1) {
-    try {
-      realpathSync(argv1);
-      if (argv1.endsWith("/cli/src/index.ts")) {
-        return { command: execPath, args: [argv1, "sys", "update-check", "--refresh"] };
-      }
-    } catch {
-      // A compiled binary reports a virtual path. It runs the subcommand itself.
-    }
-  }
-  return { command: execPath, args: ["sys", "update-check", "--refresh"] };
+  const [command, ...args] = loreInvokeArgv(
+    ["sys", "update-check", "--refresh"],
+    loreInvoke(execPath, argv1),
+  );
+  return { command: command as string, args };
 }
 
 /** Start a detached child that refreshes the cache, then forget about it. */
