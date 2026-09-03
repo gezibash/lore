@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve, join } from "path";
 import type { WorkerClient } from "@lore/worker";
 import { formatRegisterCli } from "../formatters.ts";
-import { installHook, type InstallOutcome } from "../hooks.ts";
+import { installFailed, installHook, type InstallOutcome } from "../hooks.ts";
 import { emit } from "../output.ts";
 
 export async function registerCommand(
@@ -17,6 +17,7 @@ export async function registerCommand(
   let hook: InstallOutcome | undefined;
   if (opts?.hooks) {
     hook = installHook({ cwd: codePath });
+    if (installFailed(hook)) process.exitCode = 1;
   }
   emit(
     {

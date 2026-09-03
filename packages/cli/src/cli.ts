@@ -81,6 +81,7 @@ import {
   describeHook,
   formatInstallOutcome,
   formatUninstallOutcome,
+  installFailed,
   installHook,
   uninstallHook,
 } from "./hooks.ts";
@@ -1149,13 +1150,7 @@ Examples:
                 action({ options }) {
                   const result = installHook({ force: Boolean(options.force) });
                   emit(result, formatInstallOutcome);
-                  if (
-                    result.kind === "occupied" ||
-                    result.kind === "shared" ||
-                    result.kind === "not-a-repo"
-                  ) {
-                    process.exitCode = 1;
-                  }
+                  if (installFailed(result)) process.exitCode = 1;
                 },
               }),
               status: defineCommand({

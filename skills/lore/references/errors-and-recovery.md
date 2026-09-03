@@ -176,7 +176,7 @@ Meaning:
 Recover by:
 
 - Listing registrations with `lore sys ls`.
-- Removing the unwanted one with `lore sys remove <name>`.
+- Removing the unwanted one with `lore sys remove <name> --force`. Without a TTY, the command exits 1 unless you pass `--force`; the same rule applies to `lore close <name> --mode discard` and `lore sys reset`.
 - Running `lore init` from the intended root.
 
 ## Trust Current CLI State Over Old Docs

@@ -279,7 +279,7 @@ import { ulid } from "ulid";
 import { computeSuggestions } from "./suggest.ts";
 import type { SuggestResult, SuggestionKind } from "@/types/index.ts";
 import { scanProject, rescanProject } from "./scanner.ts";
-import { collectLakeStats, indexFreshnessFromLake } from "./lake-stats.ts";
+import { collectLakeStats, indexFreshnessFromLake, type LakeStats } from "./lake-stats.ts";
 import {
   extractBindingsForConcepts,
   findBindableSymbolsByName,
@@ -1073,12 +1073,21 @@ export class LoreEngine {
     const askDebtRaw = await computeDebtSnapshot(entry, db, askDebtConcepts, askDebtManifest, {
       stalenessDays: config.thresholds.staleness_days,
     });
+    // One tree walk per ask: the debt snapshot and the freshness banner
+    // both read it.
+    let askLake: LakeStats | undefined;
+    try {
+      askLake = collectLakeStats(db, entry.code_path);
+    } catch {
+      // Discovery failed — ask still answers; the banner stays off.
+    }
     const askDebtSnapshot = computeAskDebtSnapshot({
       db,
       entry,
       config,
       concepts: askDebtConcepts,
       debtSnapshot: askDebtRaw,
+      lake: askLake ?? null,
     });
 
     const result = await queryConcepts(db, text, config, embedder, {
@@ -1111,11 +1120,7 @@ export class LoreEngine {
     // Cache the result with a ULID for recall (shared with ask trace filename when tracing is on)
     result.result_id = askId;
     result.next_actions = buildNextActions(result);
-    try {
-      result.index_freshness = indexFreshnessFromLake(collectLakeStats(db, entry.code_path));
-    } catch {
-      // Discovery failed — ask still answers; the banner stays off.
-    }
+    if (askLake) result.index_freshness = indexFreshnessFromLake(askLake);
     if (!internal?.skipTelemetry) {
       try {
         insertQueryCache(db, {

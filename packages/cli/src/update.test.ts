@@ -59,7 +59,7 @@ test("updateCheckSpawnArgs does not treat a test file as the CLI", () => {
   // bun test sets argv[1] to the test file. Passing it back would re-enter
   // the test runner instead of refreshing the cache.
   expect(updateCheckSpawnArgs("/usr/bin/bun", "/tmp/hooks.test.ts")).toEqual({
-    command: "/usr/bin/bun",
+    command: "lore",
     args: ["sys", "update-check", "--refresh"],
   });
 });

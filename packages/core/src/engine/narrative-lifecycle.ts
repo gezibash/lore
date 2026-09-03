@@ -807,16 +807,18 @@ export async function queryConcepts(
   // Symbol search runs synchronously (FTS5) alongside async hybrid + web searches
   let symbolResults: ReturnType<typeof searchSymbols> = [];
   try {
-    symbolResults = searchSymbols(db, text, { limit: 10 });
-    if (symbolResults.length > 0) {
-      symbolResults = await enrichSymbolResults(db, symbolResults, opts?.codePath);
-    }
     // Hybrid search already drops out-of-scope chunks. Symbol hits do not go
     // through that filter, and the structural boost below injects the concepts
     // they bind. A scoped question would otherwise pull in a concept bound only
-    // to a file outside the scope.
-    if (opts?.scopes && opts.scopes.length > 0) {
-      symbolResults = filterItemsByScope(symbolResults, opts.scopes);
+    // to a file outside the scope. The filter runs before enrichment, on a
+    // wider candidate set, so in-scope hits behind the global top ten survive.
+    const scoped = Boolean(opts?.scopes && opts.scopes.length > 0);
+    symbolResults = searchSymbols(db, text, { limit: scoped ? 50 : 10 });
+    if (scoped) {
+      symbolResults = filterItemsByScope(symbolResults, opts?.scopes).slice(0, 10);
+    }
+    if (symbolResults.length > 0) {
+      symbolResults = await enrichSymbolResults(db, symbolResults, opts?.codePath);
     }
   } catch {
     // symbol_fts table may not exist yet — non-fatal
