@@ -12,11 +12,11 @@ export function isInteractiveOutputEnabled(): boolean {
 }
 
 /** Prompts need a real keyboard. A pipe or CI job cannot answer them. */
-export function isInteractiveInputEnabled(): boolean {
+function isInteractiveInputEnabled(): boolean {
   return Boolean(process.stdin.isTTY) && process.env.CI !== "true";
 }
 
-export function readStdinLine(): Promise<string> {
+function readStdinLine(): Promise<string> {
   return new Promise((resolve) => {
     process.stdin.setEncoding("utf-8");
     process.stdin.once("data", (data) => resolve(String(data).trim()));

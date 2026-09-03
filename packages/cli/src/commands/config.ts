@@ -104,8 +104,9 @@ export async function configGetCommand(client: WorkerClient, key: string): Promi
     overrideValue !== undefined
       ? `${CYAN}(lore override)${RESET}`
       : `${DIM}(default/global)${RESET}`;
-  emit({ key, value: resolvedValue, override: overrideValue !== undefined }, () =>
-    `${BOLD}${key}${RESET} = ${JSON.stringify(resolvedValue)}  ${source}`,
+  emit(
+    { key, value: resolvedValue, override: overrideValue !== undefined },
+    () => `${BOLD}${key}${RESET} = ${JSON.stringify(resolvedValue)}  ${source}`,
   );
 }
 
@@ -170,8 +171,9 @@ export async function configSetCommand(
 ): Promise<void> {
   const coerced = coerceValue(key, value);
   await client.setLoreMindConfig(key, coerced);
-  emit({ key, value: coerced }, () =>
-    `${GREEN}✓${RESET} Set ${BOLD}${key}${RESET} = ${JSON.stringify(coerced)}`,
+  emit(
+    { key, value: coerced },
+    () => `${GREEN}✓${RESET} Set ${BOLD}${key}${RESET} = ${JSON.stringify(coerced)}`,
   );
 }
 
@@ -246,15 +248,17 @@ export async function providerConfigGetCommand(
   const parsedProvider = parseProvider(provider);
   const config = await client.getProviderCredential(parsedProvider);
   if (!config) {
-    emit({ provider: parsedProvider, found: false }, () =>
-      `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
+    emit(
+      { provider: parsedProvider, found: false },
+      () => `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
     );
     return;
   }
   const apiKey = config.api_key ? maskSecret(config.api_key) : "(unset)";
   const baseUrl = config.base_url ?? "(unset)";
-  emit({ provider: parsedProvider, api_key: apiKey, base_url: baseUrl }, () =>
-    `${BOLD}${parsedProvider}${RESET}\napi_key: ${apiKey}\nbase_url: ${baseUrl}`,
+  emit(
+    { provider: parsedProvider, api_key: apiKey, base_url: baseUrl },
+    () => `${BOLD}${parsedProvider}${RESET}\napi_key: ${apiKey}\nbase_url: ${baseUrl}`,
   );
 }
 
@@ -484,8 +488,10 @@ export async function providerConfigSetCommand(
     api_key: options.apiKey,
     base_url: options.baseUrl,
   });
-  emit({ provider: parsedProvider, updated: true }, () =>
-    `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
+  emit(
+    { provider: parsedProvider, updated: true },
+    () =>
+      `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
   );
 }
 
@@ -503,12 +509,15 @@ export async function providerConfigUnsetCommand(
     base_url: noSelectors ? true : clearBaseUrl,
   });
   if (!next) {
-    emit({ provider: parsedProvider, found: false }, () =>
-      `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
+    emit(
+      { provider: parsedProvider, found: false },
+      () => `${DIM}No shared credential for provider '${parsedProvider}'.${RESET}`,
     );
     return;
   }
-  emit({ provider: parsedProvider, credential: next }, () =>
-    `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
+  emit(
+    { provider: parsedProvider, credential: next },
+    () =>
+      `${GREEN}✓${RESET} Updated shared provider credential for ${BOLD}${parsedProvider}${RESET}`,
   );
 }

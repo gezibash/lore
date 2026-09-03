@@ -178,9 +178,7 @@ export function formatRegisterCli(result: {
       `${YELLOW}Hook not installed (${result.hook.kind}). Run: lore sys hooks install${RESET}`,
     );
   } else {
-    lines.push(
-      `${DIM}Keep the index fresh after commits: lore sys hooks install${RESET}`,
-    );
+    lines.push(`${DIM}Keep the index fresh after commits: lore sys hooks install${RESET}`);
   }
   return lines.join("\n");
 }

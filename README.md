@@ -195,8 +195,8 @@ lore suggest
 
 ### Core workflow
 
-| Command                          | Description                                                |
-| -------------------------------- | ---------------------------------------------------------- |
+| Command                          | Description                                                       |
+| -------------------------------- | ----------------------------------------------------------------- |
 | `lore init [path] [name]`        | Register a codebase. `--hooks` writes the post-commit ingest hook |
 | `lore ingest [file]`             | Index source code and docs. `--force` re-chunks every file        |
 | `lore note <entry>`              | Capture a finding. Lore picks the narrative and concept           |

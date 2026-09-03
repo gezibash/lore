@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## v0.4.2
 
 [compare changes](https://github.com/gezibash/lore/compare/v0.4.1...v0.4.2)
@@ -12,4 +11,3 @@
 ### ❤️ Contributors
 
 - Gezim Basha <gezimmb@gmail.com>
-

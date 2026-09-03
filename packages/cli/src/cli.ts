@@ -1068,8 +1068,7 @@ Examples:
               } else if (agentList.length > 0 || options.project) {
                 emit(
                   { ok: false, error: "skills-cli-required" },
-                  () =>
-                    "--agent and --project need the skills CLI. Drop --link, --copy and --dir.",
+                  () => "--agent and --project need the skills CLI. Drop --link, --copy and --dir.",
                 );
                 process.exitCode = 1;
                 return;
