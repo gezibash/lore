@@ -26,18 +26,23 @@ export interface UpsertConceptSymbolOpts {
 
 export function upsertConceptSymbol(db: Database, opts: UpsertConceptSymbolOpts): ConceptSymbolRow {
   const now = new Date().toISOString();
-  const id = ulid();
-  db.run(
-    `INSERT INTO concept_symbols (id, concept_id, symbol_id, binding_type, bound_body_hash, bound_body, confidence, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(concept_id, symbol_id) DO UPDATE SET
-       binding_type = excluded.binding_type,
-       bound_body_hash = excluded.bound_body_hash,
-       bound_body = excluded.bound_body,
-       confidence = excluded.confidence,
-       updated_at = excluded.updated_at`,
-    [
-      id,
+  const row = db
+    .query<
+      ConceptSymbolRow,
+      [string, string, string, BindingType, string | null, string | null, number, string, string]
+    >(
+      `INSERT INTO concept_symbols (id, concept_id, symbol_id, binding_type, bound_body_hash, bound_body, confidence, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(concept_id, symbol_id) DO UPDATE SET
+         binding_type = excluded.binding_type,
+         bound_body_hash = excluded.bound_body_hash,
+         bound_body = excluded.bound_body,
+         confidence = excluded.confidence,
+         updated_at = excluded.updated_at
+       RETURNING *`,
+    )
+    .get(
+      ulid(),
       opts.conceptId,
       opts.symbolId,
       opts.bindingType,
@@ -46,19 +51,11 @@ export function upsertConceptSymbol(db: Database, opts: UpsertConceptSymbolOpts)
       opts.confidence,
       now,
       now,
-    ],
-  );
-  return {
-    id,
-    concept_id: opts.conceptId,
-    symbol_id: opts.symbolId,
-    binding_type: opts.bindingType,
-    bound_body_hash: opts.boundBodyHash,
-    bound_body: opts.boundBody ?? null,
-    confidence: opts.confidence,
-    created_at: now,
-    updated_at: now,
-  };
+    );
+  if (!row) {
+    throw new Error("upsertConceptSymbol returned no row");
+  }
+  return row;
 }
 
 /**
@@ -285,7 +282,10 @@ export function getUncoveredSymbols(
   const exportedOnly = opts?.exportedOnly ?? false;
   const limit = opts?.limit ?? 200;
 
-  const conditions = [`s.id NOT IN (SELECT symbol_id FROM concept_symbols)`];
+  // NOT EXISTS, not NOT IN. The same NULL-id footgun as pruneOrphanedBindings:
+  // one NULL in the subquery makes NOT IN match nothing, so coverage reports
+  // every symbol as bound.
+  const conditions = [`NOT EXISTS (SELECT 1 FROM concept_symbols cs WHERE cs.symbol_id = s.id)`];
   const params: (string | number)[] = [];
 
   if (exportedOnly) {

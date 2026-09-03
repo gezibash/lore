@@ -246,6 +246,6 @@ export function getLatestScoreEvent(
     .get(resultId);
   if (!row) return null;
   const meta = safeParseJson<ScoreEventMeta>(row.meta_json);
-  if (!meta?.score || !Number.isFinite(meta.score)) return null;
+  if (meta?.score == null || !Number.isFinite(meta.score)) return null;
   return { score: meta.score, created_at: row.created_at };
 }

@@ -123,6 +123,7 @@ import { expandCamelCase } from "@/db/symbols.ts";
 import { computeLineDiff, isDiffTooLarge } from "./line-diff.ts";
 import { searchSymbols } from "@/db/symbols.ts";
 import { getConceptsForSymbols } from "@/db/concept-symbols.ts";
+import { filterItemsByScope } from "./scope.ts";
 import { getCallSitesForCallee, getCallSitesByCaller } from "@/db/call-sites.ts";
 import { enrichSymbolResults } from "./symbol-search.ts";
 
@@ -810,6 +811,13 @@ export async function queryConcepts(
     if (symbolResults.length > 0) {
       symbolResults = await enrichSymbolResults(db, symbolResults, opts?.codePath);
     }
+    // Hybrid search already drops out-of-scope chunks. Symbol hits do not go
+    // through that filter, and the structural boost below injects the concepts
+    // they bind. A scoped question would otherwise pull in a concept bound only
+    // to a file outside the scope.
+    if (opts?.scopes && opts.scopes.length > 0) {
+      symbolResults = filterItemsByScope(symbolResults, opts.scopes);
+    }
   } catch {
     // symbol_fts table may not exist yet — non-fatal
   }
@@ -1374,6 +1382,8 @@ export async function queryConcepts(
     const groundedness = concept ? (groundednessByConceptId.get(concept.id) ?? null) : null;
     if (groundedness?.ungrounded) {
       warnings.push("concept has no symbol bindings — unverifiable against code");
+    } else if (groundedness && !groundedness.eEmbedMeasured) {
+      warnings.push("bound, but code-vs-prose residual was never measured");
     }
     if (sigma != null && sigma > 0.5) {
       warnings.push(`concept is stale (σ ${sigma.toFixed(2)})`);

@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { computeNorthStarScorecard, insertInteractionEvent } from "./interaction-events.ts";
+import {
+  computeNorthStarScorecard,
+  getLatestScoreEvent,
+  insertInteractionEvent,
+} from "./interaction-events.ts";
 import { insertQueryCache, scoreQueryCache } from "./query-cache.ts";
 import { createTestDb } from "../../test/support/db.ts";
 
@@ -98,6 +102,25 @@ test("computeNorthStarScorecard summarizes ask follow-ups and maintenance loops"
     expect(scorecard.stale_answer_follow_through.value).toBe(1);
     expect(scorecard.provenance_trust.average_score).toBeCloseTo(4.5);
     expect(scorecard.maintenance_loop_completion.value).toBeCloseTo(0.5);
+  } finally {
+    db.close();
+  }
+});
+
+test("getLatestScoreEvent keeps a score of 0", () => {
+  const db = createTestDb();
+  try {
+    insertInteractionEvent(db, {
+      resultId: "ASK0",
+      eventType: "score",
+      meta: { score: 0 },
+    });
+
+    // `!meta.score` treated 0 as missing, so a legitimate zero vanished.
+    expect(getLatestScoreEvent(db, "ASK0")).toEqual({
+      score: 0,
+      created_at: expect.any(String),
+    });
   } finally {
     db.close();
   }

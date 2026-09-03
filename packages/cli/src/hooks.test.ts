@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   describeHook,
+  hookBody,
   installHook,
   readHookState,
   resolveHooksTarget,
@@ -52,9 +53,39 @@ describe("git hooks", () => {
       expect(body.trimEnd().endsWith("exit 0")).toBe(true);
       // The commit must not wait for a scan.
       expect(body).toContain("--queue");
+      // Git GUI clients often omit ~/.local/bin. Prepend it so the fallback finds
+      // a release install even when PATH is the system default.
+      expect(body).toContain('PATH="$HOME/.local/bin:$PATH"');
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  test("the hook prefers the lore that wrote it over a PATH lookup", () => {
+    const repo = makeRepo();
+    try {
+      const invoke = { command: "/opt/lore/lib/lore/lore", args: [] };
+      installHook({ cwd: repo, invoke });
+      const body = readFileSync(join(repo, ".git", "hooks", "post-commit"), "utf-8");
+      // A short PATH is why `command -v lore` misses a release install.
+      // The absolute path is what the installing binary can guarantee.
+      expect(body).toContain("/opt/lore/lib/lore/lore ingest --queue");
+      expect(body).toContain("[ -x /opt/lore/lib/lore/lore ]");
+      // The PATH lookup stays as a fallback when that file is later gone.
+      expect(body).toContain("command -v lore >/dev/null 2>&1 || exit 0");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test("a source checkout writes bun plus the CLI script", () => {
+    const invoke = {
+      command: "/usr/bin/bun",
+      args: ["/home/u/lore/packages/cli/src/index.ts"],
+    };
+    const body = hookBody(invoke);
+    expect(body).toContain("/usr/bin/bun /home/u/lore/packages/cli/src/index.ts ingest --queue");
+    expect(body).toContain("[ -f /home/u/lore/packages/cli/src/index.ts ]");
   });
 
   test("installing twice reports no change", () => {
@@ -62,6 +93,9 @@ describe("git hooks", () => {
     try {
       installHook({ cwd: repo });
       expect(installHook({ cwd: repo }).kind).toBe("unchanged");
+      const invoke = { command: "/opt/lore/lib/lore/lore", args: [] };
+      expect(installHook({ cwd: repo, force: true, invoke }).kind).toBe("updated");
+      expect(installHook({ cwd: repo, invoke }).kind).toBe("unchanged");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

@@ -7,9 +7,12 @@ import {
 import type { ReasoningLevel, GenerationReasoningScope } from "@/types/index.ts";
 import { defaultConfig } from "@/config/index.ts";
 import { insertChunk } from "@/db/chunks.ts";
+import { upsertConceptSymbol } from "@/db/concept-symbols.ts";
 import { insertConcept } from "@/db/concepts.ts";
 import { insertEmbedding } from "@/db/embeddings.ts";
 import { insertFtsContent } from "@/db/fts.ts";
+import { insertSourceFile } from "@/db/source-files.ts";
+import { insertSymbol } from "@/db/symbols.ts";
 import { writeStateChunk } from "@/storage/index.ts";
 import type { Embedder } from "./embedder.ts";
 import { createTempDir, createTestDb, removeDir } from "../../test/support/db.ts";
@@ -468,6 +471,78 @@ test("a failed executive summary keeps the retrieval and reports the failure", a
     expect(result.meta.executive_summary.attempted).toBe(true);
     expect(result.meta.executive_summary.generated).toBe(false);
     expect(result.meta.executive_summary.reason).toBe("failed: The operation timed out.");
+  } finally {
+    db.close();
+    removeDir(lorePath);
+  }
+});
+
+test("a bound concept with no embed residual warns instead of looking healthy", async () => {
+  const db = createTestDb();
+  const lorePath = createTempDir("lore-ask-");
+  try {
+    const concept = insertConcept(db, "auth-model");
+    const chunk = await writeStateChunk({
+      lorePath,
+      concept: concept.name,
+      conceptId: concept.id,
+      narrativeOrigin: "seed",
+      version: 1,
+      content: "Auth validates tokens before it issues sessions.",
+    });
+    insertChunk(db, {
+      id: chunk.id,
+      filePath: chunk.filePath,
+      flType: "chunk",
+      conceptId: concept.id,
+      createdAt: new Date().toISOString(),
+    });
+    db.run("UPDATE concepts SET active_chunk_id = ? WHERE id = ?", [chunk.id, concept.id]);
+    insertEmbedding(db, chunk.id, new Float32Array([1, 0, 0]), defaultConfig.ai.embedding.model);
+    insertFtsContent(db, "auth validates tokens before it issues sessions", chunk.id);
+
+    const file = insertSourceFile(db, {
+      filePath: "src/auth.ts",
+      language: "typescript",
+      contentHash: "hash-auth",
+      sizeBytes: 40,
+      symbolCount: 1,
+    });
+    const symbol = insertSymbol(db, {
+      sourceFileId: file.id,
+      name: "validateToken",
+      qualifiedName: "validateToken",
+      kind: "function",
+      parentId: null,
+      lineStart: 1,
+      lineEnd: 8,
+      signature: "validateToken()",
+      bodyHash: "body-auth",
+      exportStatus: "exported",
+    });
+    upsertConceptSymbol(db, {
+      conceptId: concept.id,
+      symbolId: symbol.id,
+      bindingType: "ref",
+      boundBodyHash: symbol.body_hash,
+      confidence: 1,
+    });
+
+    const embedder = {
+      embed: async () => new Float32Array([1, 0, 0]),
+      embedBatch: async (texts: string[]) => texts.map(() => new Float32Array([1, 0, 0])),
+    } as unknown as Embedder;
+
+    const result = await queryConcepts(
+      db,
+      "how does auth validate tokens",
+      defaultConfig,
+      embedder,
+    );
+
+    const match = result.results.find((row) => row.concept === "auth-model");
+    expect(match).toBeDefined();
+    expect(match?.warning).toContain("code-vs-prose residual was never measured");
   } finally {
     db.close();
     removeDir(lorePath);

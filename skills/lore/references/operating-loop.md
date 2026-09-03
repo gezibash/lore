@@ -14,8 +14,8 @@ Use these first to confirm whether the lore is already trustworthy enough to sta
 Do this once per repo, before any narrative work.
 
 ```bash
-# From the lore repo: install a stable binary at ~/.local/bin/lore
-bun run install
+# Release install (usual). From the lore repo, `bun run install` instead.
+curl -fsSL https://raw.githubusercontent.com/gezibash/lore/main/install.sh | sh
 
 # In the target repo: exclude what must never enter retrieval
 cat > .loreignore <<'IGNORE'
@@ -39,6 +39,8 @@ Rules:
 - `lore init <dir>` registers that exact directory. Commands in a subdirectory
   resolve to the nearest registered ancestor.
 - For a multi-repo workspace, register one mind at the workspace root.
+- If cross-repo answers blur near-duplicate code, scope the question with
+  `lore ask --scope <dir>` before splitting into separate minds.
 - After a large refactor, run `lore ingest --force` to re-chunk every file.
 
 ## Bootstrap A New Repo

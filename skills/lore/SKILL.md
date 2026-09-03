@@ -13,10 +13,10 @@ Lore is CLI-only. There is no MCP surface.
 
 ## Set Up A Project
 
-1. Install the CLI from the lore repo with `bun run install`.
-   - This builds `dist/` and links a stable binary at `~/.local/bin/lore`.
-   - The binary is a copy, so it keeps working while the lore repo is mid-edit.
-   - Use `bun run link:global` instead only when you develop lore itself.
+1. Install the CLI.
+   - Release (usual): `curl -fsSL https://raw.githubusercontent.com/gezibash/lore/main/install.sh | sh`
+   - From the lore repo: `bun run install` builds `dist/` and copies a stable binary to `~/.local/bin/lore`.
+   - Use `bun run link:global` only when you develop lore itself.
    - If the install warns about PATH, report the warning. Do not ignore it.
 2. Write `.loreignore` at the repo root before the first ingest.
    - Lore reads `.gitignore` and `.loreignore`. `.loreignore` has the highest authority.
@@ -32,7 +32,7 @@ Lore is CLI-only. There is no MCP surface.
 - `lore init <dir>` registers that exact directory. It never returns a parent mind.
 - Every command resolves the current directory to its nearest registered ancestor.
 - For a multi-repo workspace, register one mind at the workspace root. Sub-repos then share concepts.
-- If cross-repo answers get worse, the packs are crowded by near-duplicate code. Split the workspace into separate minds.
+- If cross-repo answers get worse, the packs are crowded by near-duplicate code. Scope the question with `lore ask --scope <dir>` first. Split the workspace into separate minds only if that is not enough.
 
 ## Start With State
 
@@ -206,7 +206,7 @@ No catalog reports embedding dimensions, so `--dim` is required.
 
 If you skip step 2, every stored row keeps its old model tag, lore counts all of
 them as stale, and debt climbs toward 1.0. The debt bands are calibrated for
-`qwen/qwen3-embedding-8b`, so the numbers change meaning under a different embedder.
+`qwen3-embedding:8b`, so the numbers change meaning under a different embedder.
 
 - Embedding providers: `ollama`, `openai`, `openai-compatible`, `openrouter`,
   `voyage`, `gateway`.

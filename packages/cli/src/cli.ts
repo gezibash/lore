@@ -1010,6 +1010,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           const result = await runUpgrade(getVersionString().split(" ")[0] ?? "0.0.0");
           if (!result.ok) {
             console.log(result.reason);
+            if (!result.alreadyLatest) process.exitCode = 1;
             return;
           }
           console.log(`\nlore is now v${result.version}.`);
@@ -1117,7 +1118,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           }),
           worker: defineCommand({
             name: "worker",
-            description: "Ask the daemon to drain queued close jobs",
+            description: "Ask the daemon to drain queued jobs (close, ingest, rebuild)",
             options: {
               once: { type: "boolean", description: "Run until the queue is empty, then exit" },
               watch: { type: "boolean", description: "Keep polling for new jobs" },
