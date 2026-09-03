@@ -7,7 +7,7 @@ description: "Use Lore's CLI-first workflow in any repo: set the project up, ins
 
 ## Overview
 
-Lore turns a codebase into a queryable knowledge graph: named concepts, narrative sessions, symbol bindings, and a debt score. Use it as part of the coding loop, not as a final summary step. Open a narrative before meaningful work, write dense entries as you learn, close when done, then ingest and bind after code changes.
+Lore turns a codebase into a queryable knowledge graph: named concepts, narrative sessions, symbol bindings, and a debt score. Use it as part of the coding loop, not as a final summary step. Capture findings with `lore note` as you learn. Open a narrative with targets when the work will reshape concepts. Close when done, then ingest and bind after code changes.
 
 Lore is CLI-only. There is no MCP surface.
 
@@ -44,20 +44,19 @@ Lore is CLI-only. There is no MCP surface.
 ## Run The Default Loop
 
 1. Orient with `status`, `ls`, `show`, and `ask`.
-2. Open a narrative before meaningful work with `lore open <name> "<intent>"`.
-3. Declare create/update targets on open when the work introduces or reshapes concepts.
-   - Use `--target create:<concept>` when a new concept will be journaled.
-   - Use `--target update:<concept>` when the narrative should feed an existing concept directly.
+2. Capture findings with `lore note "<entry>"`. Lore picks the narrative and the concept.
+   - Add `--ref` for file or line references and `--symbol` for touched symbols.
+   - Pass `--concept` or `--narrative` only when you need to override the choice.
+3. Open a narrative with targets when the work will create or reshape concepts:
+   `lore open <name> "<intent>" --target create:<concept>` or `--target update:<concept>`.
+   - Then write with `lore write <narrative> "<entry>" --concept …` so close stays precise.
    - Lifecycle targets exist too: `rename:old:new`, `merge:src:into`, `archive:name[:reason]`, `split:name[:parts]`, `restore:name`.
    - `create:name` against an archived name restores that concept and writes the new body. You do not need `lore sys concept restore` first. If the name was merged into another concept, the close stops and names it.
-4. Write often with `lore write <narrative> "<entry>"`.
-   - Pass `--concept` unless the narrative has exactly one create/update target.
-   - Add `--symbol` for touched symbols and `--ref` for file or line references.
-5. Close the narrative when done with `lore close <narrative>`.
+4. Close the narrative when done with `lore close <narrative>`.
    - Close is async by default for merge mode.
    - Use `--wait` when the caller needs a completed result before continuing.
-6. Ingest after code changes with `lore ingest` or `lore ingest <file>`.
-7. Bind important touched symbols with `lore sys concept bind <concept> <symbol>`.
+5. Ingest after code changes with `lore ingest` or `lore ingest <file>`.
+6. Bind important touched symbols with `lore bind <concept> <symbol>`.
 
 ## Ask Well
 

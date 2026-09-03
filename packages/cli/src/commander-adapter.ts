@@ -1,6 +1,38 @@
 import { Argument, Command, Option } from "commander";
 import type { CliArgSpec, CliCommandSpec, CliOptionSpec, CliSpec } from "./cli-schema.ts";
-import { isJsonOutput } from "./output.ts";
+
+/** Root help lists groups in this order. First-seen order in Commander follows it. */
+const ROOT_COMMAND_RANK: Record<string, number> = {
+  init: 10,
+  ingest: 11,
+  status: 12,
+  ask: 20,
+  show: 21,
+  ls: 22,
+  note: 30,
+  open: 31,
+  write: 32,
+  close: 33,
+  recall: 40,
+  score: 41,
+  trail: 42,
+  diff: 43,
+  suggest: 50,
+  rebuild: 51,
+  bind: 52,
+  unbind: 53,
+  jobs: 54,
+  job: 55,
+  wait: 56,
+  run: 60,
+  kpi: 61,
+  usage: 62,
+  log: 63,
+  daemon: 70,
+  skill: 71,
+  upgrade: 72,
+  sys: 73,
+};
 
 function parseNumber(value: string, name: string): number {
   const parsed = Number(value);
@@ -72,6 +104,13 @@ function applyOptions(command: Command, options: Record<string, CliOptionSpec> |
   }
 }
 
+function applyHelpMeta(command: Command, commandSpec: CliCommandSpec): void {
+  if (commandSpec.helpGroup) command.helpGroup(commandSpec.helpGroup);
+  for (const alias of commandSpec.aliases ?? []) {
+    command.alias(alias);
+  }
+}
+
 function buildAction(commandSpec: CliCommandSpec, globalOptions: Record<string, CliOptionSpec>) {
   const argEntries = Object.entries(commandSpec.arguments ?? {});
   const optionEntries = [
@@ -104,6 +143,7 @@ function buildCommand(
   }
 
   applySharedFlags(command, version);
+  applyHelpMeta(command, commandSpec);
   applyOptions(command, globalOptions);
   applyOptions(command, commandSpec.options);
 
@@ -112,7 +152,9 @@ function buildCommand(
   }
 
   for (const childSpec of Object.values(commandSpec.subcommands ?? {})) {
-    command.addCommand(buildCommand(childSpec, version, globalOptions));
+    command.addCommand(buildCommand(childSpec, version, globalOptions), {
+      hidden: childSpec.hidden,
+    });
   }
 
   if (commandSpec.action) {
@@ -120,6 +162,10 @@ function buildCommand(
   }
 
   return command;
+}
+
+function rootCommandRank(name: string): number {
+  return ROOT_COMMAND_RANK[name] ?? 1000;
 }
 
 export function buildCommanderCli(spec: CliSpec): Command {
@@ -132,8 +178,17 @@ export function buildCommanderCli(spec: CliSpec): Command {
   applySharedFlags(program, spec.version);
   applyOptions(program, spec.globalOptions);
 
-  for (const childSpec of Object.values(spec.commands)) {
-    program.addCommand(buildCommand(childSpec, spec.version, spec.globalOptions ?? {}));
+  const children = Object.values(spec.commands).sort(
+    (a, b) => rootCommandRank(a.name) - rootCommandRank(b.name),
+  );
+  for (const childSpec of children) {
+    program.addCommand(buildCommand(childSpec, spec.version, spec.globalOptions ?? {}), {
+      hidden: childSpec.hidden,
+    });
+  }
+
+  if (spec.helpTextAfter) {
+    program.addHelpText("after", spec.helpTextAfter);
   }
 
   return program;

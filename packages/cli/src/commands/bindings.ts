@@ -1,9 +1,10 @@
 import type { WorkerClient } from "@lore/worker";
 import { formatConceptBindingsCli } from "../formatters.ts";
+import { emit } from "../output.ts";
 
 export async function conceptBindingsCommand(client: WorkerClient, concept: string): Promise<void> {
   const bindings = await client.conceptBindings(concept);
-  console.log(formatConceptBindingsCli(concept, bindings));
+  emit({ concept, bindings }, (value) => formatConceptBindingsCli(value.concept, value.bindings));
 }
 
 export async function conceptBindCommand(
@@ -15,8 +16,10 @@ export async function conceptBindCommand(
   line?: number,
 ): Promise<void> {
   const binding = await client.bindSymbol(concept, symbol, { confidence, filePath, line });
-  console.log(
-    `Bound ${binding.symbol_name} (${binding.symbol_kind}) → ${concept} [${binding.binding_type}, confidence: ${binding.confidence.toFixed(2)}]`,
+  emit(
+    binding,
+    (value) =>
+      `Bound ${value.symbol_name} (${value.symbol_kind}) → ${concept} [${value.binding_type}, confidence: ${value.confidence.toFixed(2)}]`,
   );
 }
 
@@ -32,11 +35,11 @@ export async function conceptUnbindCommand(
     symbol,
     filePath || line !== undefined ? { filePath, line } : undefined,
   );
-  if (!result.removed) {
-    const at = [filePath ? ` in ${filePath}` : "", line !== undefined ? ` at line ${line}` : ""];
-    const where = at.join("");
-    console.log(`No binding found for ${concept} ↔ ${symbol}${where}`);
-    return;
-  }
-  console.log(`Removed binding: ${concept} ↔ ${symbol}`);
+  const at = [filePath ? ` in ${filePath}` : "", line !== undefined ? ` at line ${line}` : ""];
+  const where = at.join("");
+  emit(result, (value) =>
+    value.removed
+      ? `Removed binding: ${concept} ↔ ${symbol}`
+      : `No binding found for ${concept} ↔ ${symbol}${where}`,
+  );
 }

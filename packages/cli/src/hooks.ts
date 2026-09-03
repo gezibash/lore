@@ -188,6 +188,52 @@ export function manualHookLine(invoke: LoreInvoke = loreInvoke()): string {
   return `${loreInvokeArgv(["ingest", "--queue"], invoke).map(shellQuote).join(" ")} >/dev/null 2>&1 || true`;
 }
 
+export function formatInstallOutcome(result: InstallOutcome): string {
+  switch (result.kind) {
+    case "installed":
+      return `Installed the post-commit hook.\n  ${result.path}`;
+    case "updated":
+      return `Updated the post-commit hook.\n  ${result.path}`;
+    case "unchanged":
+      return `Already installed.\n  ${result.path}`;
+    case "occupied":
+      return [
+        "A post-commit hook is already there, and lore did not write it.",
+        `  ${result.path}`,
+        "Add this line to it, or pass --force to replace it:",
+        `  ${manualHookLine()}`,
+      ].join("\n");
+    case "shared":
+      return [
+        `core.hooksPath is ${result.hooksPath}, outside this repository.`,
+        "git runs that directory for every repository that reads this",
+        "config, so lore does not write there. Add this line to its",
+        "post-commit hook:",
+        `  ${manualHookLine()}`,
+      ].join("\n");
+    case "not-a-repo":
+      return "Not a git repository.";
+  }
+}
+
+export function formatUninstallOutcome(result: UninstallOutcome): string {
+  switch (result.kind) {
+    case "removed":
+      return `Removed the post-commit hook.\n  ${result.path}`;
+    case "absent":
+      return "No lore hook to remove.";
+    case "foreign":
+      return [
+        "The post-commit hook there was not written by lore, so it stays.",
+        `  ${result.path}`,
+      ].join("\n");
+    case "shared":
+      return `core.hooksPath is ${result.hooksPath}, outside this repository. lore wrote nothing there.`;
+    case "not-a-repo":
+      return "Not a git repository.";
+  }
+}
+
 export function describeHook(opts?: { cwd?: string }): string[] {
   const target = resolveHooksTarget(opts?.cwd);
   if (target.kind === "not-a-repo") return ["Not a git repository."];

@@ -114,7 +114,14 @@ function stalenessLabel(value: number | null): string {
 
 function normalizedResidual(raw: number | null): number | null {
   if (raw == null || !Number.isFinite(raw)) return null;
-  return Math.min(1, Math.max(0, raw / 2));
+  return Math.min(1, Math.max(0, raw));
+}
+
+function metricGlossary(): string[] {
+  return [
+    "",
+    `${DIM}residual: how far concept prose is from bound code. staleness: chance the code moved since last check. debt: expected error per ask. ungrounded: a concept with no bindings.${RESET}`,
+  ];
 }
 
 function residualLabel(normalized: number | null): string {
@@ -155,6 +162,17 @@ function renderClaimBlock(summary: ExecutiveSummary | null | undefined): string[
  * is missing and name the setting that caps it. Silence would read as "this is
  * the whole answer".
  */
+function renderIndexFreshness(result: QueryResult): string[] {
+  const freshness = result.index_freshness;
+  if (!freshness) return [];
+  if (freshness.worst !== "medium" && freshness.worst !== "high") return [];
+  const count = compactCount(freshness.stale_files);
+  return [
+    `⚠ ${count} file${freshness.stale_files === 1 ? "" : "s"} changed since last ingest. This answer may describe old code. Run \`lore ingest\`.`,
+    "",
+  ];
+}
+
 function renderSummaryFailure(result: QueryResult): string[] {
   const summary = result.meta.executive_summary;
   if (!summary.attempted || summary.generated) return [];
@@ -193,7 +211,7 @@ function renderSummaryProvenance(summary: ExecutiveSummary | null | undefined): 
 }
 
 function bindCommand(): string {
-  return "`lore sys concept bind <concept> <symbol>`";
+  return "`lore bind <concept> <symbol>`";
 }
 
 function recallCommand(resultId: string): string {
@@ -374,7 +392,11 @@ function renderResultFooter(result: QueryResult): string[] {
 
 export function renderAsk(result: QueryResult, opts?: RenderAskOptions): string {
   const summaryFailure = renderSummaryFailure(result);
-  const lines: string[] = [...summaryFailure, renderSummaryNarrative(result)];
+  const lines: string[] = [
+    ...renderIndexFreshness(result),
+    ...summaryFailure,
+    renderSummaryNarrative(result),
+  ];
   const provenance = renderSummaryProvenance(result.executive_summary);
   if (provenance) {
     lines.push("", provenance);
@@ -620,7 +642,7 @@ function renderStatusVerbosePlain(result: StatusResult): string {
   lines.push(debtTrend ? `${result.summary} ${debtTrend}` : result.summary);
   if (result.state_distance != null) {
     lines.push(
-      `${DIM}S_dist: ${(result.state_distance * 100).toFixed(0)}% (epistemological gap)${RESET}`,
+      `${DIM}trust gap: ${(result.state_distance * 100).toFixed(0)}% (how far the knowledge is from the current codebase)${RESET}`,
     );
   }
 
@@ -761,6 +783,7 @@ function renderStatusVerbosePlain(result: StatusResult): string {
     }
   }
 
+  lines.push(...metricGlossary());
   return lines.join("\n");
 }
 
@@ -897,6 +920,7 @@ function renderLsPlain(
     }
   }
 
+  lines.push(...metricGlossary());
   return lines.join("\n");
 }
 

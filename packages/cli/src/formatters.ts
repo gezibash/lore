@@ -152,11 +152,35 @@ export function formatHistory(
   return lines.join("\n");
 }
 
-export function formatRegisterCli(codePath: string, lorePath: string): string {
-  return [
-    `${GREEN}✓${RESET} Initialized at ${CYAN}${codePath}${RESET}`,
-    `${DIM}lore:${RESET} ${lorePath}`,
-  ].join("\n");
+export function formatRegisterCli(result: {
+  code_path: string;
+  lore_path: string;
+  has_loreignore: boolean;
+  hook?: { kind: string; path?: string; hooksPath?: string };
+}): string {
+  const lines = [
+    `${GREEN}✓${RESET} Initialized at ${CYAN}${result.code_path}${RESET}`,
+    `${DIM}lore:${RESET} ${result.lore_path}`,
+  ];
+  if (!result.has_loreignore) {
+    lines.push(
+      `${YELLOW}Write .loreignore before the first ingest so tests and fixtures stay out of retrieval.${RESET}`,
+    );
+  }
+  lines.push(`${DIM}Next:${RESET} lore ingest`);
+  lines.push(`${DIM}Then:${RESET} lore status`);
+  if (result.hook?.kind === "installed" || result.hook?.kind === "updated") {
+    lines.push(`${GREEN}✓${RESET} Post-commit hook written at ${result.hook.path}`);
+  } else if (result.hook?.kind === "unchanged") {
+    lines.push(`${DIM}Post-commit hook already installed.${RESET}`);
+  } else if (result.hook) {
+    lines.push(
+      `${YELLOW}Hook not installed (${result.hook.kind}). Run: lore sys hooks install${RESET}`,
+    );
+  } else {
+    lines.push(`${DIM}Keep the index fresh after commits: lore sys hooks install${RESET}`);
+  }
+  return lines.join("\n");
 }
 
 /** One line per `--symbol` name that attached to nothing. A writer who cannot
@@ -431,7 +455,7 @@ export function formatHealConceptsCli(result: HealConceptsResult): string {
       if (result.dry) {
         const state = concept.ungrounded_before ? " (ungrounded)" : "";
         lines.push(
-          `- ${CYAN}${concept.concept}${RESET}${state}: R ${pct(concept.from_residual)}, σ ${pct(concept.from_staleness)}, drifted ${concept.bindings_still_drifted}`,
+          `- ${CYAN}${concept.concept}${RESET}${state}: residual ${pct(concept.from_residual)}, staleness ${pct(concept.from_staleness)}, drifted ${concept.bindings_still_drifted}`,
         );
         for (const step of concept.plan) lines.push(`    ${DIM}would:${RESET} ${step}`);
         continue;
@@ -442,7 +466,7 @@ export function formatHealConceptsCli(result: HealConceptsResult): string {
           ? " (now grounded)"
           : "";
       lines.push(
-        `- ${CYAN}${concept.concept}${RESET}${state}: R ${pct(concept.from_residual)} -> ${pct(concept.to_residual)}, σ ${pct(concept.from_staleness)} -> ${pct(concept.to_staleness)}`,
+        `- ${CYAN}${concept.concept}${RESET}${state}: residual ${pct(concept.from_residual)} -> ${pct(concept.to_residual)}, staleness ${pct(concept.from_staleness)} -> ${pct(concept.to_staleness)}`,
       );
       const evidence: string[] = [];
       if (concept.bindings_added > 0) evidence.push(`${concept.bindings_added} binding(s) added`);
@@ -451,7 +475,9 @@ export function formatHealConceptsCli(result: HealConceptsResult): string {
       if (concept.bindings_still_drifted > 0)
         evidence.push(`${concept.bindings_still_drifted} still drifted`);
       evidence.push(
-        concept.e_embed != null ? `e_embed ${pct(concept.e_embed)}` : "e_embed unmeasured",
+        concept.e_embed != null
+          ? `embedding gap ${pct(concept.e_embed)}`
+          : "embedding gap unmeasured",
       );
       lines.push(`    ${DIM}${evidence.join(", ")}${RESET}`);
       for (const reason of concept.still_drifted_reasons) {

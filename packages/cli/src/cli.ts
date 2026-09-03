@@ -77,7 +77,13 @@ import {
 import { suggestCommand } from "./commands/suggest.ts";
 import { coverageCommand } from "./commands/scan.ts";
 import { ingestFileCommand, ingestAllCommand, queueIngestAllCommand } from "./commands/ingest.ts";
-import { describeHook, installHook, manualHookLine, uninstallHook } from "./hooks.ts";
+import {
+  describeHook,
+  formatInstallOutcome,
+  formatUninstallOutcome,
+  installHook,
+  uninstallHook,
+} from "./hooks.ts";
 import { closeJobCommand, closeJobsCommand, waitCommand } from "./commands/jobs.ts";
 import { workerCommand } from "./commands/worker.ts";
 import {
@@ -86,7 +92,7 @@ import {
   daemonStatusCommand,
   daemonStopCommand,
 } from "./commands/daemon.ts";
-import { isJsonOutput, setJsonOutput } from "./output.ts";
+import { emit, isJsonOutput, setJsonOutput } from "./output.ts";
 import pkg from "../package.json";
 
 export interface LoreCliDeps {
@@ -132,7 +138,7 @@ function handleCliError(error: unknown, exit: (code: number) => void | never): v
     error instanceof Error ? error.message.replace(/^error:\s*/i, "") : String(error);
   if (isJsonOutput()) {
     if (error instanceof LoreError) {
-      console.log(
+      console.error(
         JSON.stringify(
           {
             ok: false,
@@ -147,7 +153,7 @@ function handleCliError(error: unknown, exit: (code: number) => void | never): v
         ),
       );
     } else {
-      console.log(
+      console.error(
         JSON.stringify(
           {
             ok: false,
@@ -165,12 +171,12 @@ function handleCliError(error: unknown, exit: (code: number) => void | never): v
     return;
   }
   if (error instanceof LoreError) {
-    console.log(formatError(`[${error.code}] ${error.message}`));
+    console.error(formatError(`[${error.code}] ${error.message}`));
     if (error.details) {
-      console.log(JSON.stringify(error.details, null, 2));
+      console.error(JSON.stringify(error.details, null, 2));
     }
   } else {
-    console.log(formatError(normalizedMessage));
+    console.error(formatError(normalizedMessage));
   }
   exit(1);
 }
@@ -196,6 +202,13 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
     name: "lore",
     version: versionString,
     description: "Knowledge system for codebases",
+    helpTextAfter: `
+Examples:
+  lore init
+  lore ingest
+  lore ask "how does auth work?" --sources
+  lore note "the race is in refreshToken" --ref src/auth.ts:44-97
+`,
     globalOptions: {
       json: {
         type: "boolean",
@@ -206,6 +219,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
     commands: {
       open: defineCommand({
         name: "open",
+        helpGroup: "Capture",
         description: "Open a new narrative",
         arguments: {
           narrative: { type: "string", required: true, description: "Narrative name" },
@@ -249,6 +263,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       write: defineCommand({
         name: "write",
+        helpGroup: "Capture",
         description: "Write a journal entry to an open narrative",
         arguments: {
           narrative: { type: "string", required: true, description: "Narrative name" },
@@ -318,6 +333,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       note: defineCommand({
         name: "note",
+        helpGroup: "Capture",
         description:
           "Capture a finding. Picks the narrative and the concept for you unless you name them.",
         arguments: {
@@ -366,6 +382,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       ask: defineCommand({
         name: "ask",
+        helpGroup: "Ask",
         description: "Ask the lore a question",
         arguments: {
           query: { type: "string", required: true, description: "Query text" },
@@ -414,6 +431,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       recall: defineCommand({
         name: "recall",
+        helpGroup: "Follow-up",
         description: "Recall a cached ask result by result ID",
         arguments: {
           "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
@@ -444,6 +462,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       score: defineCommand({
         name: "score",
+        helpGroup: "Follow-up",
         description: "Rate a cached ask result",
         arguments: {
           "result-id": { type: "string", required: true, description: "Result ID from lore ask" },
@@ -458,6 +477,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       run: defineCommand({
         name: "run",
+        helpGroup: "Record",
         description: "Record what a run was given and what it produced",
         subcommands: {
           log: defineCommand({
@@ -539,6 +559,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       kpi: defineCommand({
         name: "kpi",
+        helpGroup: "Record",
         description: "Track progress metrics as a timeseries with goals",
         subcommands: {
           log: defineCommand({
@@ -622,6 +643,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       trail: defineCommand({
         name: "trail",
+        helpGroup: "Follow-up",
         description: "Reconstruct the full investigation trail for a narrative",
         arguments: {
           narrative: { type: "string", required: true, description: "Narrative name" },
@@ -642,6 +664,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       init: defineCommand({
         name: "init",
+        helpGroup: "Start",
         description: "Register a codebase into the lore network",
         arguments: {
           path: {
@@ -650,12 +673,21 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           },
           name: { type: "string", description: "Optional lore name" },
         },
-        async action({ args }) {
-          await registerCommand(getWorker(), args.path, args.name);
+        options: {
+          hooks: {
+            type: "boolean",
+            description: "Also write the post-commit ingest hook",
+          },
+        },
+        async action({ args, options }) {
+          await registerCommand(getWorker(), args.path, args.name, {
+            hooks: Boolean(options.hooks),
+          });
         },
       }),
       status: defineCommand({
         name: "status",
+        helpGroup: "Start",
         description: "Health snapshot for the current lore",
         options: {
           details: {
@@ -669,6 +701,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       suggest: defineCommand({
         name: "suggest",
+        helpGroup: "Maintain",
         description: "Get a prioritized, step-by-step healing plan for the lore",
         options: {
           limit: { type: "number", description: "Maximum suggestions to return (default: 10)" },
@@ -687,7 +720,8 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       ls: defineCommand({
         name: "ls",
-        description: "List all concepts in the current lore mind",
+        helpGroup: "Ask",
+        description: "List all concepts in the current lore",
         options: {
           group: { type: "string", description: "Group output by: cluster" },
         },
@@ -703,7 +737,9 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       rebuild: defineCommand({
         name: "rebuild",
-        description: "Rewrite a concept body from its journal entries and bindings",
+        helpGroup: "Maintain",
+        description:
+          "Rewrite a concept body from its journal entries and bindings. Not the same as lore sys rebuild, which rebuilds the database from disk.",
         arguments: {
           concept: { type: "string", required: true, description: "Concept name" },
         },
@@ -711,8 +747,67 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           await conceptRebuildCommand(getWorker(), args.concept);
         },
       }),
+      bind: defineCommand({
+        name: "bind",
+        helpGroup: "Maintain",
+        description: "Bind a source symbol to a concept. Same as lore sys concept bind.",
+        arguments: {
+          concept: { type: "string", required: true, description: "Concept name" },
+          symbol: { type: "string", required: true, description: "Symbol qualified name" },
+        },
+        options: {
+          confidence: { type: "number", description: "Binding confidence [0–1]" },
+          file: {
+            type: "string",
+            description: "File holding the symbol, when the name is not unique",
+          },
+          line: {
+            type: "number",
+            description: "First line of the symbol, when one file declares the name twice",
+          },
+        },
+        async action({ args, options }) {
+          await conceptBindCommand(
+            getWorker(),
+            args.concept,
+            args.symbol,
+            options.confidence as number | undefined,
+            options.file as string | undefined,
+            options.line as number | undefined,
+          );
+        },
+      }),
+      unbind: defineCommand({
+        name: "unbind",
+        helpGroup: "Maintain",
+        description: "Remove a symbol binding from a concept. Same as lore sys concept unbind.",
+        arguments: {
+          concept: { type: "string", required: true, description: "Concept name" },
+          symbol: { type: "string", required: true, description: "Symbol qualified name" },
+        },
+        options: {
+          file: {
+            type: "string",
+            description: "File holding the symbol, when the name is bound more than once",
+          },
+          line: {
+            type: "number",
+            description: "First line of the symbol, when one file declares the name twice",
+          },
+        },
+        async action({ args, options }) {
+          await conceptUnbindCommand(
+            getWorker(),
+            args.concept,
+            args.symbol,
+            options.file as string | undefined,
+            options.line as number | undefined,
+          );
+        },
+      }),
       close: defineCommand({
         name: "close",
+        helpGroup: "Capture",
         description: "Queue a narrative close (merge) or discard it",
         arguments: {
           narrative: { type: "string", required: true, description: "Narrative name" },
@@ -730,6 +825,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             type: "string",
             description: "Associate this close with a prior lore ask result ID",
           },
+          force: {
+            type: "boolean",
+            description: "Skip the confirmation prompt when discarding",
+          },
         },
         async action({ args, options }) {
           const mode = (options.mode === "discard" ? "discard" : "merge") as "merge" | "discard";
@@ -740,7 +839,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
               : rawStrategy === "replace"
                 ? ("replace" as const)
                 : undefined;
-          const result = await closeCommand(
+          await closeCommand(
             getWorker(),
             args.narrative,
             mode,
@@ -749,12 +848,14 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             {
               wait: Boolean(options.wait),
               pollMs: options["poll-ms"] as number | undefined,
+              force: Boolean(options.force),
             },
           );
         },
       }),
       jobs: defineCommand({
         name: "jobs",
+        helpGroup: "Maintain",
         description: "List recent daemon jobs",
         options: {
           limit: { type: "number", description: "Maximum jobs to show" },
@@ -776,6 +877,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       job: defineCommand({
         name: "job",
+        helpGroup: "Maintain",
         description: "Inspect one daemon job",
         arguments: {
           id: { type: "string", required: true, description: "Job ID" },
@@ -786,6 +888,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       wait: defineCommand({
         name: "wait",
+        helpGroup: "Maintain",
         description: "Wait for a daemon job to finish",
         arguments: {
           id: { type: "string", required: true, description: "Job ID" },
@@ -801,6 +904,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       usage: defineCommand({
         name: "usage",
+        helpGroup: "Record",
         description: "Show what this lore has spent on AI calls",
         options: {
           since: { type: "string", description: "Window: 2w, 3d, 12h, or an ISO date" },
@@ -817,6 +921,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       ingest: defineCommand({
         name: "ingest",
+        helpGroup: "Start",
         description:
           "Index the codebase — scan code and ingest docs. Pass a file path to ingest a single document.",
         arguments: {
@@ -855,6 +960,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       daemon: defineCommand({
         name: "daemon",
+        helpGroup: "System",
         description: "Manage the local Lore daemon",
         subcommands: {
           start: defineCommand({
@@ -890,6 +996,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           }),
           serve: defineCommand({
             name: "serve",
+            hidden: true,
             description: "Internal daemon entrypoint",
             options: {
               socket: { type: "string", description: "Socket path override" },
@@ -908,6 +1015,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       skill: defineCommand({
         name: "skill",
+        helpGroup: "System",
         description: "Manage the agent skill this lore carries",
         subcommands: {
           install: defineCommand({
@@ -949,14 +1057,18 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                     agents: agentList,
                     project: Boolean(options.project),
                   });
-                  console.log(result.message);
+                  emit(result, (value) => value.message);
                   if (!result.ok) process.exitCode = 1;
                   return;
                 }
-                console.log("npx is not available — linking from this binary instead.");
+                emit(
+                  { fallback: "link" },
+                  () => "npx is not available — linking from this binary instead.",
+                );
               } else if (agentList.length > 0 || options.project) {
-                console.log(
-                  "--agent and --project need the skills CLI. Drop --link, --copy and --dir.",
+                emit(
+                  { ok: false, error: "skills-cli-required" },
+                  () => "--agent and --project need the skills CLI. Drop --link, --copy and --dir.",
                 );
                 process.exitCode = 1;
                 return;
@@ -967,7 +1079,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 copy: Boolean(options.copy),
                 force: Boolean(options.force),
               });
-              console.log(result.message);
+              emit(result, (value) => value.message);
               if (!result.ok) process.exitCode = 1;
             },
           }),
@@ -981,9 +1093,8 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
               },
             },
             action({ options }) {
-              for (const line of describeSkill({ dir: options.dir as string | undefined })) {
-                console.log(line);
-              }
+              const lines = describeSkill({ dir: options.dir as string | undefined });
+              emit({ lines }, (value) => value.lines.join("\n"));
             },
           }),
           uninstall: defineCommand({
@@ -997,7 +1108,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
             },
             action({ options }) {
               const result = uninstallSkill({ dir: options.dir as string | undefined });
-              console.log(result.message);
+              emit(result, (value) => value.message);
               if (!result.ok) process.exitCode = 1;
             },
           }),
@@ -1005,6 +1116,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       upgrade: defineCommand({
         name: "upgrade",
+        helpGroup: "System",
         description: "Install the latest release over this one",
         async action() {
           const result = await runUpgrade(getVersionString().split(" ")[0] ?? "0.0.0");
@@ -1018,6 +1130,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       sys: defineCommand({
         name: "sys",
+        helpGroup: "System",
         description: "System administration for the current lore",
         subcommands: {
           hooks: defineCommand({
@@ -1035,42 +1148,13 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 },
                 action({ options }) {
                   const result = installHook({ force: Boolean(options.force) });
-                  switch (result.kind) {
-                    case "installed":
-                      console.log(`Installed the post-commit hook.\n  ${result.path}`);
-                      return;
-                    case "updated":
-                      console.log(`Updated the post-commit hook.\n  ${result.path}`);
-                      return;
-                    case "unchanged":
-                      console.log(`Already installed.\n  ${result.path}`);
-                      return;
-                    case "occupied":
-                      console.log(
-                        [
-                          "A post-commit hook is already there, and lore did not write it.",
-                          `  ${result.path}`,
-                          "Add this line to it, or pass --force to replace it:",
-                          `  ${manualHookLine()}`,
-                        ].join("\n"),
-                      );
-                      process.exitCode = 1;
-                      return;
-                    case "shared":
-                      console.log(
-                        [
-                          `core.hooksPath is ${result.hooksPath}, outside this repository.`,
-                          "git runs that directory for every repository that reads this",
-                          "config, so lore does not write there. Add this line to its",
-                          "post-commit hook:",
-                          `  ${manualHookLine()}`,
-                        ].join("\n"),
-                      );
-                      process.exitCode = 1;
-                      return;
-                    case "not-a-repo":
-                      console.log("Not a git repository.");
-                      process.exitCode = 1;
+                  emit(result, formatInstallOutcome);
+                  if (
+                    result.kind === "occupied" ||
+                    result.kind === "shared" ||
+                    result.kind === "not-a-repo"
+                  ) {
+                    process.exitCode = 1;
                   }
                 },
               }),
@@ -1078,7 +1162,8 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 name: "status",
                 description: "Show whether the hook is installed",
                 action() {
-                  for (const line of describeHook()) console.log(line);
+                  const lines = describeHook();
+                  emit({ lines }, (value) => value.lines.join("\n"));
                 },
               }),
               uninstall: defineCommand({
@@ -1086,31 +1171,13 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
                 description: "Remove the post-commit hook lore wrote",
                 action() {
                   const result = uninstallHook();
-                  switch (result.kind) {
-                    case "removed":
-                      console.log(`Removed the post-commit hook.\n  ${result.path}`);
-                      return;
-                    case "absent":
-                      console.log("No lore hook to remove.");
-                      return;
-                    case "foreign":
-                      console.log(
-                        [
-                          "The post-commit hook there was not written by lore, so it stays.",
-                          `  ${result.path}`,
-                        ].join("\n"),
-                      );
-                      process.exitCode = 1;
-                      return;
-                    case "shared":
-                      console.log(
-                        `core.hooksPath is ${result.hooksPath}, outside this repository. lore wrote nothing there.`,
-                      );
-                      process.exitCode = 1;
-                      return;
-                    case "not-a-repo":
-                      console.log("Not a git repository.");
-                      process.exitCode = 1;
+                  emit(result, formatUninstallOutcome);
+                  if (
+                    result.kind === "foreign" ||
+                    result.kind === "shared" ||
+                    result.kind === "not-a-repo"
+                  ) {
+                    process.exitCode = 1;
                   }
                 },
               }),
@@ -1149,14 +1216,16 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
           }),
           rebuild: defineCommand({
             name: "rebuild",
-            description: "Rebuild DB from disk for the current lore",
+            aliases: ["rebuild-db"],
+            description:
+              "Rebuild the database from disk for the current lore. Not the same as lore rebuild <concept>, which rewrites one concept body.",
             async action() {
               await rebuildCommand(getWorker());
             },
           }),
           coverage: defineCommand({
             name: "coverage",
-            description: "Show symbol coverage stats for the lore mind",
+            description: "Show symbol coverage stats for the current lore",
             options: {
               uncovered: {
                 type: "boolean",
@@ -1793,6 +1862,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       show: defineCommand({
         name: "show",
+        helpGroup: "Ask",
         description: "Show concept content (supports concept@ref syntax)",
         arguments: {
           target: { type: "string", required: true, description: "Concept name or concept@ref" },
@@ -1809,6 +1879,7 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       diff: defineCommand({
         name: "diff",
+        helpGroup: "Follow-up",
         description: "Preview close or compare commits (narrative or ref..ref)",
         arguments: {
           target: {
@@ -1823,7 +1894,10 @@ export function createLoreCli(deps: LoreCliDeps = {}) {
       }),
       log: defineCommand({
         name: "log",
-        description: "Walk commit history",
+        helpGroup: "Record",
+        aliases: ["history"],
+        description:
+          "Walk lore commit history. This is not a journal write — use lore write or lore note for that.",
         arguments: {
           limit: { type: "number", default: 20, description: "Number of commits to show" },
           since: {

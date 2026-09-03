@@ -543,7 +543,7 @@ export async function computeSuggestions(
         priority: KNOWLEDGE_PULL_PRIORITY,
         confidence: entry.capacity,
         title: `${entry.concept.name} — capacity ${capacityPct}% (knowledge sink)`,
-        rationale: `This concept has high absorption capacity. Journaling here will reduce S_dist most.`,
+        rationale: `This concept has high absorption capacity. Journaling here will close the trust gap most.`,
         steps: [
           {
             tool: "open",

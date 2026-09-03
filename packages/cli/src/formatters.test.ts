@@ -168,7 +168,7 @@ test("formatAskCli returns summary only by default", () => {
   expect(rendered).toContain("lore recall 01ASKCLI");
   expect(rendered).toContain("lore score 01ASKCLI <1-5>");
   expect(rendered).toContain("lore trail auth-debug");
-  expect(rendered).toContain("lore sys concept bind <concept> <symbol>");
+  expect(rendered).toContain("lore bind <concept> <symbol>");
   expect(rendered).toContain("## Investigation Trail");
   expect(rendered).not.toContain("## Sources");
 });
@@ -312,8 +312,9 @@ test("formatLs sorts by residual then staleness and shows trend arrows", () => {
   expect(lowIndex).toBeGreaterThan(-1);
   expect(highIndex).toBeLessThan(lowIndex);
   expect(rendered).toContain("debt 50%");
-  expect(rendered).toContain("45% ↑");
-  expect(rendered).toContain("5% ↓");
+  expect(rendered).toContain("90% ↑");
+  expect(rendered).toContain("10% ↓");
+  expect(rendered).toContain("residual: how far concept prose is from bound code");
   expect(rendered).not.toContain("0.90 ↑");
   expect(rendered).not.toContain("0.10 ↓");
 });

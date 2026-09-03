@@ -4,10 +4,11 @@ import {
   formatConceptHealthExplainCli,
   formatHealConceptsCli,
 } from "../formatters.ts";
+import { emit } from "../output.ts";
 
 export async function healthComputeCommand(client: WorkerClient, top?: number): Promise<void> {
   const result = await client.computeConceptHealth({ top });
-  console.log(formatConceptHealthComputeCli(result));
+  emit(result, formatConceptHealthComputeCli);
 }
 
 export async function healthExplainCommand(
@@ -16,7 +17,7 @@ export async function healthExplainCommand(
   opts?: { neighborLimit?: number; recompute?: boolean },
 ): Promise<void> {
   const result = await client.explainConceptHealth(concept, opts);
-  console.log(formatConceptHealthExplainCli(result));
+  emit(result, formatConceptHealthExplainCli);
 }
 
 export async function healthHealCommand(
@@ -28,5 +29,5 @@ export async function healthHealCommand(
   },
 ): Promise<void> {
   const result = await client.healConcepts(opts);
-  console.log(formatHealConceptsCli(result));
+  emit(result, formatHealConceptsCli);
 }

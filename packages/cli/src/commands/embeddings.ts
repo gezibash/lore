@@ -1,4 +1,5 @@
 import type { WorkerClient } from "@lore/worker";
+import { emit } from "../output.ts";
 import { createProgressBar } from "../tty.ts";
 
 export async function refreshEmbeddingsCommand(client: WorkerClient): Promise<void> {
@@ -47,11 +48,10 @@ export async function refreshEmbeddingsCommand(client: WorkerClient): Promise<vo
     const parts = [`${result.reEmbedded} text (${result.textModel})`];
     if (result.codeEmbedded > 0) parts.push(`${result.codeEmbedded} code (${result.codeModel})`);
     if (result.deleted > 0) parts.push(`${result.deleted} .emb files removed`);
-    console.log(`Refreshed: ${parts.join(", ")}`);
+    emit(result, () => `Refreshed: ${parts.join(", ")}`);
   } else {
     bars.text?.complete(`Embedding [text] — ${finalTextTotal} chunks done`);
     bars.code?.fail(`Embedding [code] — failed`);
-    console.error(`error: ${codeError}`);
-    process.exit(1);
+    throw new Error(codeError ?? "embeddings refresh failed");
   }
 }

@@ -30,9 +30,7 @@ export function createTestLoreRoot(prefix = "lore-root-"): string {
   const dir = createTempDir(prefix);
   const baseUrl = process.env.LORE_TEST_EMBED_URL;
   if (!baseUrl) {
-    throw new Error(
-      "LORE_TEST_EMBED_URL is unset — preload test/support/stub-embedder.ts",
-    );
+    throw new Error("LORE_TEST_EMBED_URL is unset — preload test/support/stub-embedder.ts");
   }
   writeFileSync(
     join(dir, "config.json"),

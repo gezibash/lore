@@ -22,6 +22,11 @@ type CliActionContext = {
 export type CliCommandSpec = {
   name: string;
   description?: string;
+  /** Commander help group heading. Root commands are sorted by this. */
+  helpGroup?: string;
+  /** Hide this command from `--help`. The command still runs. */
+  hidden?: boolean;
+  aliases?: string[];
   arguments?: Record<string, CliArgSpec>;
   options?: Record<string, CliOptionSpec>;
   subcommands?: Record<string, CliCommandSpec>;
@@ -34,6 +39,8 @@ export type CliSpec = {
   description?: string;
   globalOptions?: Record<string, CliOptionSpec>;
   commands: Record<string, CliCommandSpec>;
+  /** Extra help printed after the command list on the root program. */
+  helpTextAfter?: string;
   onError?: (error: unknown) => void;
 };
 

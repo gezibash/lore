@@ -89,7 +89,7 @@ export async function systemRepairCommand(client: WorkerClient, check?: boolean)
     console.log(`\n${DIM}No repair actions were necessary.${RESET}`);
   } else {
     console.log(`\n${GREEN}Schema repair completed successfully.${RESET}`);
-    console.log(`${DIM}If data outputs still look stale, run: lore mind rebuild${RESET}`);
+    console.log(`${DIM}If data outputs still look stale, run: lore sys rebuild${RESET}`);
   }
 }
 
